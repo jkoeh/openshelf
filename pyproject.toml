@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "openshelf"
+version = "0.1.0"
+description = "Open source public domain audiobook platform"
+requires-python = ">=3.11"
+
+dependencies = [
+    "kokoro",
+    "soundfile",
+    "numpy",
+    "pydub",
+    "ebooklib",
+    "beautifulsoup4",
+    "boto3",
+    "python-dotenv",
+    "torch",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+]
+
+[project.scripts]
+tts-pipeline = "openshelf.pipeline.runner:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

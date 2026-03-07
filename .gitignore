@@ -3,6 +3,8 @@
 
 # Project artifacts
 raw-download/
+audio/
+.env
 
 # Python
 __pycache__/
