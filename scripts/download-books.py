@@ -94,8 +94,8 @@ def main():
         help="Filter by subject/topic (Gutenberg only)",
     )
     parser.add_argument(
-        "--output", default="raw-download/books",
-        help="Base output directory (default: raw-download/books)",
+        "--output", default="download/books",
+        help="Base output directory (default: download/books)",
     )
     parser.add_argument(
         "--delay", type=float, default=2,

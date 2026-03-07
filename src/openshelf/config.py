@@ -7,7 +7,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # Default paths
-DEFAULT_INPUT_DIR = PROJECT_ROOT / "raw-download" / "books"
+DEFAULT_INPUT_DIR = PROJECT_ROOT / "download" / "books"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "audio"
 
 # Scraper

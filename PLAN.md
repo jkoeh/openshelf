@@ -14,7 +14,7 @@ EPUB file → parse chapters → chunk text → Kokoro TTS → WAV → MP3 → m
 ## Input (already exists)
 
 ```
-raw-download/books/
+download/books/
   gutenberg/{author-slug}/{title-slug}.epub
   standard-ebooks/{author-slug}/{title-slug}.epub
 ```

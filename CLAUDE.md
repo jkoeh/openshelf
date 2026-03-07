@@ -66,7 +66,7 @@ pip install -e ".[dev]"
 - Pipeline steps are independent modules with pure-ish functions — each testable in isolation
 - Idempotent at every level: file exists → skip, R2 key exists → skip
 - `sanitize()` is the single source of truth for slug generation (author dirs, title filenames)
-- Downloads go to `raw-download/books/{source}/{author-slug}/{title-slug}.epub`
+- Downloads go to `download/books/{source}/{author-slug}/{title-slug}.epub`
 - Audio output goes to `audio/{author-slug}/{title-slug}/chapter-NN.mp3`
 
 ## Do NOT

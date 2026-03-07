@@ -55,7 +55,7 @@ python3 scripts/download-books.py --author "Kafka" --language en
 python3 scripts/download-books.py --author "Kafka" --output my-books/
 ```
 
-Downloads are saved to `raw-download/books/{source}/{author-slug}/{title-slug}.epub` and are idempotent — running the same command twice skips already-downloaded files.
+Downloads are saved to `download/books/{source}/{author-slug}/{title-slug}.epub` and are idempotent — running the same command twice skips already-downloaded files.
 
 ### CLI Options
 
@@ -65,7 +65,7 @@ Downloads are saved to `raw-download/books/{source}/{author-slug}/{title-slug}.e
 | `--author` | Filter by author name (case-insensitive) | none |
 | `--language` | Language code (e.g. `en`, `fr`, `de`) | none |
 | `--subject` | Topic filter (Gutenberg only) | none |
-| `--output` | Base output directory | `raw-download/books` |
+| `--output` | Base output directory | `download/books` |
 | `--delay` | Seconds between HTTP requests | `2` |
 | `--dry-run` | List matches without downloading | off |
 

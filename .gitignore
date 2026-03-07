@@ -2,7 +2,7 @@
 .DS_Store
 
 # Project artifacts
-raw-download/
+download/
 audio/
 .env
 
