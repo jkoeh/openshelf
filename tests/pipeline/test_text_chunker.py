@@ -202,12 +202,17 @@ class TestChunkTextOversizedSentences(unittest.TestCase):
 
 class TestChunkTextParagraphAwareness(unittest.TestCase):
 
-    def test_paragraphs_never_cross_boundary(self):
+    def test_paragraph_boundaries_preserved_in_chunks(self):
         paras = [_words(100) + "." for _ in range(10)]
         text = "\n\n".join(paras)
         chunks = chunk_text(text)
+        # Paragraphs packed into same chunk should retain \n\n separator
+        # 4 x 100-word paragraphs fit in 450 max, so at least one chunk has \n\n
+        multi_para_chunks = [c for c in chunks if "\n\n" in c]
+        self.assertTrue(len(multi_para_chunks) >= 1)
+        # No chunk exceeds max words
         for c in chunks:
-            self.assertNotIn("\n\n", c)
+            self.assertLessEqual(_word_count(c), CHUNK_MAX_WORDS)
 
     def test_short_paragraphs_packed(self):
         p1 = _words(100) + "."

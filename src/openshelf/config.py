@@ -17,7 +17,7 @@ SE_BASE = "https://standardebooks.org"
 
 # TTS
 TTS_VOICE = "af_heart"
-TTS_LANGUAGE = "en-us"
+TTS_LANGUAGE = "a"  # Kokoro lang_code: a=American English, b=British English
 TTS_SAMPLE_RATE = 24000
 CHUNK_MAX_WORDS = 450
 SILENCE_BETWEEN_CHUNKS_MS = 400

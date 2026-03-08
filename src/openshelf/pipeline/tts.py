@@ -68,7 +68,7 @@ def load_pipeline(device: str | None = None):
     if device is None:
         device = get_device()
     logger.info("Loading Kokoro pipeline on %s", device)
-    return kp(lang=TTS_LANGUAGE)
+    return kp(lang_code=TTS_LANGUAGE, device=device)
 
 
 def _generate_silence(sample_rate: int, duration_ms: int) -> np.ndarray:

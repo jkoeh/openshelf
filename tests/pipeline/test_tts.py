@@ -64,7 +64,7 @@ class TestLoadPipeline(unittest.TestCase):
         mock_kp_cls = MagicMock()
         with patch("openshelf.pipeline.tts._import_kpipeline", return_value=mock_kp_cls):
             load_pipeline(device="cpu")
-            mock_kp_cls.assert_called_once_with(lang=TTS_LANGUAGE)
+            mock_kp_cls.assert_called_once_with(lang_code=TTS_LANGUAGE, device="cpu")
 
     def test_uses_provided_device(self):
         mock_kp_cls = MagicMock()
@@ -78,7 +78,7 @@ class TestLoadPipeline(unittest.TestCase):
         with patch("openshelf.pipeline.tts._import_kpipeline", return_value=mock_kp_cls):
             load_pipeline()
             mock_get_device.assert_called_once()
-            mock_kp_cls.assert_called_once_with(lang=TTS_LANGUAGE)
+            mock_kp_cls.assert_called_once_with(lang_code=TTS_LANGUAGE, device="mps")
 
 
 class TestSynthesizeChapter(unittest.TestCase):

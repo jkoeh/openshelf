@@ -127,11 +127,11 @@ def chunk_text(text: str, max_words: int = CHUNK_MAX_WORDS) -> list[str]:
             current_wc += u_wc
         else:
             if current_parts:
-                chunks.append(" ".join(current_parts))
+                chunks.append("\n\n".join(current_parts))
             current_parts = [unit]
             current_wc = u_wc
 
     if current_parts:
-        chunks.append(" ".join(current_parts))
+        chunks.append("\n\n".join(current_parts))
 
     return chunks

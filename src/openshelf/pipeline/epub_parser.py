@@ -16,7 +16,7 @@ class Chapter:
     word_count: int
 
 
-_SKIP_PATTERNS = ("nav", "toc", "cover", "titlepage")
+_SKIP_PATTERNS = ("nav", "toc", "cover")
 _MIN_WORD_COUNT = 50
 
 
@@ -51,6 +51,10 @@ def _extract_text(soup: BeautifulSoup) -> str:
         text = re.sub(r"\s+", " ", text).strip()
         if text:
             cleaned.append(text)
+
+    if not cleaned:
+        # Fallback: extract all text when no <p> tags (e.g. <div>-based EPUBs)
+        return re.sub(r"\s+", " ", soup.get_text()).strip()
 
     return "\n\n".join(cleaned)
 

@@ -58,8 +58,10 @@ def main():
     # Step 2+3+4: Chunk → TTS → MP3
     os.makedirs(args.output, exist_ok=True)
 
-    print(f"\nLoading TTS pipeline ...")
-    pipeline = load_pipeline(device=args.device)
+    from openshelf.pipeline.tts import get_device
+    device = args.device or get_device()
+    print(f"\nLoading TTS pipeline on {device} ...")
+    pipeline = load_pipeline(device=device)
     print("Ready.\n")
 
     total_duration = 0.0

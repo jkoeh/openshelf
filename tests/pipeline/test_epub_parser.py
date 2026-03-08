@@ -162,13 +162,15 @@ class TestParseEpubFiltering(unittest.TestCase):
         self.assertEqual(len(parse_epub("f.epub")), 1)
 
     @patch("openshelf.pipeline.epub_parser.epub.read_epub")
-    def test_skips_titlepage(self, mock_read):
+    def test_titlepage_not_skipped(self, mock_read):
         items = [
-            _make_item("titlepage.xhtml", _words_html(60)),
+            _make_item("titlepage.xhtml", _chapter_html("h1", "Title Page", 60)),
             _make_item("ch01.xhtml", _chapter_html("h2", "Ch", 60)),
         ]
         mock_read.return_value = _make_book(items)
-        self.assertEqual(len(parse_epub("f.epub")), 1)
+        chapters = parse_epub("f.epub")
+        self.assertEqual(len(chapters), 2)
+        self.assertEqual(chapters[0].title, "Title Page")
 
     @patch("openshelf.pipeline.epub_parser.epub.read_epub")
     def test_skip_is_case_insensitive_substring(self, mock_read):
@@ -286,10 +288,10 @@ class TestParseEpubEdgeCases(unittest.TestCase):
         words = " ".join(f"w{i}" for i in range(60))
         html = f"<html><body><h1>T</h1><div>{words}</div></body></html>"
         mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
-        # Should handle gracefully — either extract div text or skip
         chapters = parse_epub("f.epub")
-        # If no <p> tags, item may be skipped or text extracted from body
-        # The implementation should handle this without crashing
+        # Fallback to soup.get_text() should extract the div content
+        self.assertEqual(len(chapters), 1)
+        self.assertEqual(chapters[0].word_count, 60)
 
     @patch("openshelf.pipeline.epub_parser.epub.read_epub")
     def test_image_only_item(self, mock_read):
