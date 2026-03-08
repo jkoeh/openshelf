@@ -55,24 +55,24 @@ class TestSanitize(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestMakeRequest(unittest.TestCase):
-    @patch("urllib.request.urlopen")
-    def test_successful_fetch(self, mock_urlopen):
-        mock_urlopen.return_value = _mock_response(b"hello")
+    @patch.object(http._opener, "open")
+    def test_successful_fetch(self, mock_open):
+        mock_open.return_value = _mock_response(b"hello")
         result = http.make_request("http://example.com")
         self.assertEqual(result, b"hello")
 
-    @patch("urllib.request.urlopen")
-    def test_url_error_returns_none(self, mock_urlopen):
+    @patch.object(http._opener, "open")
+    def test_url_error_returns_none(self, mock_open):
         import urllib.error
-        mock_urlopen.side_effect = urllib.error.URLError("fail")
+        mock_open.side_effect = urllib.error.URLError("fail")
         result = http.make_request("http://example.com")
         self.assertIsNone(result)
 
-    @patch("urllib.request.urlopen")
-    def test_custom_accept_header(self, mock_urlopen):
-        mock_urlopen.return_value = _mock_response(b"ok")
+    @patch.object(http._opener, "open")
+    def test_custom_accept_header(self, mock_open):
+        mock_open.return_value = _mock_response(b"ok")
         http.make_request("http://example.com", accept="application/json")
-        req_obj = mock_urlopen.call_args[0][0]
+        req_obj = mock_open.call_args[0][0]
         self.assertEqual(req_obj.get_header("Accept"), "application/json")
 
 
@@ -211,7 +211,8 @@ class TestDownloadBook(unittest.TestCase):
 
     @patch.object(http, "make_request")
     def test_new_download(self, mock_req):
-        mock_req.return_value = b"epub-data"
+        epub_data = b"PK\x03\x04epub-data"
+        mock_req.return_value = epub_data
         with tempfile.TemporaryDirectory() as tmpdir:
             result = http.download_book(
                 "Author", "Title", "http://x.epub", tmpdir, delay=0
@@ -220,7 +221,7 @@ class TestDownloadBook(unittest.TestCase):
             filepath = os.path.join(tmpdir, "author", "title.epub")
             self.assertTrue(os.path.exists(filepath))
             with open(filepath, "rb") as f:
-                self.assertEqual(f.read(), b"epub-data")
+                self.assertEqual(f.read(), epub_data)
 
     @patch.object(http, "make_request")
     def test_failed_download(self, mock_req):
@@ -232,8 +233,33 @@ class TestDownloadBook(unittest.TestCase):
             self.assertFalse(result)
 
     @patch.object(http, "make_request")
+    def test_se_html_response_retries(self, mock_req):
+        html_page = b'<html>standardebooks.org download page</html>'
+        epub_data = b"PK\x03\x04real-epub"
+        mock_req.side_effect = [html_page, epub_data]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = http.download_book(
+                "Author", "Title", "http://x.epub", tmpdir, delay=0
+            )
+            self.assertTrue(result)
+            filepath = os.path.join(tmpdir, "author", "title.epub")
+            with open(filepath, "rb") as f:
+                self.assertEqual(f.read(), epub_data)
+            self.assertEqual(mock_req.call_count, 2)
+
+    @patch.object(http, "make_request")
+    def test_se_html_response_retry_fails(self, mock_req):
+        html_page = b'<html>standardebooks.org download page</html>'
+        mock_req.return_value = html_page
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = http.download_book(
+                "Author", "Title", "http://x.epub", tmpdir, delay=0
+            )
+            self.assertFalse(result)
+
+    @patch.object(http, "make_request")
     def test_filename_sanitization(self, mock_req):
-        mock_req.return_value = b"data"
+        mock_req.return_value = b"PK\x03\x04data"
         with tempfile.TemporaryDirectory() as tmpdir:
             http.download_book(
                 "Fyodor Dostoyevsky", "Crime & Punishment!",

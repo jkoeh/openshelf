@@ -36,6 +36,8 @@ def gutenberg_search(author=None, language=None, subject=None, delay=2):
             authors = book.get("authors", [])
             author_name = authors[0]["name"] if authors else "unknown"
             title = book.get("title", "untitled")
+            if title.lower().startswith("index of the project gutenberg"):
+                continue
             yield author_name, title, epub_url
 
         url = body.get("next")

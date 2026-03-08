@@ -38,9 +38,10 @@ Parse EPUB into a list of `Chapter(number, title, text, word_count)`.
 **Rules:**
 - Use `ebooklib` to read EPUB, `BeautifulSoup` to extract text
 - Chapter title from first `h1`/`h2`/`h3` tag, fallback to `"Chapter N"`
-- Skip items whose filename contains `nav`, `toc`, `cover`, or `titlepage`
+- Skip items whose filename contains `nav`, `toc`, or `cover` (titlepage is kept as audiobook opening)
 - Skip items with < 50 words (front matter, copyright)
 - Strip `<sup>`/`<sub>` tags (footnote markers)
+- Strip `<a>` tags with numeric-only content (internal cross-references like `[1]`)
 - Preserve paragraph structure: double newline between paragraphs
 - Normalize whitespace to single spaces within paragraphs
 
@@ -50,15 +51,17 @@ Parse EPUB into a list of `Chapter(number, title, text, word_count)`.
 
 ## Step 2: Text → Chunks (`text_chunker.py`)
 
-Split chapter text into chunks at sentence boundaries for TTS input.
+Split chapter text into paragraph-aware chunks at sentence boundaries for TTS input.
 
 **Rules:**
 - Max 450 words per chunk (`config.CHUNK_MAX_WORDS`)
-- Split on `.`, `!`, `?` followed by whitespace — never mid-sentence
+- Split on paragraph boundaries (`\n\n`) first — a chunk never crosses a paragraph break
+- Within oversized paragraphs, split at sentence boundaries (`.`, `!`, `?`)
+- Pack multiple short paragraphs into one chunk (greedy, up to max words)
 - If a single sentence exceeds 450 words, split at comma boundaries
-- Each chunk is a plain string
+- Each chunk is a plain string with no internal `\n\n`
 
-**Tests:** Pure function, easy to unit test. Test normal splitting, long sentences, edge cases (single sentence, empty input).
+**Tests:** Pure function, easy to unit test. Test paragraph awareness, normal splitting, long sentences, edge cases (single sentence, empty input).
 
 ---
 
@@ -76,7 +79,9 @@ Generate WAV audio for each chunk using Kokoro TTS, stitch with silence gaps.
 **Implementation:**
 - Load Kokoro pipeline once, reuse across all chunks
 - Generate audio array per chunk
+- Peak-normalize each chunk's audio to -1 dB before concatenation
 - Insert 400ms silence (zero samples) between chunks
+- Track skipped chunks (TTS failures) and return count alongside audio
 - Concatenate into single WAV per chapter
 - Write WAV to temp location
 
@@ -108,10 +113,14 @@ Write `manifest.json` after all chapters for a book are processed.
 **Format:**
 ```json
 {
+  "manifest_version": 1,
   "title": "Crime and Punishment",
   "author": "Fyodor Dostoevsky",
   "slug": "fyodor-dostoevsky/crime-and-punishment",
   "source": "gutenberg",
+  "voice": "af_heart",
+  "language": "en-us",
+  "sample_rate": 24000,
   "generated_at": "2024-01-15T10:30:00Z",
   "total_duration_seconds": 77400,
   "chapters": [
@@ -121,6 +130,7 @@ Write `manifest.json` after all chapters for a book are processed.
       "filename": "chapter-01.mp3",
       "duration_seconds": 1847,
       "word_count": 3241,
+      "skipped_chunks": 0,
       "r2_key": "fyodor-dostoevsky/crime-and-punishment/chapter-01.mp3"
     }
   ]

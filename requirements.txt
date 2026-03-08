@@ -1,0 +1,8 @@
+ebooklib
+beautifulsoup4
+kokoro
+soundfile
+numpy
+pydub
+boto3
+torch
