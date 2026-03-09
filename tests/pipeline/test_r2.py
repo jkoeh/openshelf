@@ -10,6 +10,7 @@ from unittest.mock import patch, MagicMock, call
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 from openshelf.pipeline.r2 import make_client, key_exists, upload_book
+from openshelf.config import R2_CACHE_CONTROL_AUDIO, R2_CACHE_CONTROL_MANIFEST
 
 
 def _make_fake_audio_dir(tmp_dir: str, n_chapters: int = 2) -> tuple[str, str]:
@@ -125,20 +126,32 @@ class TestUploadBookUploads(unittest.TestCase):
         self.assertIsInstance(keys, list)
         self.assertEqual(len(keys), 3)
 
+    @patch("openshelf.pipeline.r2.key_exists", return_value=False)
+    def test_manifest_uploaded_last(self, mock_exists):
+        """manifest.json must be the final upload — it signals completion."""
+        client = MagicMock()
+        with tempfile.TemporaryDirectory() as tmp:
+            audio_dir, manifest_path = _make_fake_audio_dir(tmp, n_chapters=2)
+            upload_book(client, "openshelf-audio", "kafka", "the-trial",
+                        audio_dir, manifest_path)
+        last_key = client.upload_file.call_args_list[-1][0][2]
+        self.assertTrue(last_key.endswith("manifest.json"))
+
 
 class TestUploadBookIdempotency(unittest.TestCase):
 
     @patch("openshelf.pipeline.r2.key_exists", return_value=True)
-    def test_skips_all_when_all_exist(self, mock_exists):
+    def test_skips_entire_book_if_manifest_exists(self, mock_exists):
+        """Single HEAD on manifest — if present, skip all uploads."""
         client = MagicMock()
         with tempfile.TemporaryDirectory() as tmp:
-            audio_dir, manifest_path = _make_fake_audio_dir(tmp)
+            audio_dir, manifest_path = _make_fake_audio_dir(tmp, n_chapters=5)
             upload_book(client, "openshelf-audio", "kafka", "the-trial",
                         audio_dir, manifest_path)
         client.upload_file.assert_not_called()
 
     @patch("openshelf.pipeline.r2.key_exists", return_value=True)
-    def test_returns_empty_list_when_all_exist(self, mock_exists):
+    def test_returns_empty_list_when_manifest_exists(self, mock_exists):
         client = MagicMock()
         with tempfile.TemporaryDirectory() as tmp:
             audio_dir, manifest_path = _make_fake_audio_dir(tmp)
@@ -146,19 +159,18 @@ class TestUploadBookIdempotency(unittest.TestCase):
                                audio_dir, manifest_path)
         self.assertEqual(keys, [])
 
-    @patch("openshelf.pipeline.r2.key_exists",
-           side_effect=lambda c, b, k: k.endswith(".mp3"))
-    def test_uploads_only_new_manifest_when_mp3s_exist(self, mock_exists):
+    @patch("openshelf.pipeline.r2.key_exists", return_value=True)
+    def test_only_one_head_request(self, mock_exists):
+        """O(1) HEAD requests regardless of chapter count — not O(N)."""
         client = MagicMock()
         with tempfile.TemporaryDirectory() as tmp:
-            audio_dir, manifest_path = _make_fake_audio_dir(tmp, n_chapters=2)
-            keys = upload_book(client, "openshelf-audio", "kafka", "the-trial",
-                               audio_dir, manifest_path)
-        self.assertEqual(client.upload_file.call_count, 1)
-        self.assertEqual(keys, ["kafka/the-trial/manifest.json"])
+            audio_dir, manifest_path = _make_fake_audio_dir(tmp, n_chapters=10)
+            upload_book(client, "openshelf-audio", "kafka", "the-trial",
+                        audio_dir, manifest_path)
+        mock_exists.assert_called_once()
 
 
-class TestUploadBookContentTypes(unittest.TestCase):
+class TestUploadBookHeaders(unittest.TestCase):
 
     @patch("openshelf.pipeline.r2.key_exists", return_value=False)
     def test_mp3_content_type(self, mock_exists):
@@ -180,10 +192,47 @@ class TestUploadBookContentTypes(unittest.TestCase):
             audio_dir, manifest_path = _make_fake_audio_dir(tmp)
             upload_book(client, "openshelf-audio", "kafka", "the-trial",
                         audio_dir, manifest_path)
-        manifest_calls = [c for c in client.upload_file.call_args_list
-                          if c[0][2].endswith("manifest.json")]
-        self.assertEqual(len(manifest_calls), 1)
-        self.assertEqual(manifest_calls[0][1]["ExtraArgs"]["ContentType"], "application/json")
+        manifest_call = next(c for c in client.upload_file.call_args_list
+                             if c[0][2].endswith("manifest.json"))
+        self.assertEqual(manifest_call[1]["ExtraArgs"]["ContentType"], "application/json")
+
+    @patch("openshelf.pipeline.r2.key_exists", return_value=False)
+    def test_mp3_cache_control(self, mock_exists):
+        """MP3 files must have immutable cache — they never change once written."""
+        client = MagicMock()
+        with tempfile.TemporaryDirectory() as tmp:
+            audio_dir, manifest_path = _make_fake_audio_dir(tmp, n_chapters=2)
+            upload_book(client, "openshelf-audio", "kafka", "the-trial",
+                        audio_dir, manifest_path)
+        mp3_calls = [c for c in client.upload_file.call_args_list
+                     if c[0][2].endswith(".mp3")]
+        for c in mp3_calls:
+            self.assertEqual(c[1]["ExtraArgs"]["CacheControl"], R2_CACHE_CONTROL_AUDIO)
+
+    @patch("openshelf.pipeline.r2.key_exists", return_value=False)
+    def test_manifest_cache_control(self, mock_exists):
+        """Manifest must have short TTL so updates propagate quickly."""
+        client = MagicMock()
+        with tempfile.TemporaryDirectory() as tmp:
+            audio_dir, manifest_path = _make_fake_audio_dir(tmp)
+            upload_book(client, "openshelf-audio", "kafka", "the-trial",
+                        audio_dir, manifest_path)
+        manifest_call = next(c for c in client.upload_file.call_args_list
+                             if c[0][2].endswith("manifest.json"))
+        self.assertEqual(manifest_call[1]["ExtraArgs"]["CacheControl"], R2_CACHE_CONTROL_MANIFEST)
+
+    @patch("openshelf.pipeline.r2.key_exists", return_value=False)
+    def test_mp3_content_disposition_inline(self, mock_exists):
+        """Without inline disposition, browsers download instead of streaming."""
+        client = MagicMock()
+        with tempfile.TemporaryDirectory() as tmp:
+            audio_dir, manifest_path = _make_fake_audio_dir(tmp, n_chapters=2)
+            upload_book(client, "openshelf-audio", "kafka", "the-trial",
+                        audio_dir, manifest_path)
+        mp3_calls = [c for c in client.upload_file.call_args_list
+                     if c[0][2].endswith(".mp3")]
+        for c in mp3_calls:
+            self.assertEqual(c[1]["ExtraArgs"]["ContentDisposition"], "inline")
 
 
 if __name__ == "__main__":
