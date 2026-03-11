@@ -7,7 +7,7 @@ import unittest
 # Allow running without pip install
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from openshelf.pipeline.text_chunker import chunk_text
+from openshelf.pipeline.text_chunker import chunk_text, serialize_chunks, deserialize_chunks, sha256_file
 from openshelf.config import CHUNK_MAX_WORDS
 
 
@@ -281,6 +281,71 @@ class TestChunkTextInvariants(unittest.TestCase):
         # Check order
         positions = [rejoined.index(f"Sentence{i}") for i in range(10)]
         self.assertEqual(positions, sorted(positions))
+
+
+class TestSerializeChunks(unittest.TestCase):
+
+    def _sample_chapters(self):
+        return [
+            {"number": 1, "title": "The Arrest", "chunks": ["chunk one.", "chunk two."]},
+            {"number": 2, "title": "First Hearing", "chunks": ["chunk three."]},
+        ]
+
+    def test_roundtrip(self):
+        chapters = self._sample_chapters()
+        json_str = serialize_chunks(chapters, "abc123")
+        result = deserialize_chunks(json_str)
+        self.assertEqual(result["chapters"], chapters)
+
+    def test_contains_version(self):
+        json_str = serialize_chunks(self._sample_chapters(), "abc123")
+        result = deserialize_chunks(json_str)
+        self.assertEqual(result["version"], 1)
+
+    def test_contains_epub_sha256(self):
+        json_str = serialize_chunks(self._sample_chapters(), "deadbeef")
+        result = deserialize_chunks(json_str)
+        self.assertEqual(result["source_epub_sha256"], "deadbeef")
+
+    def test_preserves_unicode(self):
+        chapters = [{"number": 1, "title": "Über", "chunks": ["Ça va bien."]}]
+        json_str = serialize_chunks(chapters, "abc")
+        result = deserialize_chunks(json_str)
+        self.assertEqual(result["chapters"][0]["title"], "Über")
+        self.assertEqual(result["chapters"][0]["chunks"][0], "Ça va bien.")
+
+    def test_empty_chapters(self):
+        json_str = serialize_chunks([], "abc")
+        result = deserialize_chunks(json_str)
+        self.assertEqual(result["chapters"], [])
+
+
+class TestSha256File(unittest.TestCase):
+
+    def test_computes_hash(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            f.write(b"hello world")
+            path = f.name
+        try:
+            result = sha256_file(path)
+            import hashlib
+            expected = hashlib.sha256(b"hello world").hexdigest()
+            self.assertEqual(result, expected)
+        finally:
+            os.unlink(path)
+
+    def test_empty_file(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            path = f.name
+        try:
+            result = sha256_file(path)
+            import hashlib
+            expected = hashlib.sha256(b"").hexdigest()
+            self.assertEqual(result, expected)
+        finally:
+            os.unlink(path)
 
 
 if __name__ == "__main__":

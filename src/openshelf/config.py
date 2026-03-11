@@ -26,11 +26,13 @@ SILENCE_BETWEEN_CHUNKS_MS = 400
 MP3_BITRATE = "128k"
 
 # R2
-R2_BUCKET = os.getenv("R2_BUCKET", "openshelf-audio")
+R2_BUCKET = os.getenv("R2_BUCKET", "openshelf")
+R2_PREFIX_BOOKS = "books"
+R2_DEFAULT_RENDITION = "kokoro-af-heart"
 R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID", "")
 R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY", "")
 R2_SECRET_KEY = os.getenv("R2_SECRET_KEY", "")
 
-# R2 cache headers — audio files are immutable once written; manifest has short TTL
-R2_CACHE_CONTROL_AUDIO = "public, max-age=31536000, immutable"
+# R2 cache headers
+R2_CACHE_CONTROL_IMMUTABLE = "public, max-age=31536000, immutable"
 R2_CACHE_CONTROL_MANIFEST = "public, max-age=60"
