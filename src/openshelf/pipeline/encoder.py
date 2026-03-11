@@ -2,8 +2,9 @@
 
 import logging
 import os
+import subprocess
 
-from pydub import AudioSegment
+import soundfile as sf
 
 from openshelf.config import MP3_BITRATE, TTS_SAMPLE_RATE
 
@@ -16,18 +17,23 @@ def encode_to_mp3(
     bitrate: str = MP3_BITRATE,
     delete_wav: bool = True,
 ) -> float:
-    segment = AudioSegment.from_wav(wav_path)
+    info = sf.info(wav_path)
 
-    if segment.frame_rate != TTS_SAMPLE_RATE:
+    if info.samplerate != TTS_SAMPLE_RATE:
         logger.warning(
             "WAV sample rate %d != expected %d: %s",
-            segment.frame_rate, TTS_SAMPLE_RATE, wav_path,
+            info.samplerate, TTS_SAMPLE_RATE, wav_path,
         )
 
     os.makedirs(os.path.dirname(mp3_path), exist_ok=True)
-    segment.export(mp3_path, format="mp3", bitrate=bitrate)
+    subprocess.run(
+        ["ffmpeg", "-i", wav_path, "-b:a", bitrate, "-y", mp3_path],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
-    duration = len(segment) / 1000.0
+    duration = info.frames / info.samplerate
 
     if delete_wav:
         os.remove(wav_path)

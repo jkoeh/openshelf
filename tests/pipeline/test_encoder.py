@@ -12,32 +12,37 @@ from openshelf.pipeline.encoder import encode_to_mp3
 from openshelf.config import MP3_BITRATE
 
 
-def _mock_segment(duration_ms: int, frame_rate: int = 24000) -> MagicMock:
-    """Create a mock AudioSegment with correct __len__ and frame_rate."""
-    seg = MagicMock()
-    seg.__len__ = MagicMock(return_value=duration_ms)
-    seg.frame_rate = frame_rate
-    return seg
+def _mock_info(duration_secs: float, samplerate: int = 24000) -> MagicMock:
+    """Create a mock soundfile info with frames and samplerate."""
+    info = MagicMock()
+    info.samplerate = samplerate
+    info.frames = int(duration_secs * samplerate)
+    return info
 
 
 class TestEncodeToMp3Basic(unittest.TestCase):
 
     @patch("openshelf.pipeline.encoder.os.makedirs")
     @patch("openshelf.pipeline.encoder.os.remove")
-    @patch("openshelf.pipeline.encoder.AudioSegment.from_wav")
-    def test_exports_mp3(self, mock_from_wav, mock_remove, mock_makedirs):
-        seg = _mock_segment(60000)
-        mock_from_wav.return_value = seg
+    @patch("openshelf.pipeline.encoder.subprocess.run")
+    @patch("openshelf.pipeline.encoder.sf.info")
+    def test_exports_mp3(self, mock_info, mock_run, mock_remove, mock_makedirs):
+        mock_info.return_value = _mock_info(60.0)
 
         encode_to_mp3("/tmp/ch.wav", "/tmp/ch.mp3")
 
-        seg.export.assert_called_once_with("/tmp/ch.mp3", format="mp3", bitrate=MP3_BITRATE)
+        mock_run.assert_called_once()
+        args = mock_run.call_args[0][0]
+        self.assertEqual(args[0], "ffmpeg")
+        self.assertIn("/tmp/ch.wav", args)
+        self.assertIn("/tmp/ch.mp3", args)
 
     @patch("openshelf.pipeline.encoder.os.makedirs")
     @patch("openshelf.pipeline.encoder.os.remove")
-    @patch("openshelf.pipeline.encoder.AudioSegment.from_wav")
-    def test_returns_duration(self, mock_from_wav, mock_remove, mock_makedirs):
-        mock_from_wav.return_value = _mock_segment(90000)
+    @patch("openshelf.pipeline.encoder.subprocess.run")
+    @patch("openshelf.pipeline.encoder.sf.info")
+    def test_returns_duration(self, mock_info, mock_run, mock_remove, mock_makedirs):
+        mock_info.return_value = _mock_info(90.0)
 
         duration = encode_to_mp3("/tmp/ch.wav", "/tmp/ch.mp3")
 
@@ -45,34 +50,37 @@ class TestEncodeToMp3Basic(unittest.TestCase):
 
     @patch("openshelf.pipeline.encoder.os.makedirs")
     @patch("openshelf.pipeline.encoder.os.remove")
-    @patch("openshelf.pipeline.encoder.AudioSegment.from_wav")
-    def test_default_bitrate(self, mock_from_wav, mock_remove, mock_makedirs):
-        seg = _mock_segment(1000)
-        mock_from_wav.return_value = seg
+    @patch("openshelf.pipeline.encoder.subprocess.run")
+    @patch("openshelf.pipeline.encoder.sf.info")
+    def test_default_bitrate(self, mock_info, mock_run, mock_remove, mock_makedirs):
+        mock_info.return_value = _mock_info(1.0)
 
         encode_to_mp3("/tmp/ch.wav", "/tmp/ch.mp3")
 
-        seg.export.assert_called_once_with("/tmp/ch.mp3", format="mp3", bitrate="128k")
+        args = mock_run.call_args[0][0]
+        self.assertIn(MP3_BITRATE, args)
 
     @patch("openshelf.pipeline.encoder.os.makedirs")
     @patch("openshelf.pipeline.encoder.os.remove")
-    @patch("openshelf.pipeline.encoder.AudioSegment.from_wav")
-    def test_custom_bitrate(self, mock_from_wav, mock_remove, mock_makedirs):
-        seg = _mock_segment(1000)
-        mock_from_wav.return_value = seg
+    @patch("openshelf.pipeline.encoder.subprocess.run")
+    @patch("openshelf.pipeline.encoder.sf.info")
+    def test_custom_bitrate(self, mock_info, mock_run, mock_remove, mock_makedirs):
+        mock_info.return_value = _mock_info(1.0)
 
         encode_to_mp3("/tmp/ch.wav", "/tmp/ch.mp3", bitrate="192k")
 
-        seg.export.assert_called_once_with("/tmp/ch.mp3", format="mp3", bitrate="192k")
+        args = mock_run.call_args[0][0]
+        self.assertIn("192k", args)
 
 
 class TestEncodeToMp3WavCleanup(unittest.TestCase):
 
     @patch("openshelf.pipeline.encoder.os.makedirs")
     @patch("openshelf.pipeline.encoder.os.remove")
-    @patch("openshelf.pipeline.encoder.AudioSegment.from_wav")
-    def test_deletes_wav_by_default(self, mock_from_wav, mock_remove, mock_makedirs):
-        mock_from_wav.return_value = _mock_segment(1000)
+    @patch("openshelf.pipeline.encoder.subprocess.run")
+    @patch("openshelf.pipeline.encoder.sf.info")
+    def test_deletes_wav_by_default(self, mock_info, mock_run, mock_remove, mock_makedirs):
+        mock_info.return_value = _mock_info(1.0)
 
         encode_to_mp3("/tmp/ch.wav", "/tmp/ch.mp3")
 
@@ -80,9 +88,10 @@ class TestEncodeToMp3WavCleanup(unittest.TestCase):
 
     @patch("openshelf.pipeline.encoder.os.makedirs")
     @patch("openshelf.pipeline.encoder.os.remove")
-    @patch("openshelf.pipeline.encoder.AudioSegment.from_wav")
-    def test_keeps_wav_when_requested(self, mock_from_wav, mock_remove, mock_makedirs):
-        mock_from_wav.return_value = _mock_segment(1000)
+    @patch("openshelf.pipeline.encoder.subprocess.run")
+    @patch("openshelf.pipeline.encoder.sf.info")
+    def test_keeps_wav_when_requested(self, mock_info, mock_run, mock_remove, mock_makedirs):
+        mock_info.return_value = _mock_info(1.0)
 
         encode_to_mp3("/tmp/ch.wav", "/tmp/ch.mp3", delete_wav=False)
 
@@ -93,27 +102,30 @@ class TestEncodeToMp3FileHandling(unittest.TestCase):
 
     @patch("openshelf.pipeline.encoder.os.makedirs")
     @patch("openshelf.pipeline.encoder.os.remove")
-    @patch("openshelf.pipeline.encoder.AudioSegment.from_wav")
-    def test_creates_output_directory(self, mock_from_wav, mock_remove, mock_makedirs):
-        mock_from_wav.return_value = _mock_segment(1000)
+    @patch("openshelf.pipeline.encoder.subprocess.run")
+    @patch("openshelf.pipeline.encoder.sf.info")
+    def test_creates_output_directory(self, mock_info, mock_run, mock_remove, mock_makedirs):
+        mock_info.return_value = _mock_info(1.0)
 
         encode_to_mp3("/tmp/ch.wav", "/tmp/new/dir/ch.mp3")
 
         mock_makedirs.assert_called_once_with("/tmp/new/dir", exist_ok=True)
 
     @patch("openshelf.pipeline.encoder.os.makedirs")
-    @patch("openshelf.pipeline.encoder.AudioSegment.from_wav")
-    def test_wav_not_found_raises(self, mock_from_wav, mock_makedirs):
-        mock_from_wav.side_effect = FileNotFoundError("No such file")
+    @patch("openshelf.pipeline.encoder.subprocess.run")
+    @patch("openshelf.pipeline.encoder.sf.info")
+    def test_wav_not_found_raises(self, mock_info, mock_run, mock_makedirs):
+        mock_info.side_effect = FileNotFoundError("No such file")
 
         with self.assertRaises(FileNotFoundError):
             encode_to_mp3("/tmp/missing.wav", "/tmp/ch.mp3")
 
     @patch("openshelf.pipeline.encoder.os.makedirs")
     @patch("openshelf.pipeline.encoder.os.remove")
-    @patch("openshelf.pipeline.encoder.AudioSegment.from_wav")
-    def test_zero_duration(self, mock_from_wav, mock_remove, mock_makedirs):
-        mock_from_wav.return_value = _mock_segment(0)
+    @patch("openshelf.pipeline.encoder.subprocess.run")
+    @patch("openshelf.pipeline.encoder.sf.info")
+    def test_zero_duration(self, mock_info, mock_run, mock_remove, mock_makedirs):
+        mock_info.return_value = _mock_info(0.0)
 
         duration = encode_to_mp3("/tmp/ch.wav", "/tmp/ch.mp3")
 

@@ -54,10 +54,10 @@ brew install ffmpeg
 
 ```bash
 # Preview what would be downloaded (no files written)
-python3 scripts/download-books.py --dry-run --author "Dostoevsky, Fydor"
+python3 scripts/download-books.py --dry-run --author "Dostoevsky, Fyodor"
 
 # Download from all sources
-python3 scripts/download-books.py --author "Dostoevsky, Fydor"
+python3 scripts/download-books.py --author "Dostoevsky, Fyodor"
 
 # Download from a specific source
 python3 scripts/download-books.py --source gutenberg --author "Franz Kafka"
