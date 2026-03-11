@@ -135,6 +135,26 @@ class TestGenerateManifestContent(unittest.TestCase):
         numbers = [ch["number"] for ch in manifest["chapters"]]
         self.assertEqual(numbers, [1, 2])
 
+    def test_manifest_has_rendition(self):
+        manifest = self._run()
+        self.assertIn("rendition", manifest)
+
+    def test_manifest_rendition_value(self):
+        captured = {}
+        with patch("openshelf.pipeline.manifest.os.path.exists", return_value=False), \
+             patch("openshelf.pipeline.manifest.os.makedirs"), \
+             patch("builtins.open", mock_open()), \
+             patch("openshelf.pipeline.manifest.json.dump",
+                   side_effect=lambda data, *a, **kw: captured.update(data)):
+            generate_manifest("Kafka", "The Trial", "gutenberg", _chapters(),
+                              "/tmp/out", rendition="kokoro-af-heart", chunks_version=1)
+        self.assertEqual(captured["rendition"], "kokoro-af-heart")
+        self.assertEqual(captured["chunks_version"], 1)
+
+    def test_manifest_has_chunks_version(self):
+        manifest = self._run()
+        self.assertIn("chunks_version", manifest)
+
 
 if __name__ == "__main__":
     unittest.main()

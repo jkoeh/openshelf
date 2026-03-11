@@ -1,6 +1,11 @@
 """Step 2: Split chapter text into paragraph-aware chunks for TTS."""
 
+from __future__ import annotations
+
+import hashlib
+import json
 import re
+from typing import Any
 
 from openshelf.config import CHUNK_MAX_WORDS
 
@@ -135,3 +140,35 @@ def chunk_text(text: str, max_words: int = CHUNK_MAX_WORDS) -> list[str]:
         chunks.append("\n\n".join(current_parts))
 
     return chunks
+
+
+def serialize_chunks(
+    chapters: list[dict[str, Any]],
+    epub_sha256: str,
+) -> str:
+    """Serialize chunked chapters to JSON for storage.
+
+    Args:
+        chapters: list of {"number": int, "title": str, "chunks": list[str]}
+        epub_sha256: SHA-256 hex digest of the source EPUB file
+    """
+    data = {
+        "version": 1,
+        "source_epub_sha256": epub_sha256,
+        "chapters": chapters,
+    }
+    return json.dumps(data, indent=2, ensure_ascii=False)
+
+
+def deserialize_chunks(json_str: str) -> dict[str, Any]:
+    """Deserialize chunks JSON. Returns the full dict with version, sha256, and chapters."""
+    return json.loads(json_str)
+
+
+def sha256_file(path: str) -> str:
+    """Compute SHA-256 hex digest of a file."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(65536), b""):
+            h.update(block)
+    return h.hexdigest()
