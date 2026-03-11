@@ -48,8 +48,14 @@ python3 scripts/download-books.py --source gutenberg --author "Dostoevsky"
 # Run tests
 python3 -m unittest discover -s tests -v
 
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install dependencies
+uv pip install -r requirements.txt
+
 # Install as editable package (optional)
-pip install -e ".[dev]"
+uv pip install -e ".[dev]"
 ```
 
 ## Conventions

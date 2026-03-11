@@ -40,9 +40,13 @@ tests/
 ## Install
 
 ```bash
-python3 -m venv .venv
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create venv and install dependencies
+uv venv
 source .venv/bin/activate
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 
 # ffmpeg (macOS) — required for MP3 encoding
 brew install ffmpeg
@@ -148,7 +152,7 @@ All tests are fully mocked — no network calls, no GPU, no ffmpeg required. Saf
 ## Development
 
 ```bash
-python3 -m venv .venv
+uv venv
 source .venv/bin/activate
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 ```

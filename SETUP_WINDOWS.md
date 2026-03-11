@@ -2,11 +2,28 @@
 
 ## Prerequisites
 
-### Python 3.11+
-Download from [python.org](https://python.org) — check **"Add Python to PATH"** during install.
+### Python 3.13
+Use **uv** to manage Python versions (recommended over installing from python.org directly).
+
+Install uv (run in PowerShell):
 ```powershell
-python --version  # verify
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
+
+uv installs to `C:\Users\<you>\.local\bin` which may not be in PATH. Add it permanently:
+```powershell
+[Environment]::SetEnvironmentVariable("PATH", [Environment]::GetEnvironmentVariable("PATH", "User") + ";$env:USERPROFILE\.local\bin", "User")
+```
+
+**Restart your terminal**, then install Python 3.13:
+```powershell
+uv python install 3.13
+uv python pin 3.13
+```
+
+> **Why not Python 3.14?** Several dependencies (kokoro → thinc → blis) don't have pre-built
+> wheels for Python 3.14 yet and require a C compiler to build from source. Python 3.13 has
+> full wheel coverage for all dependencies.
 
 ### Git
 Download from [git-scm.com](https://git-scm.com).
@@ -15,7 +32,23 @@ Download from [git-scm.com](https://git-scm.com).
 ```powershell
 winget install ffmpeg
 ```
-Or download from [ffmpeg.org](https://ffmpeg.org) and add the `bin/` folder to your PATH manually.
+
+winget installs FFmpeg but does **not** add it to PATH automatically. Add it permanently:
+```powershell
+# Find where winget put it
+Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Recurse -Filter "ffmpeg.exe" | Select-Object FullName
+
+# Then add that bin/ folder to PATH (replace the path below with what you found above)
+[Environment]::SetEnvironmentVariable("PATH", [Environment]::GetEnvironmentVariable("PATH", "User") + ";C:\Users\<you>\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.0.1-full_build\bin", "User")
+```
+
+> **Why not `setx`?** `setx` silently truncates PATH at 1024 characters.
+> `[Environment]::SetEnvironmentVariable` writes directly to the registry with no limit.
+
+Restart your terminal, then verify:
+```powershell
+where.exe ffmpeg  # should print the path
+```
 
 ---
 
@@ -26,20 +59,29 @@ git clone <your-repo-url>
 cd openshelf
 
 # Create and activate virtual environment
-python -m venv .venv
+uv venv
 .venv\Scripts\activate
 ```
 
 ### Install dependencies
 
-Install PyTorch first (avoids conflicts with kokoro):
+Install PyTorch with CUDA support first (for NVIDIA GPU acceleration):
 ```powershell
-pip install torch --index-url https://download.pytorch.org/whl/cpu
+# NVIDIA GPU (CUDA 12.6 — works with driver CUDA 13.x too)
+uv pip install torch --index-url https://download.pytorch.org/whl/cu126
+
+# CPU only (no GPU)
+uv pip install torch --index-url https://download.pytorch.org/whl/cpu
+```
+
+Verify GPU is detected:
+```powershell
+python -c "import torch; print(torch.__version__); print('CUDA:', torch.cuda.is_available())"
 ```
 
 Then install the project and all dependencies:
 ```powershell
-pip install -e ".[dev]"
+uv pip install -e ".[dev]"
 ```
 
 > **Why `-e ".[dev]"` instead of `-r requirements.txt`?**
@@ -83,4 +125,7 @@ python scripts\download-books.py --dry-run --author "Kafka"
 | Long path errors with git | `git config core.longpaths true` |
 | Line ending warnings | `git config core.autocrlf true` |
 | `.venv\Scripts\activate` blocked by PowerShell | Run `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` once |
-| `ffmpeg` not found by pydub | Ensure FFmpeg `bin/` is in your system PATH, then reopen terminal |
+| `ffmpeg` not found | Use `[Environment]::SetEnvironmentVariable` to add to PATH — not `setx` (has 1024-char limit) |
+| `uv` not found after install | Add `%USERPROFILE%\.local\bin` to PATH via `[Environment]::SetEnvironmentVariable` |
+| kokoro/blis fails to build | You're on Python 3.14+ — downgrade to 3.13 via `uv python pin 3.13` |
+| torch shows `+cpu` / CUDA not available | Reinstall torch with the correct index URL: `uv pip install torch --index-url https://download.pytorch.org/whl/cu126 --reinstall` |
