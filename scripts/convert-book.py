@@ -13,7 +13,6 @@ Usage:
 import argparse
 import json
 import os
-import subprocess
 import sys
 import time
 
@@ -27,17 +26,9 @@ from openshelf.pipeline.epub_parser import parse_epub
 from openshelf.pipeline.manifest import ChapterMeta, generate_manifest
 from openshelf.pipeline.text_chunker import chunk_text, serialize_chunks, sha256_file
 from openshelf.pipeline.tts import load_pipeline, synthesize_chapter
-from openshelf.pipeline.encoder import encode_to_mp3
+from openshelf.pipeline.encoder import audio_duration, encode_to_mp3
 from openshelf.scrapers.http import sanitize
 
-
-def _ffprobe_duration(mp3_path: str) -> float:
-    """Get duration of an MP3 via ffprobe (ffmpeg is already a dependency)."""
-    result = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", mp3_path],
-        capture_output=True, text=True, check=True,
-    )
-    return float(result.stdout.strip())
 
 
 def main():
@@ -136,7 +127,7 @@ def main():
         mp3_path = os.path.join(output_dir, f"chapter-{ch_num:02d}.mp3")
 
         if os.path.exists(mp3_path):
-            chapter_durations[ch_num] = _ffprobe_duration(mp3_path)
+            chapter_durations[ch_num] = audio_duration(mp3_path)
             print(f"  [{ch_num:>2}/{len(chapters)}] {ch_title} — [SKIP] exists")
             continue
 

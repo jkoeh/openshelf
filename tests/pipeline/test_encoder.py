@@ -8,7 +8,7 @@ from unittest.mock import patch, MagicMock
 # Allow running without pip install
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from openshelf.pipeline.encoder import encode_to_mp3
+from openshelf.pipeline.encoder import audio_duration, encode_to_mp3
 from openshelf.config import MP3_BITRATE
 
 
@@ -130,6 +130,42 @@ class TestEncodeToMp3FileHandling(unittest.TestCase):
         duration = encode_to_mp3("/tmp/ch.wav", "/tmp/ch.mp3")
 
         self.assertEqual(duration, 0.0)
+
+
+class TestAudioDuration(unittest.TestCase):
+
+    @patch("openshelf.pipeline.encoder.subprocess.run")
+    def test_returns_duration(self, mock_run):
+        mock_run.return_value = MagicMock(stdout="123.456\n")
+
+        result = audio_duration("/tmp/chapter-01.mp3")
+
+        self.assertAlmostEqual(result, 123.456)
+
+    @patch("openshelf.pipeline.encoder.subprocess.run")
+    def test_calls_ffprobe(self, mock_run):
+        mock_run.return_value = MagicMock(stdout="60.0\n")
+
+        audio_duration("/tmp/chapter-01.mp3")
+
+        args = mock_run.call_args[0][0]
+        self.assertEqual(args[0], "ffprobe")
+        self.assertIn("/tmp/chapter-01.mp3", args)
+
+    @patch("openshelf.pipeline.encoder.subprocess.run")
+    def test_ffprobe_not_found_raises(self, mock_run):
+        mock_run.side_effect = FileNotFoundError("ffprobe not found")
+
+        with self.assertRaises(FileNotFoundError):
+            audio_duration("/tmp/chapter-01.mp3")
+
+    @patch("openshelf.pipeline.encoder.subprocess.run")
+    def test_ffprobe_failure_raises(self, mock_run):
+        import subprocess
+        mock_run.side_effect = subprocess.CalledProcessError(1, "ffprobe")
+
+        with self.assertRaises(subprocess.CalledProcessError):
+            audio_duration("/tmp/chapter-01.mp3")
 
 
 if __name__ == "__main__":

@@ -13,7 +13,6 @@ Usage:
 import argparse
 import json
 import os
-import subprocess
 import sys
 
 # Allow running from the scripts/ directory without pip install
@@ -22,18 +21,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from ebooklib import epub as _epub_lib
 
 from openshelf.config import R2_BUCKET, R2_DEFAULT_RENDITION
+from openshelf.pipeline.encoder import audio_duration
 from openshelf.pipeline.manifest import ChapterMeta, generate_manifest
 from openshelf.pipeline.r2 import make_client, upload_epub, upload_chunks, upload_rendition
 from openshelf.scrapers.http import sanitize
 
-
-def _ffprobe_duration(mp3_path: str) -> float:
-    """Get duration of an MP3 via ffprobe (ffmpeg is already a dependency)."""
-    result = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", mp3_path],
-        capture_output=True, text=True, check=True,
-    )
-    return float(result.stdout.strip())
 
 
 def main():
@@ -97,7 +89,7 @@ def main():
         except ValueError:
             continue
         mp3_path = os.path.join(rendition_dir, filename)
-        duration = _ffprobe_duration(mp3_path)
+        duration = audio_duration(mp3_path)
         chapter_metas.append(ChapterMeta(
             number=ch_num,
             title=title_map.get(ch_num, f"Chapter {ch_num}"),
