@@ -300,5 +300,49 @@ class TestParseEpubEdgeCases(unittest.TestCase):
         self.assertEqual(len(parse_epub("f.epub")), 0)
 
 
+class TestParseEpubParagraphs(unittest.TestCase):
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_paragraphs_field_is_list(self, mock_read):
+        html = _chapter_html("h2", "Ch", 60)
+        mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
+        ch = parse_epub("f.epub")[0]
+        self.assertIsInstance(ch.paragraphs, list)
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_paragraphs_count_matches_p_tags(self, mock_read):
+        words_a = " ".join(f"a{i}" for i in range(30))
+        words_b = " ".join(f"b{i}" for i in range(30))
+        html = f"<html><body><h1>T</h1><p>{words_a}</p><p>{words_b}</p></body></html>"
+        mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
+        ch = parse_epub("f.epub")[0]
+        self.assertEqual(len(ch.paragraphs), 2)
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_paragraphs_join_equals_text(self, mock_read):
+        html = _chapter_html("h2", "Ch", 60)
+        mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
+        ch = parse_epub("f.epub")[0]
+        self.assertEqual("\n\n".join(ch.paragraphs), ch.text)
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_paragraphs_fallback_single_item(self, mock_read):
+        words = " ".join(f"w{i}" for i in range(60))
+        html = f"<html><body><h1>T</h1><div>{words}</div></body></html>"
+        mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
+        ch = parse_epub("f.epub")[0]
+        self.assertEqual(len(ch.paragraphs), 1)
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_no_double_newline_inside_paragraph(self, mock_read):
+        words_a = " ".join(f"a{i}" for i in range(30))
+        words_b = " ".join(f"b{i}" for i in range(30))
+        html = f"<html><body><h1>T</h1><p>{words_a}</p><p>{words_b}</p></body></html>"
+        mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
+        ch = parse_epub("f.epub")[0]
+        for para in ch.paragraphs:
+            self.assertNotIn("\n\n", para)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -7,7 +7,7 @@ import unittest
 # Allow running without pip install
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from openshelf.pipeline.text_chunker import chunk_text, serialize_chunks, deserialize_chunks, sha256_file
+from openshelf.pipeline.text_chunker import Chunk, chunk_text, serialize_chunks, deserialize_chunks, sha256_file
 from openshelf.config import CHUNK_MAX_WORDS
 
 
@@ -22,25 +22,29 @@ def _word_count(text: str) -> int:
 
 class TestChunkTextBasic(unittest.TestCase):
 
-    def test_empty_string(self):
-        self.assertEqual(chunk_text(""), [])
+    def test_empty_list(self):
+        self.assertEqual(chunk_text([]), [])
 
-    def test_whitespace_only(self):
-        self.assertEqual(chunk_text("   \n\t  "), [])
+    def test_whitespace_only_paragraph(self):
+        self.assertEqual(chunk_text(["   \n\t  "]), [])
 
     def test_single_word(self):
-        self.assertEqual(chunk_text("Hello"), ["Hello"])
+        result = chunk_text(["Hello"])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].text, "Hello")
 
     def test_short_text_single_chunk(self):
-        text = _words(100)
-        chunks = chunk_text(text)
-        self.assertEqual(len(chunks), 1)
+        result = chunk_text([_words(100)])
+        self.assertEqual(len(result), 1)
 
     def test_text_exactly_at_max(self):
-        text = _words(CHUNK_MAX_WORDS)
-        chunks = chunk_text(text)
-        self.assertEqual(len(chunks), 1)
-        self.assertEqual(_word_count(chunks[0]), CHUNK_MAX_WORDS)
+        result = chunk_text([_words(CHUNK_MAX_WORDS)])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(_word_count(result[0].text), CHUNK_MAX_WORDS)
+
+    def test_returns_chunk_objects(self):
+        result = chunk_text(["hello world"])
+        self.assertIsInstance(result[0], Chunk)
 
 
 class TestChunkTextSentenceSplitting(unittest.TestCase):
@@ -48,113 +52,99 @@ class TestChunkTextSentenceSplitting(unittest.TestCase):
     def test_splits_on_period(self):
         s1 = _words(300) + "."
         s2 = _words(300) + "."
-        chunks = chunk_text(f"{s1} {s2}")
-        self.assertEqual(len(chunks), 2)
+        result = chunk_text([f"{s1} {s2}"])
+        self.assertEqual(len(result), 2)
 
     def test_splits_on_exclamation(self):
         s1 = _words(300) + "!"
         s2 = _words(300) + "!"
-        chunks = chunk_text(f"{s1} {s2}")
-        self.assertEqual(len(chunks), 2)
+        result = chunk_text([f"{s1} {s2}"])
+        self.assertEqual(len(result), 2)
 
     def test_splits_on_question_mark(self):
         s1 = _words(300) + "?"
         s2 = _words(300) + "?"
-        chunks = chunk_text(f"{s1} {s2}")
-        self.assertEqual(len(chunks), 2)
+        result = chunk_text([f"{s1} {s2}"])
+        self.assertEqual(len(result), 2)
 
     def test_no_mid_sentence_split(self):
         s1 = _words(400) + "."
         s2 = _words(100) + "."
-        chunks = chunk_text(f"{s1} {s2}")
-        # 400-word sentence can't merge with 100-word one (400+100=500 > 450)
-        # period attaches to last word, so word count stays at 400/100
-        self.assertEqual(len(chunks), 2)
-        self.assertEqual(_word_count(chunks[0]), 400)
-        self.assertEqual(_word_count(chunks[1]), 100)
+        result = chunk_text([f"{s1} {s2}"])
+        self.assertEqual(len(result), 2)
+        self.assertEqual(_word_count(result[0].text), 400)
+        self.assertEqual(_word_count(result[1].text), 100)
 
     def test_greedy_accumulation(self):
         s1 = _words(200) + "."
         s2 = _words(200) + "."
         s3 = _words(200) + "."
-        chunks = chunk_text(f"{s1} {s2} {s3}")
-        # 200+200=400 fits, then 200 alone
-        self.assertEqual(len(chunks), 2)
-        self.assertLessEqual(_word_count(chunks[0]), CHUNK_MAX_WORDS)
+        result = chunk_text([f"{s1} {s2} {s3}"])
+        self.assertEqual(len(result), 2)
+        self.assertLessEqual(_word_count(result[0].text), CHUNK_MAX_WORDS)
 
 
 class TestChunkTextPunctuationEdgeCases(unittest.TestCase):
 
     def test_ellipsis(self):
-        text = "He paused... Then continued."
-        chunks = chunk_text(text)
-        self.assertTrue(len(chunks) >= 1)
-        self.assertTrue(all(c.strip() for c in chunks))
+        result = chunk_text(["He paused... Then continued."])
+        self.assertTrue(len(result) >= 1)
+        self.assertTrue(all(c.text.strip() for c in result))
 
     def test_multiple_punctuation(self):
-        text = "Really?! You think so?!"
-        chunks = chunk_text(text)
-        self.assertTrue(len(chunks) >= 1)
+        result = chunk_text(["Really?! You think so?!"])
+        self.assertTrue(len(result) >= 1)
 
     def test_text_ending_without_punctuation(self):
-        text = "This has no ending period"
-        chunks = chunk_text(text)
-        self.assertEqual(chunks, ["This has no ending period"])
+        result = chunk_text(["This has no ending period"])
+        self.assertEqual(result[0].text, "This has no ending period")
 
     def test_quoted_dialogue(self):
         text = '"Hello there." She smiled. "How are you?"'
-        chunks = chunk_text(text)
-        self.assertTrue(len(chunks) >= 1)
-        # all words preserved
-        all_words = " ".join(chunks).split()
+        result = chunk_text([text])
+        self.assertTrue(len(result) >= 1)
+        all_words = " ".join(c.text for c in result).split()
         self.assertEqual(len(all_words), len(text.split()))
 
-    def test_newlines_between_paragraphs(self):
-        text = "First paragraph.\n\nSecond paragraph."
-        chunks = chunk_text(text)
-        self.assertTrue(len(chunks) >= 1)
+    def test_two_paragraphs(self):
+        result = chunk_text(["First paragraph.", "Second paragraph."])
+        self.assertTrue(len(result) >= 1)
 
 
 class TestChunkTextAbbreviations(unittest.TestCase):
 
     def test_dr_not_split(self):
-        text = "Dr. Smith went to the store. He bought milk."
-        chunks = chunk_text(text)
-        joined = " ".join(chunks)
+        result = chunk_text(["Dr. Smith went to the store. He bought milk."])
+        joined = " ".join(c.text for c in result)
         self.assertIn("Dr.", joined)
 
     def test_mr_mrs_not_split(self):
-        text = "Mr. and Mrs. Jones arrived. They were late."
-        chunks = chunk_text(text)
-        joined = " ".join(chunks)
+        result = chunk_text(["Mr. and Mrs. Jones arrived. They were late."])
+        joined = " ".join(c.text for c in result)
         self.assertIn("Mr.", joined)
         self.assertIn("Mrs.", joined)
 
     def test_etc_not_split(self):
-        text = "Apples, oranges, etc. were on the table. She picked one."
-        chunks = chunk_text(text)
-        joined = " ".join(chunks)
+        result = chunk_text(["Apples, oranges, etc. were on the table. She picked one."])
+        joined = " ".join(c.text for c in result)
         self.assertIn("etc.", joined)
 
     def test_single_letter_initial(self):
-        text = "J. K. Rowling wrote many books. They were popular."
-        chunks = chunk_text(text)
-        joined = " ".join(chunks)
+        result = chunk_text(["J. K. Rowling wrote many books. They were popular."])
+        joined = " ".join(c.text for c in result)
         self.assertIn("J.", joined)
         self.assertIn("K.", joined)
 
     def test_military_abbreviations(self):
-        text = "Col. Mustard met Capt. Plum and Lt. Green."
-        chunks = chunk_text(text)
-        joined = " ".join(chunks)
+        result = chunk_text(["Col. Mustard met Capt. Plum and Lt. Green."])
+        joined = " ".join(c.text for c in result)
         self.assertIn("Col.", joined)
         self.assertIn("Capt.", joined)
         self.assertIn("Lt.", joined)
 
     def test_geographic_abbreviations(self):
-        text = "Mt. Everest and Ft. Knox are famous. They attract visitors."
-        chunks = chunk_text(text)
-        joined = " ".join(chunks)
+        result = chunk_text(["Mt. Everest and Ft. Knox are famous. They attract visitors."])
+        joined = " ".join(c.text for c in result)
         self.assertIn("Mt.", joined)
         self.assertIn("Ft.", joined)
 
@@ -162,82 +152,65 @@ class TestChunkTextAbbreviations(unittest.TestCase):
 class TestChunkTextOversizedSentences(unittest.TestCase):
 
     def test_over_max_splits_at_commas(self):
-        # Build a 600-word sentence with commas every 100 words
         parts = [_words(100) for _ in range(6)]
         sentence = ", ".join(parts) + "."
-        chunks = chunk_text(sentence)
-        self.assertTrue(len(chunks) >= 2)
-        for c in chunks:
-            self.assertLessEqual(_word_count(c), CHUNK_MAX_WORDS)
+        result = chunk_text([sentence])
+        self.assertTrue(len(result) >= 2)
+        for c in result:
+            self.assertLessEqual(_word_count(c.text), CHUNK_MAX_WORDS)
 
     def test_no_commas_splits_at_words(self):
-        sentence = _words(500) + "."
-        chunks = chunk_text(sentence)
-        self.assertTrue(len(chunks) >= 2)
-        for c in chunks:
-            self.assertLessEqual(_word_count(c), CHUNK_MAX_WORDS)
+        result = chunk_text([_words(500) + "."])
+        self.assertTrue(len(result) >= 2)
+        for c in result:
+            self.assertLessEqual(_word_count(c.text), CHUNK_MAX_WORDS)
 
     def test_mix_normal_and_oversized(self):
         normal = _words(200) + "."
         oversized = _words(600) + "."
-        text = f"{normal} {oversized}"
-        chunks = chunk_text(text)
-        self.assertTrue(len(chunks) >= 2)
-        for c in chunks:
-            self.assertLessEqual(_word_count(c), CHUNK_MAX_WORDS)
+        result = chunk_text([f"{normal} {oversized}"])
+        self.assertTrue(len(result) >= 2)
+        for c in result:
+            self.assertLessEqual(_word_count(c.text), CHUNK_MAX_WORDS)
 
     def test_sentence_exactly_at_max_no_split(self):
-        sentence = _words(CHUNK_MAX_WORDS) + "."
-        chunks = chunk_text(sentence)
-        # 450 words + "." attached to last word = still 450 words
-        self.assertEqual(len(chunks), 1)
+        result = chunk_text([_words(CHUNK_MAX_WORDS) + "."])
+        self.assertEqual(len(result), 1)
 
     def test_sentence_at_451_words_no_commas(self):
-        sentence = _words(451) + "."
-        chunks = chunk_text(sentence)
-        self.assertEqual(len(chunks), 2)
-        self.assertEqual(_word_count(chunks[0]), CHUNK_MAX_WORDS)
-        self.assertEqual(_word_count(chunks[1]), 1)  # last word with period attached
+        result = chunk_text([_words(451) + "."])
+        self.assertEqual(len(result), 2)
+        self.assertEqual(_word_count(result[0].text), CHUNK_MAX_WORDS)
+        self.assertEqual(_word_count(result[1].text), 1)
 
 
 class TestChunkTextParagraphAwareness(unittest.TestCase):
 
     def test_paragraph_boundaries_preserved_in_chunks(self):
         paras = [_words(100) + "." for _ in range(10)]
-        text = "\n\n".join(paras)
-        chunks = chunk_text(text)
-        # Paragraphs packed into same chunk should retain \n\n separator
-        # 4 x 100-word paragraphs fit in 450 max, so at least one chunk has \n\n
-        multi_para_chunks = [c for c in chunks if "\n\n" in c]
+        result = chunk_text(paras)
+        multi_para_chunks = [c for c in result if "\n\n" in c.text]
         self.assertTrue(len(multi_para_chunks) >= 1)
-        # No chunk exceeds max words
-        for c in chunks:
-            self.assertLessEqual(_word_count(c), CHUNK_MAX_WORDS)
+        for c in result:
+            self.assertLessEqual(_word_count(c.text), CHUNK_MAX_WORDS)
 
     def test_short_paragraphs_packed(self):
-        p1 = _words(100) + "."
-        p2 = _words(100) + "."
-        text = f"{p1}\n\n{p2}"
-        chunks = chunk_text(text)
+        result = chunk_text([_words(100) + ".", _words(100) + "."])
         # 100 + 100 = 200, fits in one chunk
-        self.assertEqual(len(chunks), 1)
+        self.assertEqual(len(result), 1)
 
     def test_oversized_paragraph_split_at_sentences(self):
         sentences = [_words(100) + "." for _ in range(6)]
         para = " ".join(sentences)  # 600 words, one paragraph
-        chunks = chunk_text(para)
-        self.assertTrue(len(chunks) >= 2)
-        for c in chunks:
-            self.assertLessEqual(_word_count(c), CHUNK_MAX_WORDS)
+        result = chunk_text([para])
+        self.assertTrue(len(result) >= 2)
+        for c in result:
+            self.assertLessEqual(_word_count(c.text), CHUNK_MAX_WORDS)
 
-    def test_paragraph_boundary_respected(self):
-        p1 = _words(300) + "."
-        p2 = _words(300) + "."
-        text = f"{p1}\n\n{p2}"
-        chunks = chunk_text(text)
-        # 300 + 300 = 600 > max, but even if they fit, paragraph boundary
-        # means they're separate units. Since 300+300 > 450, must be 2 chunks.
-        self.assertEqual(len(chunks), 2)
+    def test_large_paragraphs_not_packed(self):
+        result = chunk_text([_words(300) + ".", _words(300) + "."])
+        # 300 + 300 = 600 > max, so must be 2 chunks
+        self.assertEqual(len(result), 2)
 
     def test_dialogue_paragraphs_packed(self):
         lines = [
@@ -247,76 +220,138 @@ class TestChunkTextParagraphAwareness(unittest.TestCase):
             '"Fine," he conceded.',
             '"Good," she nodded.',
         ]
-        text = "\n\n".join(lines)
-        chunks = chunk_text(text)
-        # All very short, should pack into 1 chunk
-        self.assertEqual(len(chunks), 1)
+        result = chunk_text(lines)
+        self.assertEqual(len(result), 1)
         total_words = sum(_word_count(line) for line in lines)
-        self.assertEqual(_word_count(chunks[0]), total_words)
+        self.assertEqual(_word_count(result[0].text), total_words)
 
 
 class TestChunkTextInvariants(unittest.TestCase):
 
     def test_no_chunk_exceeds_max(self):
         paras = [_words(200) + "." for _ in range(20)]
-        text = "\n\n".join(paras)
-        chunks = chunk_text(text)
-        for c in chunks:
-            self.assertLessEqual(_word_count(c), CHUNK_MAX_WORDS)
+        result = chunk_text(paras)
+        for c in result:
+            self.assertLessEqual(_word_count(c.text), CHUNK_MAX_WORDS)
 
     def test_all_words_preserved(self):
-        text = "The quick brown fox.\n\nJumped over the lazy dog."
-        chunks = chunk_text(text)
-        original_words = text.split()
-        chunk_words = " ".join(chunks).split()
+        paras = ["The quick brown fox.", "Jumped over the lazy dog."]
+        result = chunk_text(paras)
+        original_words = " ".join(paras).split()
+        chunk_words = " ".join(c.text for c in result).split()
         self.assertEqual(sorted(original_words), sorted(chunk_words))
 
     def test_order_preserved(self):
         sentences = [f"Sentence{i} " + _words(50) + "." for i in range(10)]
-        text = "\n\n".join(sentences)
-        chunks = chunk_text(text)
-        rejoined = " ".join(chunks)
-        for i in range(10):
-            self.assertIn(f"Sentence{i}", rejoined)
-        # Check order
+        result = chunk_text(sentences)
+        rejoined = " ".join(c.text for c in result)
         positions = [rejoined.index(f"Sentence{i}") for i in range(10)]
         self.assertEqual(positions, sorted(positions))
+
+
+class TestChunkTextParaIndices(unittest.TestCase):
+
+    def test_single_para_indices_zero(self):
+        result = chunk_text([_words(50)])
+        self.assertEqual(result[0].para_start, 0)
+        self.assertEqual(result[0].para_end, 0)
+
+    def test_two_short_paras_packed_same_chunk(self):
+        result = chunk_text([_words(100), _words(100)])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].para_start, 0)
+        self.assertEqual(result[0].para_end, 1)
+
+    def test_two_large_paras_separate_chunks(self):
+        result = chunk_text([_words(300), _words(300)])
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0].para_start, 0)
+        self.assertEqual(result[0].para_end, 0)
+        self.assertEqual(result[1].para_start, 1)
+        self.assertEqual(result[1].para_end, 1)
+
+    def test_oversized_para_splits_keep_same_index(self):
+        # 900-word single paragraph splits into 2 chunks, both from para 0
+        sentences = [_words(100) + "." for _ in range(9)]
+        para = " ".join(sentences)
+        result = chunk_text([para])
+        self.assertTrue(len(result) >= 2)
+        for c in result:
+            self.assertEqual(c.para_start, 0)
+            self.assertEqual(c.para_end, 0)
+
+    def test_three_paragraphs_mixed_packing(self):
+        # para 0: 430 words (alone — 430+30>450), para 1+2: 30 words each (packed together)
+        result = chunk_text([_words(430), _words(30), _words(30)])
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0].para_start, 0)
+        self.assertEqual(result[0].para_end, 0)
+        self.assertEqual(result[1].para_start, 1)
+        self.assertEqual(result[1].para_end, 2)
+
+    def test_para_end_gte_para_start(self):
+        paras = [_words(50) for _ in range(10)]
+        result = chunk_text(paras)
+        for c in result:
+            self.assertGreaterEqual(c.para_end, c.para_start)
 
 
 class TestSerializeChunks(unittest.TestCase):
 
     def _sample_chapters(self):
         return [
-            {"number": 1, "title": "The Arrest", "chunks": ["chunk one.", "chunk two."]},
-            {"number": 2, "title": "First Hearing", "chunks": ["chunk three."]},
+            {
+                "number": 1,
+                "title": "The Arrest",
+                "chunks": [
+                    Chunk(text="chunk one.", para_start=0, para_end=0),
+                    Chunk(text="chunk two.", para_start=1, para_end=1),
+                ],
+            },
+            {
+                "number": 2,
+                "title": "First Hearing",
+                "chunks": [Chunk(text="chunk three.", para_start=0, para_end=0)],
+            },
         ]
 
-    def test_roundtrip(self):
-        chapters = self._sample_chapters()
-        json_str = serialize_chunks(chapters, "abc123")
-        result = deserialize_chunks(json_str)
-        self.assertEqual(result["chapters"], chapters)
-
-    def test_contains_version(self):
-        json_str = serialize_chunks(self._sample_chapters(), "abc123")
-        result = deserialize_chunks(json_str)
-        self.assertEqual(result["version"], 1)
+    def test_version_is_2(self):
+        result = deserialize_chunks(serialize_chunks(self._sample_chapters(), "abc123"))
+        self.assertEqual(result["version"], 2)
 
     def test_contains_epub_sha256(self):
-        json_str = serialize_chunks(self._sample_chapters(), "deadbeef")
-        result = deserialize_chunks(json_str)
+        result = deserialize_chunks(serialize_chunks(self._sample_chapters(), "deadbeef"))
         self.assertEqual(result["source_epub_sha256"], "deadbeef")
 
+    def test_chunks_have_text_para_start_para_end(self):
+        result = deserialize_chunks(serialize_chunks(self._sample_chapters(), "abc"))
+        chunk = result["chapters"][0]["chunks"][0]
+        self.assertIn("text", chunk)
+        self.assertIn("para_start", chunk)
+        self.assertIn("para_end", chunk)
+
+    def test_chunk_text_preserved(self):
+        result = deserialize_chunks(serialize_chunks(self._sample_chapters(), "abc"))
+        self.assertEqual(result["chapters"][0]["chunks"][0]["text"], "chunk one.")
+
+    def test_para_indices_preserved(self):
+        chapters = [{"number": 1, "title": "T", "chunks": [
+            Chunk(text="a", para_start=3, para_end=5),
+        ]}]
+        result = deserialize_chunks(serialize_chunks(chapters, "abc"))
+        self.assertEqual(result["chapters"][0]["chunks"][0]["para_start"], 3)
+        self.assertEqual(result["chapters"][0]["chunks"][0]["para_end"], 5)
+
     def test_preserves_unicode(self):
-        chapters = [{"number": 1, "title": "Über", "chunks": ["Ça va bien."]}]
-        json_str = serialize_chunks(chapters, "abc")
-        result = deserialize_chunks(json_str)
+        chapters = [{"number": 1, "title": "Über", "chunks": [
+            Chunk(text="Ça va bien.", para_start=0, para_end=0),
+        ]}]
+        result = deserialize_chunks(serialize_chunks(chapters, "abc"))
         self.assertEqual(result["chapters"][0]["title"], "Über")
-        self.assertEqual(result["chapters"][0]["chunks"][0], "Ça va bien.")
+        self.assertEqual(result["chapters"][0]["chunks"][0]["text"], "Ça va bien.")
 
     def test_empty_chapters(self):
-        json_str = serialize_chunks([], "abc")
-        result = deserialize_chunks(json_str)
+        result = deserialize_chunks(serialize_chunks([], "abc"))
         self.assertEqual(result["chapters"], [])
 
 

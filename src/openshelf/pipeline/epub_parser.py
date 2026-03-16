@@ -12,7 +12,8 @@ from bs4 import BeautifulSoup
 class Chapter:
     number: int
     title: str
-    text: str
+    paragraphs: list[str]   # stable indexed list — no "\n\n" inside items
+    text: str               # "\n\n".join(paragraphs) — kept for backward compat
     word_count: int
 
 
@@ -33,7 +34,7 @@ def _extract_title(soup: BeautifulSoup, fallback_number: int) -> str:
     return f"Chapter {fallback_number}"
 
 
-def _extract_text(soup: BeautifulSoup) -> str:
+def _extract_paragraphs(soup: BeautifulSoup) -> list[str]:
     # Remove footnote markers
     for tag in soup.find_all(["sup", "sub"]):
         tag.decompose()
@@ -43,9 +44,9 @@ def _extract_text(soup: BeautifulSoup) -> str:
         if tag.string and re.match(r"^\d+$", tag.string.strip()):
             tag.decompose()
 
-    paragraphs = soup.find_all("p")
+    p_tags = soup.find_all("p")
     cleaned = []
-    for p in paragraphs:
+    for p in p_tags:
         text = p.get_text()
         # Normalize whitespace within paragraph
         text = re.sub(r"\s+", " ", text).strip()
@@ -54,9 +55,10 @@ def _extract_text(soup: BeautifulSoup) -> str:
 
     if not cleaned:
         # Fallback: extract all text when no <p> tags (e.g. <div>-based EPUBs)
-        return re.sub(r"\s+", " ", soup.get_text()).strip()
+        full_text = re.sub(r"\s+", " ", soup.get_text()).strip()
+        return [full_text] if full_text else []
 
-    return "\n\n".join(cleaned)
+    return cleaned
 
 
 def parse_epub(epub_path: str) -> list[Chapter]:
@@ -74,7 +76,8 @@ def parse_epub(epub_path: str) -> list[Chapter]:
         content = item.get_content()
         soup = BeautifulSoup(content, "html.parser")
 
-        text = _extract_text(soup)
+        paragraphs = _extract_paragraphs(soup)
+        text = "\n\n".join(paragraphs)
         wc = len(text.split())
 
         if wc < _MIN_WORD_COUNT:
@@ -86,6 +89,7 @@ def parse_epub(epub_path: str) -> list[Chapter]:
         chapters.append(Chapter(
             number=chapter_num,
             title=title,
+            paragraphs=paragraphs,
             text=text,
             word_count=wc,
         ))

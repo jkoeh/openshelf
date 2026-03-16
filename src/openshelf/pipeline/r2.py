@@ -132,6 +132,39 @@ def upload_epub(
     return key
 
 
+def upload_alignment(
+    client,
+    bucket: str,
+    author_slug: str,
+    title_slug: str,
+    rendition: str,
+    alignment_path: str,
+) -> str | None:
+    """Upload alignment.json to R2. Returns the key, or None if already exists.
+
+    Key pattern: books/{author}/{title}/audio/{rendition}/alignment.json
+    Idempotent: skips upload if the key already exists.
+    """
+    prefix = f"{_book_prefix(author_slug, title_slug)}/audio/{rendition}"
+    key = f"{prefix}/alignment.json"
+
+    if key_exists(client, bucket, key):
+        logger.info("Alignment already uploaded, skipping: %s", key)
+        return None
+
+    client.upload_file(
+        alignment_path,
+        bucket,
+        key,
+        ExtraArgs={
+            "ContentType": "application/json",
+            "CacheControl": R2_CACHE_CONTROL_IMMUTABLE,
+        },
+    )
+    logger.info("Uploaded: %s", key)
+    return key
+
+
 def upload_chunks(
     client,
     bucket: str,

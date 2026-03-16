@@ -9,7 +9,7 @@ from unittest.mock import patch, MagicMock, call
 # Allow running without pip install
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from openshelf.pipeline.r2 import make_client, key_exists, upload_rendition, upload_epub, upload_chunks
+from openshelf.pipeline.r2 import make_client, key_exists, upload_rendition, upload_epub, upload_chunks, upload_alignment
 from openshelf.config import R2_CACHE_CONTROL_IMMUTABLE, R2_CACHE_CONTROL_MANIFEST
 
 
@@ -337,6 +337,65 @@ class TestUploadChunks(unittest.TestCase):
             upload_chunks(client, "openshelf", "kafka", "the-trial", tmp.name)
         uploaded_key = client.upload_file.call_args[0][2]
         self.assertEqual(uploaded_key, "books/kafka/the-trial/chunks.json")
+
+
+class TestUploadAlignment(unittest.TestCase):
+
+    def _make_client(self, key_exists_val: bool = False) -> MagicMock:
+        client = MagicMock()
+        from botocore.exceptions import ClientError
+        if key_exists_val:
+            client.head_object.return_value = {}
+        else:
+            err = ClientError({"Error": {"Code": "404"}}, "HeadObject")
+            client.head_object.side_effect = err
+        return client
+
+    def test_uploads_file(self):
+        client = self._make_client(key_exists_val=False)
+        with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
+            upload_alignment(client, "openshelf", "dostoevsky", "demons", "kokoro-af-heart", tmp.name)
+        client.upload_file.assert_called_once()
+
+    def test_r2_key_format(self):
+        client = self._make_client(key_exists_val=False)
+        with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
+            upload_alignment(client, "openshelf", "dostoevsky", "demons", "kokoro-af-heart", tmp.name)
+        key = client.upload_file.call_args[0][2]
+        self.assertEqual(key, "books/dostoevsky/demons/audio/kokoro-af-heart/alignment.json")
+
+    def test_skips_if_exists(self):
+        client = self._make_client(key_exists_val=True)
+        with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
+            result = upload_alignment(client, "openshelf", "dostoevsky", "demons", "kokoro-af-heart", tmp.name)
+        client.upload_file.assert_not_called()
+        self.assertIsNone(result)
+
+    def test_returns_key_on_upload(self):
+        client = self._make_client(key_exists_val=False)
+        with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
+            result = upload_alignment(client, "openshelf", "dostoevsky", "demons", "kokoro-af-heart", tmp.name)
+        self.assertEqual(result, "books/dostoevsky/demons/audio/kokoro-af-heart/alignment.json")
+
+    def test_returns_none_on_skip(self):
+        client = self._make_client(key_exists_val=True)
+        with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
+            result = upload_alignment(client, "openshelf", "dostoevsky", "demons", "kokoro-af-heart", tmp.name)
+        self.assertIsNone(result)
+
+    def test_content_type_json(self):
+        client = self._make_client(key_exists_val=False)
+        with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
+            upload_alignment(client, "openshelf", "dostoevsky", "demons", "kokoro-af-heart", tmp.name)
+        extra_args = client.upload_file.call_args[1]["ExtraArgs"]
+        self.assertEqual(extra_args["ContentType"], "application/json")
+
+    def test_cache_control_immutable(self):
+        client = self._make_client(key_exists_val=False)
+        with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
+            upload_alignment(client, "openshelf", "dostoevsky", "demons", "kokoro-af-heart", tmp.name)
+        extra_args = client.upload_file.call_args[1]["ExtraArgs"]
+        self.assertEqual(extra_args["CacheControl"], R2_CACHE_CONTROL_IMMUTABLE)
 
 
 if __name__ == "__main__":

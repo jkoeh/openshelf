@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from openshelf.config import CHUNK_MAX_WORDS
@@ -16,6 +17,13 @@ _ABBREVIATIONS = re.compile(
     r"|[A-Z])\."
 )
 _PLACEHOLDER = "\x00"
+
+
+@dataclass
+class Chunk:
+    text: str
+    para_start: int   # index of first paragraph in Chapter.paragraphs
+    para_end: int     # index of last paragraph covered (inclusive)
 
 
 def _protect_abbreviations(text: str) -> str:
@@ -103,41 +111,58 @@ def _chunk_paragraph(paragraph: str, max_words: int) -> list[str]:
     return chunks
 
 
-def chunk_text(text: str, max_words: int = CHUNK_MAX_WORDS) -> list[str]:
-    if not text or not text.strip():
-        return []
-
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+def chunk_text(paragraphs: list[str], max_words: int = CHUNK_MAX_WORDS) -> list[Chunk]:
     if not paragraphs:
         return []
 
-    # Pre-split oversized paragraphs into sub-chunks
-    para_units: list[str] = []
-    for para in paragraphs:
+    # Pre-split oversized paragraphs into sub-units, tracking original para index
+    # Each unit is (text, original_para_idx)
+    para_units: list[tuple[str, int]] = []
+    for para_idx, para in enumerate(paragraphs):
+        para = para.strip()
+        if not para:
+            continue
         wc = len(para.split())
         if wc <= max_words:
-            para_units.append(para)
+            para_units.append((para, para_idx))
         else:
-            para_units.extend(_chunk_paragraph(para, max_words))
+            for sub in _chunk_paragraph(para, max_words):
+                para_units.append((sub, para_idx))
 
-    # Greedily pack paragraph units into chunks
-    chunks: list[str] = []
+    if not para_units:
+        return []
+
+    # Greedily pack paragraph units into Chunks, tracking para_start/para_end
+    chunks: list[Chunk] = []
     current_parts: list[str] = []
     current_wc = 0
+    current_para_start: int = para_units[0][1]
+    current_para_end: int = para_units[0][1]
 
-    for unit in para_units:
-        u_wc = len(unit.split())
+    for unit_text, para_idx in para_units:
+        u_wc = len(unit_text.split())
         if current_wc + u_wc <= max_words:
-            current_parts.append(unit)
+            current_parts.append(unit_text)
             current_wc += u_wc
+            current_para_end = para_idx
         else:
             if current_parts:
-                chunks.append("\n\n".join(current_parts))
-            current_parts = [unit]
+                chunks.append(Chunk(
+                    text="\n\n".join(current_parts),
+                    para_start=current_para_start,
+                    para_end=current_para_end,
+                ))
+            current_parts = [unit_text]
             current_wc = u_wc
+            current_para_start = para_idx
+            current_para_end = para_idx
 
     if current_parts:
-        chunks.append("\n\n".join(current_parts))
+        chunks.append(Chunk(
+            text="\n\n".join(current_parts),
+            para_start=current_para_start,
+            para_end=current_para_end,
+        ))
 
     return chunks
 
@@ -149,13 +174,23 @@ def serialize_chunks(
     """Serialize chunked chapters to JSON for storage.
 
     Args:
-        chapters: list of {"number": int, "title": str, "chunks": list[str]}
+        chapters: list of {"number": int, "title": str, "chunks": list[Chunk]}
         epub_sha256: SHA-256 hex digest of the source EPUB file
     """
+    serialized_chapters = []
+    for ch in chapters:
+        serialized_chapters.append({
+            "number": ch["number"],
+            "title": ch["title"],
+            "chunks": [
+                {"text": c.text, "para_start": c.para_start, "para_end": c.para_end}
+                for c in ch["chunks"]
+            ],
+        })
     data = {
-        "version": 1,
+        "version": 2,
         "source_epub_sha256": epub_sha256,
-        "chapters": chapters,
+        "chapters": serialized_chapters,
     }
     return json.dumps(data, indent=2, ensure_ascii=False)
 

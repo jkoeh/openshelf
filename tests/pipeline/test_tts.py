@@ -134,6 +134,7 @@ class TestSynthesizeChapter(unittest.TestCase):
         self.assertIsInstance(result, SynthesisResult)
         self.assertAlmostEqual(result.duration_seconds, 1.0, places=2)
         self.assertEqual(result.skipped_chunks, 0)
+        self.assertIsInstance(result.chunk_audio_starts, list)
 
     @patch("openshelf.pipeline.tts.sf.write")
     def test_output_file_written(self, mock_sf_write):
@@ -208,6 +209,100 @@ class TestSynthesizeChapterErrors(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             synthesize_chapter(pipeline, ["a", "b"], "/tmp/out.wav")
+
+
+class TestSynthesizeChapterAudioStarts(unittest.TestCase):
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_single_chunk_starts_at_zero(self, mock_sf_write):
+        pipeline = MagicMock()
+        pipeline.return_value = iter([("g", "p", _fake_audio(1000))])
+
+        result = synthesize_chapter(pipeline, ["chunk"], "/tmp/out.wav")
+
+        self.assertEqual(result.chunk_audio_starts, [0.0])
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_two_chunks_correct_offsets(self, mock_sf_write):
+        chunk_samples = 1000
+        silence_samples = int(TTS_SAMPLE_RATE * SILENCE_BETWEEN_CHUNKS_MS / 1000)
+
+        def make_iter(text, voice=None):
+            return iter([("g", "p", _fake_audio(chunk_samples))])
+
+        pipeline = MagicMock(side_effect=make_iter)
+        result = synthesize_chapter(pipeline, ["A.", "B."], "/tmp/out.wav")
+
+        self.assertAlmostEqual(result.chunk_audio_starts[0], 0.0)
+        expected_start1 = (chunk_samples + silence_samples) / TTS_SAMPLE_RATE
+        self.assertAlmostEqual(result.chunk_audio_starts[1], expected_start1)
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_chunk_audio_starts_length_matches_input(self, mock_sf_write):
+        def make_iter(text, voice=None):
+            return iter([("g", "p", _fake_audio(100))])
+
+        pipeline = MagicMock(side_effect=make_iter)
+        result = synthesize_chapter(pipeline, ["A.", "B.", "C."], "/tmp/out.wav")
+
+        self.assertEqual(len(result.chunk_audio_starts), 3)
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_skipped_chunk_gets_negative_one(self, mock_sf_write):
+        def side_effect(text, voice=None):
+            if text == "bad":
+                raise RuntimeError("TTS error")
+            return iter([("g", "p", _fake_audio(1000))])
+
+        pipeline = MagicMock(side_effect=side_effect)
+        result = synthesize_chapter(pipeline, ["bad", "good"], "/tmp/out.wav")
+
+        self.assertEqual(result.chunk_audio_starts[0], -1.0)
+        self.assertEqual(result.chunk_audio_starts[1], 0.0)
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_skipped_middle_chunk_no_silence_gap(self, mock_sf_write):
+        chunk_samples = 1000
+        silence_samples = int(TTS_SAMPLE_RATE * SILENCE_BETWEEN_CHUNKS_MS / 1000)
+
+        def side_effect(text, voice=None):
+            if text == "bad":
+                raise RuntimeError("TTS error")
+            return iter([("g", "p", _fake_audio(chunk_samples))])
+
+        pipeline = MagicMock(side_effect=side_effect)
+        # A succeeds, bad skipped, B succeeds — B starts right after A (no silence for skipped)
+        result = synthesize_chapter(pipeline, ["A.", "bad", "B."], "/tmp/out.wav")
+
+        self.assertAlmostEqual(result.chunk_audio_starts[0], 0.0)
+        self.assertEqual(result.chunk_audio_starts[1], -1.0)
+        # B starts after A's audio + silence (silence between A and B)
+        expected_b_start = (chunk_samples + silence_samples) / TTS_SAMPLE_RATE
+        self.assertAlmostEqual(result.chunk_audio_starts[2], expected_b_start)
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_offsets_accumulate_correctly_three_chunks(self, mock_sf_write):
+        samples_per_chunk = [500, 800, 300]
+        silence_samples = int(TTS_SAMPLE_RATE * SILENCE_BETWEEN_CHUNKS_MS / 1000)
+        call_idx = [0]
+
+        def make_iter(text, voice=None):
+            idx = call_idx[0]
+            call_idx[0] += 1
+            return iter([("g", "p", _fake_audio(samples_per_chunk[idx]))])
+
+        pipeline = MagicMock(side_effect=make_iter)
+        result = synthesize_chapter(pipeline, ["A.", "B.", "C."], "/tmp/out.wav")
+
+        self.assertAlmostEqual(result.chunk_audio_starts[0], 0.0)
+        self.assertAlmostEqual(
+            result.chunk_audio_starts[1],
+            (samples_per_chunk[0] + silence_samples) / TTS_SAMPLE_RATE,
+        )
+        self.assertAlmostEqual(
+            result.chunk_audio_starts[2],
+            (samples_per_chunk[0] + silence_samples + samples_per_chunk[1] + silence_samples) / TTS_SAMPLE_RATE,
+        )
 
 
 class TestNormalize(unittest.TestCase):

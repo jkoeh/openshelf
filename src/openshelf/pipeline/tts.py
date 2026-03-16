@@ -52,6 +52,7 @@ class ChapterAudio:
 class SynthesisResult:
     duration_seconds: float
     skipped_chunks: int
+    chunk_audio_starts: list[float]   # len == len(input chunks); -1.0 for skipped chunks
 
 
 def get_device() -> str:
@@ -95,8 +96,11 @@ def synthesize_chapter(
         raise ValueError("chunks list is empty")
 
     silence = _generate_silence(sample_rate, silence_ms)
+    silence_frames = len(silence)
     audio_segments: list[np.ndarray] = []
     skipped = 0
+    frames_so_far = 0
+    chunk_audio_starts: list[float] = []
 
     for i, chunk in enumerate(chunks):
         try:
@@ -107,10 +111,16 @@ def synthesize_chapter(
             chunk_audio = _normalize(chunk_audio)
 
             if audio_segments:
+                # Silence precedes all chunks after the first
+                frames_so_far += silence_frames
                 audio_segments.append(silence)
+
+            chunk_audio_starts.append(frames_so_far / sample_rate)
             audio_segments.append(chunk_audio)
+            frames_so_far += len(chunk_audio)
         except Exception:
             logger.warning("Chunk %d failed, skipping: %.40s...", i, chunk)
+            chunk_audio_starts.append(-1.0)
             skipped += 1
 
     if not audio_segments:
@@ -120,4 +130,8 @@ def synthesize_chapter(
     sf.write(output_path, full_audio, sample_rate)
 
     duration = len(full_audio) / sample_rate
-    return SynthesisResult(duration_seconds=duration, skipped_chunks=skipped)
+    return SynthesisResult(
+        duration_seconds=duration,
+        skipped_chunks=skipped,
+        chunk_audio_starts=chunk_audio_starts,
+    )

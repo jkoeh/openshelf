@@ -23,7 +23,7 @@ from ebooklib import epub as _epub_lib
 from openshelf.config import R2_BUCKET, R2_DEFAULT_RENDITION
 from openshelf.pipeline.encoder import audio_duration
 from openshelf.pipeline.manifest import ChapterMeta, generate_manifest
-from openshelf.pipeline.r2 import make_client, upload_epub, upload_chunks, upload_rendition
+from openshelf.pipeline.r2 import make_client, upload_epub, upload_chunks, upload_rendition, upload_alignment
 from openshelf.scrapers.http import sanitize
 
 
@@ -120,6 +120,14 @@ def main():
     upload_epub(client, R2_BUCKET, author_slug, title_slug, args.epub)
     upload_chunks(client, R2_BUCKET, author_slug, title_slug, chunks_path)
     upload_rendition(client, R2_BUCKET, author_slug, title_slug, args.rendition, rendition_dir, manifest_path)
+
+    alignment_path = os.path.join(rendition_dir, "alignment.json")
+    if os.path.isfile(alignment_path):
+        upload_alignment(client, R2_BUCKET, author_slug, title_slug, args.rendition, alignment_path)
+        print("Alignment uploaded.")
+    else:
+        print("Warning: alignment.json not found — run convert-book.py to generate alignment.")
+
     print("Upload complete.")
     print(f"R2 prefix: books/{author_slug}/{title_slug}/")
 
