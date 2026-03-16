@@ -22,8 +22,10 @@ _PLACEHOLDER = "\x00"
 @dataclass
 class Chunk:
     text: str
-    para_start: int   # index of first paragraph in Chapter.paragraphs
-    para_end: int     # index of last paragraph covered (inclusive)
+    para_start: int   # index of first spoken element in Chapter.paragraphs
+    para_end: int     # index of last spoken element covered (inclusive)
+    el_start: str = ""  # element ID of first spoken element in chunk
+    el_end: str = ""    # element ID of last spoken element in chunk
 
 
 def _protect_abbreviations(text: str) -> str:
@@ -111,7 +113,16 @@ def _chunk_paragraph(paragraph: str, max_words: int) -> list[str]:
     return chunks
 
 
-def chunk_text(paragraphs: list[str], max_words: int = CHUNK_MAX_WORDS) -> list[Chunk]:
+def chunk_text(
+    paragraphs: list[str],
+    max_words: int = CHUNK_MAX_WORDS,
+    element_ids: list[str] | None = None,
+) -> list[Chunk]:
+    if element_ids is not None and len(element_ids) != len(paragraphs):
+        raise ValueError(
+            f"element_ids length {len(element_ids)} must match paragraphs length {len(paragraphs)}"
+        )
+
     if not paragraphs:
         return []
 
@@ -151,6 +162,8 @@ def chunk_text(paragraphs: list[str], max_words: int = CHUNK_MAX_WORDS) -> list[
                     text="\n\n".join(current_parts),
                     para_start=current_para_start,
                     para_end=current_para_end,
+                    el_start=element_ids[current_para_start] if element_ids else "",
+                    el_end=element_ids[current_para_end] if element_ids else "",
                 ))
             current_parts = [unit_text]
             current_wc = u_wc
@@ -162,6 +175,8 @@ def chunk_text(paragraphs: list[str], max_words: int = CHUNK_MAX_WORDS) -> list[
             text="\n\n".join(current_parts),
             para_start=current_para_start,
             para_end=current_para_end,
+            el_start=element_ids[current_para_start] if element_ids else "",
+            el_end=element_ids[current_para_end] if element_ids else "",
         ))
 
     return chunks
@@ -183,12 +198,18 @@ def serialize_chunks(
             "number": ch["number"],
             "title": ch["title"],
             "chunks": [
-                {"text": c.text, "para_start": c.para_start, "para_end": c.para_end}
+                {
+                    "text": c.text,
+                    "para_start": c.para_start,
+                    "para_end": c.para_end,
+                    "el_start": c.el_start,
+                    "el_end": c.el_end,
+                }
                 for c in ch["chunks"]
             ],
         })
     data = {
-        "version": 2,
+        "version": 3,
         "source_epub_sha256": epub_sha256,
         "chapters": serialized_chapters,
     }

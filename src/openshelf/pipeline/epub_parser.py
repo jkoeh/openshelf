@@ -9,16 +9,29 @@ from bs4 import BeautifulSoup
 
 
 @dataclass
+class ContentElement:
+    id: str        # "ch3-el0012"
+    tag: str       # "p", "h2", "blockquote", "li", "figcaption"
+    html: str      # outer HTML with id attribute injected
+    text: str      # plain text (sup/sub/numeric-a removed)
+    spoken: bool   # True = goes to TTS
+
+
+@dataclass
 class Chapter:
     number: int
     title: str
-    paragraphs: list[str]   # stable indexed list — no "\n\n" inside items
-    text: str               # "\n\n".join(paragraphs) — kept for backward compat
+    elements: list[ContentElement]  # all content elements with stable IDs
+    paragraphs: list[str]   # [el.text for el in elements if el.spoken]
+    text: str               # "\n\n".join(paragraphs)
     word_count: int
+    epub_item_name: str = ""  # EPUB document item filename (for annotate_epub)
 
 
 _SKIP_PATTERNS = ("nav", "toc", "cover")
 _MIN_WORD_COUNT = 50
+_CONTENT_TAGS = ("p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "li", "figcaption")
+_SKIP_EPUB_TYPES = frozenset({"footnote", "endnote", "toc", "pagebreak"})
 
 
 def _should_skip(filename: str) -> bool:
@@ -34,31 +47,58 @@ def _extract_title(soup: BeautifulSoup, fallback_number: int) -> str:
     return f"Chapter {fallback_number}"
 
 
-def _extract_paragraphs(soup: BeautifulSoup) -> list[str]:
-    # Remove footnote markers
-    for tag in soup.find_all(["sup", "sub"]):
-        tag.decompose()
+def _is_spoken(element) -> bool:
+    """Return False if the element or any ancestor has an epub:type marking it as non-content."""
+    for node in [element] + list(element.parents):
+        epub_type = node.get("epub:type", "") if hasattr(node, "get") else ""
+        if epub_type:
+            types = epub_type.split()
+            if any(t in _SKIP_EPUB_TYPES for t in types):
+                return False
+    return True
 
-    # Remove numeric-only anchor tags (internal cross-references like [1])
-    for tag in soup.find_all("a"):
-        if tag.string and re.match(r"^\d+$", tag.string.strip()):
-            tag.decompose()
 
-    p_tags = soup.find_all("p")
-    cleaned = []
-    for p in p_tags:
-        text = p.get_text()
-        # Normalize whitespace within paragraph
-        text = re.sub(r"\s+", " ", text).strip()
-        if text:
-            cleaned.append(text)
+def _extract_content_elements(soup: BeautifulSoup, chapter_num: int) -> list[ContentElement]:
+    elements: list[ContentElement] = []
+    idx = 0
 
-    if not cleaned:
-        # Fallback: extract all text when no <p> tags (e.g. <div>-based EPUBs)
-        full_text = re.sub(r"\s+", " ", soup.get_text()).strip()
-        return [full_text] if full_text else []
+    for tag in soup.find_all(_CONTENT_TAGS):
+        # Remove footnote markers and numeric anchors from this element's content
+        for marker in tag.find_all(["sup", "sub"]):
+            marker.decompose()
+        for anchor in tag.find_all("a"):
+            if anchor.string and re.match(r"^\d+$", anchor.string.strip()):
+                anchor.decompose()
 
-    return cleaned
+        text = re.sub(r"\s+", " ", tag.get_text()).strip()
+        if not text:
+            continue
+
+        element_id = f"ch{chapter_num}-el{idx:04d}"
+        tag["id"] = element_id
+        html = str(tag)
+        spoken = _is_spoken(tag)
+
+        elements.append(ContentElement(
+            id=element_id,
+            tag=tag.name,
+            html=html,
+            text=text,
+            spoken=spoken,
+        ))
+        idx += 1
+
+    return elements
+
+
+def _item_word_count(soup: BeautifulSoup) -> int:
+    """Quick spoken word count from soup without modifying it (for pre-filter)."""
+    words = 0
+    for tag in soup.find_all(_CONTENT_TAGS):
+        text = re.sub(r"\s+", " ", tag.get_text()).strip()
+        if text and _is_spoken(tag):
+            words += len(text.split())
+    return words
 
 
 def parse_epub(epub_path: str) -> list[Chapter]:
@@ -76,22 +116,26 @@ def parse_epub(epub_path: str) -> list[Chapter]:
         content = item.get_content()
         soup = BeautifulSoup(content, "html.parser")
 
-        paragraphs = _extract_paragraphs(soup)
-        text = "\n\n".join(paragraphs)
-        wc = len(text.split())
-
-        if wc < _MIN_WORD_COUNT:
+        # Pre-check word count before assigning chapter number (avoids ID gaps)
+        if _item_word_count(soup) < _MIN_WORD_COUNT:
             continue
 
         chapter_num += 1
+        # _item_word_count does not modify soup, so reuse it here
+        elements = _extract_content_elements(soup, chapter_num)
+        paragraphs = [el.text for el in elements if el.spoken]
+        text = "\n\n".join(paragraphs)
+        wc = len(text.split())
         title = _extract_title(soup, chapter_num)
 
         chapters.append(Chapter(
             number=chapter_num,
             title=title,
+            elements=elements,
             paragraphs=paragraphs,
             text=text,
             word_count=wc,
+            epub_item_name=filename,
         ))
 
     return chapters

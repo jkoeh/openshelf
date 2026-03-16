@@ -23,6 +23,7 @@ from ebooklib import epub as _epub_lib
 
 from openshelf.config import R2_BUCKET, R2_DEFAULT_RENDITION
 from openshelf.pipeline.alignment import build_alignment, write_alignment
+from openshelf.pipeline.epub_annotator import annotate_epub
 from openshelf.pipeline.epub_parser import parse_epub
 from openshelf.pipeline.manifest import ChapterMeta, generate_manifest
 from openshelf.pipeline.text_chunker import chunk_text, serialize_chunks, sha256_file
@@ -67,7 +68,8 @@ def main():
     # Step 2: Chunk all chapters
     chunked_chapters = []
     for ch in chapters:
-        chunks = chunk_text(ch.paragraphs)
+        spoken_ids = [el.id for el in ch.elements if el.spoken]
+        chunks = chunk_text(ch.paragraphs, element_ids=spoken_ids)
         chunked_chapters.append({
             "number": ch.number,
             "title": ch.title,
@@ -93,8 +95,18 @@ def main():
         print("\n[DRY RUN] No audio generated.")
         return
 
-    # Write chunks.json at the book level (shared across renditions)
+    # Write annotated EPUB (with stable element IDs injected for client sync)
     os.makedirs(book_dir, exist_ok=True)
+    annotated_epub_path = os.path.join(book_dir, "book-annotated.epub")
+    if not os.path.exists(annotated_epub_path):
+        annotated_bytes = annotate_epub(args.epub, chapters)
+        with open(annotated_epub_path, "wb") as f:
+            f.write(annotated_bytes)
+        print(f"\nAnnotated EPUB: {annotated_epub_path}")
+    else:
+        print(f"\nAnnotated EPUB already exists: {annotated_epub_path}")
+
+    # Write chunks.json at the book level (shared across renditions)
     chunks_path = os.path.join(book_dir, "chunks.json")
     if not os.path.exists(chunks_path):
         epub_sha = sha256_file(args.epub)
@@ -207,7 +219,7 @@ def main():
         from openshelf.pipeline.r2 import make_client, upload_epub, upload_chunks, upload_rendition, upload_alignment
         print("\nUploading to R2 ...")
         client = make_client()
-        upload_epub(client, R2_BUCKET, author_slug, title_slug, args.epub)
+        upload_epub(client, R2_BUCKET, author_slug, title_slug, annotated_epub_path)
         upload_chunks(client, R2_BUCKET, author_slug, title_slug, chunks_path)
         upload_rendition(client, R2_BUCKET, author_slug, title_slug, args.rendition, output_dir, manifest_path)
         upload_alignment(client, R2_BUCKET, author_slug, title_slug, args.rendition, alignment_path)

@@ -8,7 +8,7 @@ from unittest.mock import patch, MagicMock
 # Allow running without pip install
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from openshelf.pipeline.epub_parser import parse_epub, Chapter
+from openshelf.pipeline.epub_parser import parse_epub, Chapter, ContentElement
 
 
 # --- Test helpers ---
@@ -29,13 +29,17 @@ def _make_book(items: list):
 
 
 def _words_html(n: int, base: str = "word") -> str:
-    """Generate HTML with n words in a <p> tag."""
+    """Generate HTML with n words in a <p> tag (no heading)."""
     words = " ".join(f"{base}{i}" for i in range(n))
     return f"<html><body><p>{words}</p></body></html>"
 
 
 def _chapter_html(title_tag: str, title: str, word_count: int = 60) -> str:
-    """Generate HTML with a heading and paragraph."""
+    """Generate HTML with a heading and paragraph.
+
+    Note: the heading is now a spoken content element, so word_count refers
+    only to the <p> words; total spoken words = word_count + len(title.split()).
+    """
     words = " ".join(f"word{i}" for i in range(word_count))
     return f"<html><body><{title_tag}>{title}</{title_tag}><p>{words}</p></body></html>"
 
@@ -67,17 +71,16 @@ class TestParseEpubBasic(unittest.TestCase):
         self.assertEqual([c.number for c in chapters], [1, 2, 3])
 
     @patch("openshelf.pipeline.epub_parser.epub.read_epub")
-    def test_word_count_correct(self, mock_read):
+    def test_word_count_includes_heading(self, mock_read):
+        # heading "Title" = 1 word, paragraph has 75 words → total 76
         html = _chapter_html("h2", "Title", 75)
         mock_read.return_value = _make_book([_make_item("ch01.xhtml", html)])
 
         chapters = parse_epub("fake.epub")
-        self.assertEqual(chapters[0].word_count, 75)
+        self.assertEqual(chapters[0].word_count, 76)
 
     @patch("openshelf.pipeline.epub_parser.epub.read_epub")
     def test_paragraph_separation(self, mock_read):
-        html = "<html><body><h1>T</h1><p>A.</p><p>B.</p></body></html>"
-        # Need enough words total
         words_a = " ".join(f"a{i}" for i in range(30))
         words_b = " ".join(f"b{i}" for i in range(30))
         html = f"<html><body><h1>T</h1><p>{words_a}</p><p>{words_b}</p></body></html>"
@@ -95,6 +98,14 @@ class TestParseEpubBasic(unittest.TestCase):
 
         chapters = parse_epub("fake.epub")
         self.assertNotIn("  ", chapters[0].text)
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_epub_item_name_stored(self, mock_read):
+        html = _chapter_html("h2", "Ch", 60)
+        mock_read.return_value = _make_book([_make_item("OEBPS/ch01.xhtml", html)])
+
+        chapters = parse_epub("fake.epub")
+        self.assertEqual(chapters[0].epub_item_name, "OEBPS/ch01.xhtml")
 
 
 class TestParseEpubTitleExtraction(unittest.TestCase):
@@ -189,7 +200,8 @@ class TestParseEpubFiltering(unittest.TestCase):
 
     @patch("openshelf.pipeline.epub_parser.epub.read_epub")
     def test_keeps_exactly_50_words(self, mock_read):
-        html = _chapter_html("h2", "Exact", 50)
+        # heading "Exact" = 1 word + 49 para words = 50 total
+        html = _chapter_html("h2", "Exact", 49)
         mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
         self.assertEqual(len(parse_epub("f.epub")), 1)
 
@@ -232,8 +244,8 @@ class TestParseEpubHtmlCleaning(unittest.TestCase):
         html = f'<html><body><h1>T</h1><p>{words}<a href="#note1">1</a></p></body></html>'
         mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
         chapters = parse_epub("f.epub")
-        # The "1" from the anchor should be removed
-        self.assertEqual(chapters[0].word_count, 60)
+        # heading "T" = 1 word + 60 para words (anchor removed) = 61 total
+        self.assertEqual(chapters[0].word_count, 61)
 
     @patch("openshelf.pipeline.epub_parser.epub.read_epub")
     def test_non_numeric_anchor_tags_kept(self, mock_read):
@@ -284,20 +296,27 @@ class TestParseEpubEdgeCases(unittest.TestCase):
         self.assertIn("\u201c", chapters[0].text)
 
     @patch("openshelf.pipeline.epub_parser.epub.read_epub")
-    def test_no_p_tags(self, mock_read):
+    def test_div_only_item_filtered(self, mock_read):
+        # <div> is not a content tag — no elements extracted, chapter filtered out
         words = " ".join(f"w{i}" for i in range(60))
-        html = f"<html><body><h1>T</h1><div>{words}</div></body></html>"
+        html = f"<html><body><div>{words}</div></body></html>"
         mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
-        chapters = parse_epub("f.epub")
-        # Fallback to soup.get_text() should extract the div content
-        self.assertEqual(len(chapters), 1)
-        self.assertEqual(chapters[0].word_count, 60)
+        self.assertEqual(len(parse_epub("f.epub")), 0)
 
     @patch("openshelf.pipeline.epub_parser.epub.read_epub")
     def test_image_only_item(self, mock_read):
         html = '<html><body><img src="pic.jpg"/></body></html>'
         mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
         self.assertEqual(len(parse_epub("f.epub")), 0)
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_blockquote_extracted(self, mock_read):
+        words = " ".join(f"w{i}" for i in range(50))
+        html = f"<html><body><blockquote>{words}</blockquote></body></html>"
+        mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
+        chapters = parse_epub("f.epub")
+        self.assertEqual(len(chapters), 1)
+        self.assertIn("w0", chapters[0].text)
 
 
 class TestParseEpubParagraphs(unittest.TestCase):
@@ -310,13 +329,16 @@ class TestParseEpubParagraphs(unittest.TestCase):
         self.assertIsInstance(ch.paragraphs, list)
 
     @patch("openshelf.pipeline.epub_parser.epub.read_epub")
-    def test_paragraphs_count_matches_p_tags(self, mock_read):
+    def test_paragraphs_includes_heading(self, mock_read):
+        # heading is now a spoken element, so it appears in paragraphs
         words_a = " ".join(f"a{i}" for i in range(30))
         words_b = " ".join(f"b{i}" for i in range(30))
-        html = f"<html><body><h1>T</h1><p>{words_a}</p><p>{words_b}</p></body></html>"
+        html = f"<html><body><h1>Title</h1><p>{words_a}</p><p>{words_b}</p></body></html>"
         mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
         ch = parse_epub("f.epub")[0]
-        self.assertEqual(len(ch.paragraphs), 2)
+        # heading + 2 paragraphs = 3 spoken elements
+        self.assertEqual(len(ch.paragraphs), 3)
+        self.assertEqual(ch.paragraphs[0], "Title")
 
     @patch("openshelf.pipeline.epub_parser.epub.read_epub")
     def test_paragraphs_join_equals_text(self, mock_read):
@@ -324,14 +346,6 @@ class TestParseEpubParagraphs(unittest.TestCase):
         mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
         ch = parse_epub("f.epub")[0]
         self.assertEqual("\n\n".join(ch.paragraphs), ch.text)
-
-    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
-    def test_paragraphs_fallback_single_item(self, mock_read):
-        words = " ".join(f"w{i}" for i in range(60))
-        html = f"<html><body><h1>T</h1><div>{words}</div></body></html>"
-        mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
-        ch = parse_epub("f.epub")[0]
-        self.assertEqual(len(ch.paragraphs), 1)
 
     @patch("openshelf.pipeline.epub_parser.epub.read_epub")
     def test_no_double_newline_inside_paragraph(self, mock_read):
@@ -342,6 +356,75 @@ class TestParseEpubParagraphs(unittest.TestCase):
         ch = parse_epub("f.epub")[0]
         for para in ch.paragraphs:
             self.assertNotIn("\n\n", para)
+
+
+class TestParseEpubContentElements(unittest.TestCase):
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_elements_field_populated(self, mock_read):
+        html = _chapter_html("h2", "My Chapter", 60)
+        mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
+        ch = parse_epub("f.epub")[0]
+        self.assertIsInstance(ch.elements, list)
+        self.assertGreater(len(ch.elements), 0)
+        self.assertIsInstance(ch.elements[0], ContentElement)
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_element_ids_sequential(self, mock_read):
+        words = " ".join(f"w{i}" for i in range(60))
+        html = f"<html><body><h2>Title</h2><p>{words}</p></body></html>"
+        mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
+        ch = parse_epub("f.epub")[0]
+        self.assertEqual(ch.elements[0].id, "ch1-el0000")
+        self.assertEqual(ch.elements[1].id, "ch1-el0001")
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_element_ids_namespaced_per_chapter(self, mock_read):
+        items = [
+            _make_item("ch1.xhtml", _chapter_html("h2", "One", 60)),
+            _make_item("ch2.xhtml", _chapter_html("h2", "Two", 60)),
+        ]
+        mock_read.return_value = _make_book(items)
+        chapters = parse_epub("f.epub")
+        self.assertTrue(chapters[0].elements[0].id.startswith("ch1-"))
+        self.assertTrue(chapters[1].elements[0].id.startswith("ch2-"))
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_heading_element_spoken_true(self, mock_read):
+        html = _chapter_html("h2", "My Chapter", 60)
+        mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
+        ch = parse_epub("f.epub")[0]
+        heading_el = next(el for el in ch.elements if el.tag == "h2")
+        self.assertTrue(heading_el.spoken)
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_epub_type_footnote_spoken_false(self, mock_read):
+        words = " ".join(f"w{i}" for i in range(60))
+        html = (
+            f'<html><body><p>{words}</p>'
+            f'<aside epub:type="footnote"><p>foot note text here</p></aside>'
+            f'</body></html>'
+        )
+        mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
+        ch = parse_epub("f.epub")[0]
+        footnote_els = [el for el in ch.elements if "foot" in el.text]
+        self.assertTrue(all(not el.spoken for el in footnote_els))
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_element_html_contains_id(self, mock_read):
+        html = _chapter_html("h2", "My Chapter", 60)
+        mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
+        ch = parse_epub("f.epub")[0]
+        for el in ch.elements:
+            self.assertIn(f'id="{el.id}"', el.html)
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_element_text_matches_spoken_paragraphs(self, mock_read):
+        html = _chapter_html("h2", "My Chapter", 60)
+        mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
+        ch = parse_epub("f.epub")[0]
+        spoken_texts = [el.text for el in ch.elements if el.spoken]
+        self.assertEqual(spoken_texts, ch.paragraphs)
 
 
 if __name__ == "__main__":
