@@ -55,9 +55,9 @@ def upload_rendition(
     audio_dir: str,
     manifest_path: str,
 ) -> list[str]:
-    """Upload all MP3s and manifest.json for a rendition to R2. Returns uploaded keys.
+    """Upload all Opus files and manifest.json for a rendition to R2. Returns uploaded keys.
 
-    Key pattern: books/{author}/{title}/audio/{rendition}/chapter-NN.mp3
+    Key pattern: books/{author}/{title}/audio/{rendition}/chapter-NN.opus
     Idempotency: manifest.json is always uploaded last. Its presence on R2 signals
     that the rendition is complete. One HEAD request at the top — not one per file.
     """
@@ -70,15 +70,15 @@ def upload_rendition(
 
     uploaded: list[str] = []
 
-    mp3_files = sorted(f for f in os.listdir(audio_dir) if f.endswith(".mp3"))
-    for filename in mp3_files:
+    opus_files = sorted(f for f in os.listdir(audio_dir) if f.endswith(".opus"))
+    for filename in opus_files:
         key = f"{prefix}/{filename}"
         client.upload_file(
             os.path.join(audio_dir, filename),
             bucket,
             key,
             ExtraArgs={
-                "ContentType": "audio/mpeg",
+                "ContentType": "audio/ogg",
                 "CacheControl": R2_CACHE_CONTROL_IMMUTABLE,
                 "ContentDisposition": "inline",
             },
@@ -132,28 +132,28 @@ def upload_epub(
     return key
 
 
-def upload_alignment(
+def upload_word_alignment(
     client,
     bucket: str,
     author_slug: str,
     title_slug: str,
     rendition: str,
-    alignment_path: str,
+    word_alignment_path: str,
 ) -> str | None:
-    """Upload alignment.json to R2. Returns the key, or None if already exists.
+    """Upload word_alignment.json to R2. Returns the key, or None if already exists.
 
-    Key pattern: books/{author}/{title}/audio/{rendition}/alignment.json
+    Key pattern: books/{author}/{title}/audio/{rendition}/word_alignment.json
     Idempotent: skips upload if the key already exists.
     """
     prefix = f"{_book_prefix(author_slug, title_slug)}/audio/{rendition}"
-    key = f"{prefix}/alignment.json"
+    key = f"{prefix}/word_alignment.json"
 
     if key_exists(client, bucket, key):
-        logger.info("Alignment already uploaded, skipping: %s", key)
+        logger.info("Word alignment already uploaded, skipping: %s", key)
         return None
 
     client.upload_file(
-        alignment_path,
+        word_alignment_path,
         bucket,
         key,
         ExtraArgs={

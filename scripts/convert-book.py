@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert an EPUB book to MP3 audiobook chapters.
+"""Convert an EPUB book to Opus audiobook chapters.
 
 Usage:
     python3 scripts/convert-book.py <epub-path>
@@ -22,17 +22,18 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from ebooklib import epub as _epub_lib
 
 from openshelf.config import R2_BUCKET, R2_DEFAULT_RENDITION
-from openshelf.pipeline.alignment import build_alignment, write_alignment
+from openshelf.pipeline.epub_annotator import annotate_epub
 from openshelf.pipeline.epub_parser import parse_epub
 from openshelf.pipeline.manifest import ChapterMeta, generate_manifest
 from openshelf.pipeline.text_chunker import chunk_text, serialize_chunks, sha256_file
 from openshelf.pipeline.tts import load_pipeline, synthesize_chapter
-from openshelf.pipeline.encoder import audio_duration, encode_to_mp3
+from openshelf.pipeline.encoder import audio_duration, encode_to_opus
+from openshelf.pipeline.word_aligner import align_chapter, write_word_alignment
 from openshelf.scrapers.http import sanitize
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert EPUB to MP3 audiobook")
+    parser = argparse.ArgumentParser(description="Convert EPUB to Opus audiobook")
     parser.add_argument("epub", help="Path to EPUB file")
     parser.add_argument("--output", "-o", default="audio", help="Output directory (default: audio/)")
     parser.add_argument("--source", default="gutenberg", help="Book source (gutenberg, standard-ebooks)")
@@ -67,7 +68,8 @@ def main():
     # Step 2: Chunk all chapters
     chunked_chapters = []
     for ch in chapters:
-        chunks = chunk_text(ch.paragraphs)
+        spoken_ids = [el.id for el in ch.elements if el.spoken]
+        chunks = chunk_text(ch.paragraphs, element_ids=spoken_ids)
         chunked_chapters.append({
             "number": ch.number,
             "title": ch.title,
@@ -86,15 +88,25 @@ def main():
     book_author = _author_meta[0][0] if _author_meta else author_slug
 
     print(f"\nBook:     {book_author} — {book_title}")
-    print(f"R2 keys:  books/{author_slug}/{title_slug}/audio/{args.rendition}/chapter-*.mp3")
+    print(f"R2 keys:  books/{author_slug}/{title_slug}/audio/{args.rendition}/chapter-*.opus")
     print(f"Local:    {os.path.abspath(output_dir)}/")
 
     if args.dry_run:
         print("\n[DRY RUN] No audio generated.")
         return
 
-    # Write chunks.json at the book level (shared across renditions)
+    # Write annotated EPUB (with stable element IDs injected for client sync)
     os.makedirs(book_dir, exist_ok=True)
+    annotated_epub_path = os.path.join(book_dir, "book-annotated.epub")
+    if not os.path.exists(annotated_epub_path):
+        annotated_bytes = annotate_epub(args.epub, chapters)
+        with open(annotated_epub_path, "wb") as f:
+            f.write(annotated_bytes)
+        print(f"\nAnnotated EPUB: {annotated_epub_path}")
+    else:
+        print(f"\nAnnotated EPUB already exists: {annotated_epub_path}")
+
+    # Write chunks.json at the book level (shared across renditions)
     chunks_path = os.path.join(book_dir, "chunks.json")
     if not os.path.exists(chunks_path):
         epub_sha = sha256_file(args.epub)
@@ -105,7 +117,7 @@ def main():
     else:
         print(f"\nChunks already exist: {chunks_path}")
 
-    # Step 3+4: TTS → MP3
+    # Step 3+4: TTS → Opus
     os.makedirs(output_dir, exist_ok=True)
 
     from openshelf.pipeline.tts import get_device
@@ -117,7 +129,7 @@ def main():
     total_duration = 0.0
     total_skipped = 0
     chapter_durations: dict[int, float] = {}
-    alignment_chapters: list[dict] = []
+    chapter_chunk_starts: dict[int, list[float]] = {}
     start = time.time()
 
     for ch_data in chunked_chapters:
@@ -126,17 +138,12 @@ def main():
         chunks = ch_data["chunks"]
         chunk_texts = [c.text for c in chunks]
 
-        mp3_path = os.path.join(output_dir, f"chapter-{ch_num:02d}.mp3")
+        opus_path = os.path.join(output_dir, f"chapter-{ch_num:02d}.opus")
 
-        if os.path.exists(mp3_path):
-            duration = audio_duration(mp3_path)
+        if os.path.exists(opus_path):
+            duration = audio_duration(opus_path)
             chapter_durations[ch_num] = duration
-            # Timing unknown for pre-existing MP3s — all starts marked as -1.0
-            alignment_chapters.append({
-                "number": ch_num,
-                "total_duration_s": duration,
-                "chunk_audio_starts": [-1.0] * len(chunks),
-            })
+            chapter_chunk_starts[ch_num] = [-1.0] * len(chunks)
             print(f"  [{ch_num:>2}/{len(chapters)}] {ch_title} — [SKIP] exists")
             continue
 
@@ -149,14 +156,10 @@ def main():
             synth_kwargs["voice"] = args.voice
 
         result = synthesize_chapter(pipeline, chunk_texts, wav_path, **synth_kwargs)
-        duration = encode_to_mp3(wav_path, mp3_path, delete_wav=not args.keep_wav)
+        duration = encode_to_opus(wav_path, opus_path, delete_wav=not args.keep_wav)
 
         chapter_durations[ch_num] = duration
-        alignment_chapters.append({
-            "number": ch_num,
-            "total_duration_s": duration,
-            "chunk_audio_starts": result.chunk_audio_starts,
-        })
+        chapter_chunk_starts[ch_num] = result.chunk_audio_starts
         total_duration += duration
         total_skipped += result.skipped_chunks
 
@@ -178,7 +181,7 @@ def main():
         ChapterMeta(
             number=ch_data["number"],
             title=ch_data["title"],
-            filename=f"chapter-{ch_data['number']:02d}.mp3",
+            filename=f"chapter-{ch_data['number']:02d}.opus",
             duration_seconds=chapter_durations.get(ch_data["number"], 0.0),
             word_count=word_count_map.get(ch_data["number"], 0),
         )
@@ -196,21 +199,33 @@ def main():
     )
     print(f"Manifest: {manifest_path}")
 
-    # Step 5b: Generate alignment.json
-    alignment_path = os.path.join(output_dir, "alignment.json")
-    alignment = build_alignment(rendition=args.rendition, chapters=alignment_chapters)
-    write_alignment(alignment, alignment_path)
-    print(f"Alignment: {alignment_path}")
+    # Step 5b: Word-level alignment via WhisperX
+    word_alignment_path = os.path.join(output_dir, "word_alignment.json")
+    if not os.path.exists(word_alignment_path):
+        print("\nRunning word alignment ...")
+        word_chapters = []
+        for ch_data in chunked_chapters:
+            ch_num = ch_data["number"]
+            opus_path = os.path.join(output_dir, f"chapter-{ch_num:02d}.opus")
+            chunk_texts = [c.text for c in ch_data["chunks"]]
+            words = align_chapter(
+                opus_path, chunk_texts, chapter_chunk_starts[ch_num], device=device
+            )
+            word_chapters.append({"number": ch_num, "words": words})
+        write_word_alignment(word_chapters, args.rendition, word_alignment_path)
+        print(f"Word alignment: {word_alignment_path}")
+    else:
+        print(f"Word alignment already exists: {word_alignment_path}")
 
     # Step 6: Upload to R2
     if args.upload:
-        from openshelf.pipeline.r2 import make_client, upload_epub, upload_chunks, upload_rendition, upload_alignment
+        from openshelf.pipeline.r2 import make_client, upload_epub, upload_chunks, upload_rendition, upload_word_alignment
         print("\nUploading to R2 ...")
         client = make_client()
-        upload_epub(client, R2_BUCKET, author_slug, title_slug, args.epub)
+        upload_epub(client, R2_BUCKET, author_slug, title_slug, annotated_epub_path)
         upload_chunks(client, R2_BUCKET, author_slug, title_slug, chunks_path)
         upload_rendition(client, R2_BUCKET, author_slug, title_slug, args.rendition, output_dir, manifest_path)
-        upload_alignment(client, R2_BUCKET, author_slug, title_slug, args.rendition, alignment_path)
+        upload_word_alignment(client, R2_BUCKET, author_slug, title_slug, args.rendition, word_alignment_path)
         print("Upload complete.")
         print(f"R2 prefix: books/{author_slug}/{title_slug}/")
 

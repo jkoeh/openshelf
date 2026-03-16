@@ -23,7 +23,7 @@ CHUNK_MAX_WORDS = 450
 SILENCE_BETWEEN_CHUNKS_MS = 400
 
 # Encoder
-MP3_BITRATE = "128k"
+OPUS_BITRATE = "48k"
 
 # R2
 R2_BUCKET = os.getenv("R2_BUCKET", "openshelf")

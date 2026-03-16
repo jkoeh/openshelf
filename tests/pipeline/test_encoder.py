@@ -8,8 +8,8 @@ from unittest.mock import patch, MagicMock
 # Allow running without pip install
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from openshelf.pipeline.encoder import audio_duration, encode_to_mp3
-from openshelf.config import MP3_BITRATE
+from openshelf.pipeline.encoder import audio_duration, encode_to_opus
+from openshelf.config import OPUS_BITRATE
 
 
 def _mock_info(duration_secs: float, samplerate: int = 24000) -> MagicMock:
@@ -20,22 +20,35 @@ def _mock_info(duration_secs: float, samplerate: int = 24000) -> MagicMock:
     return info
 
 
-class TestEncodeToMp3Basic(unittest.TestCase):
+class TestEncodeToOpusBasic(unittest.TestCase):
 
     @patch("openshelf.pipeline.encoder.os.makedirs")
     @patch("openshelf.pipeline.encoder.os.remove")
     @patch("openshelf.pipeline.encoder.subprocess.run")
     @patch("openshelf.pipeline.encoder.sf.info")
-    def test_exports_mp3(self, mock_info, mock_run, mock_remove, mock_makedirs):
+    def test_exports_opus(self, mock_info, mock_run, mock_remove, mock_makedirs):
         mock_info.return_value = _mock_info(60.0)
 
-        encode_to_mp3("/tmp/ch.wav", "/tmp/ch.mp3")
+        encode_to_opus("/tmp/ch.wav", "/tmp/ch.opus")
 
         mock_run.assert_called_once()
         args = mock_run.call_args[0][0]
         self.assertEqual(args[0], "ffmpeg")
         self.assertIn("/tmp/ch.wav", args)
-        self.assertIn("/tmp/ch.mp3", args)
+        self.assertIn("/tmp/ch.opus", args)
+
+    @patch("openshelf.pipeline.encoder.os.makedirs")
+    @patch("openshelf.pipeline.encoder.os.remove")
+    @patch("openshelf.pipeline.encoder.subprocess.run")
+    @patch("openshelf.pipeline.encoder.sf.info")
+    def test_uses_libopus_codec(self, mock_info, mock_run, mock_remove, mock_makedirs):
+        mock_info.return_value = _mock_info(60.0)
+
+        encode_to_opus("/tmp/ch.wav", "/tmp/ch.opus")
+
+        args = mock_run.call_args[0][0]
+        self.assertIn("-c:a", args)
+        self.assertIn("libopus", args)
 
     @patch("openshelf.pipeline.encoder.os.makedirs")
     @patch("openshelf.pipeline.encoder.os.remove")
@@ -44,7 +57,7 @@ class TestEncodeToMp3Basic(unittest.TestCase):
     def test_returns_duration(self, mock_info, mock_run, mock_remove, mock_makedirs):
         mock_info.return_value = _mock_info(90.0)
 
-        duration = encode_to_mp3("/tmp/ch.wav", "/tmp/ch.mp3")
+        duration = encode_to_opus("/tmp/ch.wav", "/tmp/ch.opus")
 
         self.assertEqual(duration, 90.0)
 
@@ -55,10 +68,10 @@ class TestEncodeToMp3Basic(unittest.TestCase):
     def test_default_bitrate(self, mock_info, mock_run, mock_remove, mock_makedirs):
         mock_info.return_value = _mock_info(1.0)
 
-        encode_to_mp3("/tmp/ch.wav", "/tmp/ch.mp3")
+        encode_to_opus("/tmp/ch.wav", "/tmp/ch.opus")
 
         args = mock_run.call_args[0][0]
-        self.assertIn(MP3_BITRATE, args)
+        self.assertIn(OPUS_BITRATE, args)
 
     @patch("openshelf.pipeline.encoder.os.makedirs")
     @patch("openshelf.pipeline.encoder.os.remove")
@@ -67,13 +80,13 @@ class TestEncodeToMp3Basic(unittest.TestCase):
     def test_custom_bitrate(self, mock_info, mock_run, mock_remove, mock_makedirs):
         mock_info.return_value = _mock_info(1.0)
 
-        encode_to_mp3("/tmp/ch.wav", "/tmp/ch.mp3", bitrate="192k")
+        encode_to_opus("/tmp/ch.wav", "/tmp/ch.opus", bitrate="32k")
 
         args = mock_run.call_args[0][0]
-        self.assertIn("192k", args)
+        self.assertIn("32k", args)
 
 
-class TestEncodeToMp3WavCleanup(unittest.TestCase):
+class TestEncodeToOpusWavCleanup(unittest.TestCase):
 
     @patch("openshelf.pipeline.encoder.os.makedirs")
     @patch("openshelf.pipeline.encoder.os.remove")
@@ -82,7 +95,7 @@ class TestEncodeToMp3WavCleanup(unittest.TestCase):
     def test_deletes_wav_by_default(self, mock_info, mock_run, mock_remove, mock_makedirs):
         mock_info.return_value = _mock_info(1.0)
 
-        encode_to_mp3("/tmp/ch.wav", "/tmp/ch.mp3")
+        encode_to_opus("/tmp/ch.wav", "/tmp/ch.opus")
 
         mock_remove.assert_called_once_with("/tmp/ch.wav")
 
@@ -93,12 +106,12 @@ class TestEncodeToMp3WavCleanup(unittest.TestCase):
     def test_keeps_wav_when_requested(self, mock_info, mock_run, mock_remove, mock_makedirs):
         mock_info.return_value = _mock_info(1.0)
 
-        encode_to_mp3("/tmp/ch.wav", "/tmp/ch.mp3", delete_wav=False)
+        encode_to_opus("/tmp/ch.wav", "/tmp/ch.opus", delete_wav=False)
 
         mock_remove.assert_not_called()
 
 
-class TestEncodeToMp3FileHandling(unittest.TestCase):
+class TestEncodeToOpusFileHandling(unittest.TestCase):
 
     @patch("openshelf.pipeline.encoder.os.makedirs")
     @patch("openshelf.pipeline.encoder.os.remove")
@@ -107,7 +120,7 @@ class TestEncodeToMp3FileHandling(unittest.TestCase):
     def test_creates_output_directory(self, mock_info, mock_run, mock_remove, mock_makedirs):
         mock_info.return_value = _mock_info(1.0)
 
-        encode_to_mp3("/tmp/ch.wav", "/tmp/new/dir/ch.mp3")
+        encode_to_opus("/tmp/ch.wav", "/tmp/new/dir/ch.opus")
 
         mock_makedirs.assert_called_once_with("/tmp/new/dir", exist_ok=True)
 
@@ -118,7 +131,7 @@ class TestEncodeToMp3FileHandling(unittest.TestCase):
         mock_info.side_effect = FileNotFoundError("No such file")
 
         with self.assertRaises(FileNotFoundError):
-            encode_to_mp3("/tmp/missing.wav", "/tmp/ch.mp3")
+            encode_to_opus("/tmp/missing.wav", "/tmp/ch.opus")
 
     @patch("openshelf.pipeline.encoder.os.makedirs")
     @patch("openshelf.pipeline.encoder.os.remove")
@@ -127,7 +140,7 @@ class TestEncodeToMp3FileHandling(unittest.TestCase):
     def test_zero_duration(self, mock_info, mock_run, mock_remove, mock_makedirs):
         mock_info.return_value = _mock_info(0.0)
 
-        duration = encode_to_mp3("/tmp/ch.wav", "/tmp/ch.mp3")
+        duration = encode_to_opus("/tmp/ch.wav", "/tmp/ch.opus")
 
         self.assertEqual(duration, 0.0)
 
@@ -138,7 +151,7 @@ class TestAudioDuration(unittest.TestCase):
     def test_returns_duration(self, mock_run):
         mock_run.return_value = MagicMock(stdout="123.456\n")
 
-        result = audio_duration("/tmp/chapter-01.mp3")
+        result = audio_duration("/tmp/chapter-01.opus")
 
         self.assertAlmostEqual(result, 123.456)
 
@@ -146,18 +159,18 @@ class TestAudioDuration(unittest.TestCase):
     def test_calls_ffprobe(self, mock_run):
         mock_run.return_value = MagicMock(stdout="60.0\n")
 
-        audio_duration("/tmp/chapter-01.mp3")
+        audio_duration("/tmp/chapter-01.opus")
 
         args = mock_run.call_args[0][0]
         self.assertEqual(args[0], "ffprobe")
-        self.assertIn("/tmp/chapter-01.mp3", args)
+        self.assertIn("/tmp/chapter-01.opus", args)
 
     @patch("openshelf.pipeline.encoder.subprocess.run")
     def test_ffprobe_not_found_raises(self, mock_run):
         mock_run.side_effect = FileNotFoundError("ffprobe not found")
 
         with self.assertRaises(FileNotFoundError):
-            audio_duration("/tmp/chapter-01.mp3")
+            audio_duration("/tmp/chapter-01.opus")
 
     @patch("openshelf.pipeline.encoder.subprocess.run")
     def test_ffprobe_failure_raises(self, mock_run):
@@ -165,7 +178,7 @@ class TestAudioDuration(unittest.TestCase):
         mock_run.side_effect = subprocess.CalledProcessError(1, "ffprobe")
 
         with self.assertRaises(subprocess.CalledProcessError):
-            audio_duration("/tmp/chapter-01.mp3")
+            audio_duration("/tmp/chapter-01.opus")
 
 
 if __name__ == "__main__":

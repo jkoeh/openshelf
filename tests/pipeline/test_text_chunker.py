@@ -315,20 +315,22 @@ class TestSerializeChunks(unittest.TestCase):
             },
         ]
 
-    def test_version_is_2(self):
+    def test_version_is_3(self):
         result = deserialize_chunks(serialize_chunks(self._sample_chapters(), "abc123"))
-        self.assertEqual(result["version"], 2)
+        self.assertEqual(result["version"], 3)
 
     def test_contains_epub_sha256(self):
         result = deserialize_chunks(serialize_chunks(self._sample_chapters(), "deadbeef"))
         self.assertEqual(result["source_epub_sha256"], "deadbeef")
 
-    def test_chunks_have_text_para_start_para_end(self):
+    def test_chunks_have_required_fields(self):
         result = deserialize_chunks(serialize_chunks(self._sample_chapters(), "abc"))
         chunk = result["chapters"][0]["chunks"][0]
         self.assertIn("text", chunk)
         self.assertIn("para_start", chunk)
         self.assertIn("para_end", chunk)
+        self.assertIn("el_start", chunk)
+        self.assertIn("el_end", chunk)
 
     def test_chunk_text_preserved(self):
         result = deserialize_chunks(serialize_chunks(self._sample_chapters(), "abc"))
@@ -353,6 +355,45 @@ class TestSerializeChunks(unittest.TestCase):
     def test_empty_chapters(self):
         result = deserialize_chunks(serialize_chunks([], "abc"))
         self.assertEqual(result["chapters"], [])
+
+
+class TestChunkTextElementIds(unittest.TestCase):
+
+    def test_element_ids_propagated_to_el_start_el_end(self):
+        paras = [_words(100), _words(100), _words(100)]
+        ids = ["ch1-el0000", "ch1-el0001", "ch1-el0002"]
+        result = chunk_text(paras, element_ids=ids)
+        # all three pack into one chunk; el_start = first id, el_end = last id
+        self.assertEqual(result[0].el_start, "ch1-el0000")
+        self.assertEqual(result[0].el_end, "ch1-el0002")
+
+    def test_element_ids_two_chunks(self):
+        paras = [_words(300), _words(300)]
+        ids = ["ch1-el0000", "ch1-el0001"]
+        result = chunk_text(paras, element_ids=ids)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0].el_start, "ch1-el0000")
+        self.assertEqual(result[0].el_end, "ch1-el0000")
+        self.assertEqual(result[1].el_start, "ch1-el0001")
+        self.assertEqual(result[1].el_end, "ch1-el0001")
+
+    def test_no_element_ids_defaults_to_empty(self):
+        result = chunk_text([_words(50)])
+        self.assertEqual(result[0].el_start, "")
+        self.assertEqual(result[0].el_end, "")
+
+    def test_element_ids_length_mismatch_raises(self):
+        with self.assertRaises(ValueError):
+            chunk_text([_words(50), _words(50)], element_ids=["ch1-el0000"])
+
+    def test_element_ids_in_serialized_chunks(self):
+        paras = [_words(100)]
+        ids = ["ch1-el0000"]
+        chunks = chunk_text(paras, element_ids=ids)
+        chapters = [{"number": 1, "title": "T", "chunks": chunks}]
+        result = deserialize_chunks(serialize_chunks(chapters, "abc"))
+        self.assertEqual(result["chapters"][0]["chunks"][0]["el_start"], "ch1-el0000")
+        self.assertEqual(result["chapters"][0]["chunks"][0]["el_end"], "ch1-el0000")
 
 
 class TestSha256File(unittest.TestCase):
