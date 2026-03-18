@@ -111,9 +111,10 @@ class TestValidateAlignment(unittest.TestCase):
 
 class TestAlignChapter(unittest.TestCase):
 
-    def _make_whisperx_mock(self, word_segments):
+    def _make_whisperx_mock(self, word_segments, audio_samples=160000):
         mock_wx = MagicMock()
-        mock_wx.load_audio.return_value = MagicMock()
+        # load_audio returns a numpy-like array; len() must work (16kHz * 10s = 160000)
+        mock_wx.load_audio.return_value = [0.0] * audio_samples
         mock_wx.load_align_model.return_value = (MagicMock(), MagicMock())
         mock_wx.align.return_value = {"word_segments": word_segments}
         return mock_wx
@@ -141,7 +142,7 @@ class TestAlignChapter(unittest.TestCase):
     def test_skipped_chunks_excluded_from_segments(self):
         word_segs = [{"word": "good", "start": 5.1, "end": 5.5}]
         mock_wx = MagicMock()
-        mock_wx.load_audio.return_value = MagicMock()
+        mock_wx.load_audio.return_value = [0.0] * 160000
         mock_wx.load_align_model.return_value = (MagicMock(), MagicMock())
         mock_wx.align.return_value = {"word_segments": word_segs}
 
@@ -169,7 +170,7 @@ class TestAlignChapter(unittest.TestCase):
         self.assertEqual(result, [])
         mock_wx.load_audio.assert_not_called()
 
-    def test_whisperx_failure_returns_empty(self):
+    def test_whisperx_runtime_failure_returns_empty(self):
         mock_wx = MagicMock()
         mock_wx.load_audio.side_effect = RuntimeError("model load failed")
 
@@ -182,13 +183,19 @@ class TestAlignChapter(unittest.TestCase):
 
         self.assertEqual(result, [])
 
+    def test_whisperx_not_installed_raises(self):
+        # ImportError should propagate — missing dep is a setup problem
+        with patch.dict("sys.modules", {"whisperx": None}):
+            with self.assertRaises(ImportError):
+                align_chapter("/tmp/ch.opus", ["Hello world"], [0.0])
+
     def test_word_assigned_to_correct_chunk(self):
         word_segs = [
             {"word": "first",  "start": 0.1, "end": 0.5},
             {"word": "second", "start": 5.1, "end": 5.5},
         ]
         mock_wx = MagicMock()
-        mock_wx.load_audio.return_value = MagicMock()
+        mock_wx.load_audio.return_value = [0.0] * 160000
         mock_wx.load_align_model.return_value = (MagicMock(), MagicMock())
         mock_wx.align.return_value = {"word_segments": word_segs}
 

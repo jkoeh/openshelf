@@ -1,0 +1,134 @@
+[
+  {
+    "word": "The",
+    "start": 0.301,
+    "end": 0.381,
+    "chunk_idx": 0
+  },
+  {
+    "word": "morning",
+    "start": 0.401,
+    "end": 0.681,
+    "chunk_idx": 0
+  },
+  {
+    "word": "sun",
+    "start": 0.721,
+    "end": 0.962,
+    "chunk_idx": 0
+  },
+  {
+    "word": "cast",
+    "start": 1.142,
+    "end": 1.443,
+    "chunk_idx": 0
+  },
+  {
+    "word": "long",
+    "start": 1.523,
+    "end": 1.784,
+    "chunk_idx": 0
+  },
+  {
+    "word": "shadows",
+    "start": 1.864,
+    "end": 2.265,
+    "chunk_idx": 0
+  },
+  {
+    "word": "across",
+    "start": 2.505,
+    "end": 2.786,
+    "chunk_idx": 0
+  },
+  {
+    "word": "the",
+    "start": 2.806,
+    "end": 2.886,
+    "chunk_idx": 0
+  },
+  {
+    "word": "quiet",
+    "start": 2.906,
+    "end": 3.227,
+    "chunk_idx": 0
+  },
+  {
+    "word": "village",
+    "start": 3.267,
+    "end": 3.587,
+    "chunk_idx": 0
+  },
+  {
+    "word": "square.",
+    "start": 3.627,
+    "end": 3.888,
+    "chunk_idx": 0
+  },
+  {
+    "word": "Birds",
+    "start": 5.211,
+    "end": 5.512,
+    "chunk_idx": 1
+  },
+  {
+    "word": "sang",
+    "start": 5.572,
+    "end": 5.832,
+    "chunk_idx": 1
+  },
+  {
+    "word": "from",
+    "start": 5.873,
+    "end": 5.993,
+    "chunk_idx": 1
+  },
+  {
+    "word": "the",
+    "start": 6.013,
+    "end": 6.093,
+    "chunk_idx": 1
+  },
+  {
+    "word": "rooftops",
+    "start": 6.113,
+    "end": 6.655,
+    "chunk_idx": 1
+  },
+  {
+    "word": "as",
+    "start": 7.015,
+    "end": 7.096,
+    "chunk_idx": 1
+  },
+  {
+    "word": "the",
+    "start": 7.156,
+    "end": 7.216,
+    "chunk_idx": 1
+  },
+  {
+    "word": "baker",
+    "start": 7.256,
+    "end": 7.577,
+    "chunk_idx": 1
+  },
+  {
+    "word": "opened",
+    "start": 7.677,
+    "end": 7.878,
+    "chunk_idx": 1
+  },
+  {
+    "word": "his",
+    "start": 7.918,
+    "end": 7.998,
+    "chunk_idx": 1
+  },
+  {
+    "word": "shop.",
+    "start": 8.038,
+    "end": 8.259,
+    "chunk_idx": 1
+  }
+]

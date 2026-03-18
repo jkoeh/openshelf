@@ -106,10 +106,18 @@ def align_chapter(
     if not segments:
         return []
 
-    try:
-        import whisperx  # lazy import — heavy dep
+    import whisperx  # lazy import — heavy dep; ImportError means it's not installed
 
+    try:
         audio = whisperx.load_audio(audio_path)
+
+        # Cap inf end times to actual audio duration (WhisperX can't handle inf).
+        # whisperx.load_audio always resamples to 16kHz.
+        audio_duration_s = len(audio) / 16000
+        for seg in segments:
+            if seg["end"] == float("inf"):
+                seg["end"] = audio_duration_s
+
         model_a, metadata = whisperx.load_align_model(language_code=language, device=device)
         result = whisperx.align(segments, model_a, metadata, audio, device)
     except Exception:

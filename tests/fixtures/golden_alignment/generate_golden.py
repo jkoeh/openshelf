@@ -81,6 +81,12 @@ def generate_alignment(chunk_audio_starts: list[float]):
         device="cpu",
         language="en",
     )
+
+    if not words:
+        print("  ERROR: Alignment returned no words.")
+        print("  Check that whisperx is installed: pip install whisperx")
+        sys.exit(1)
+
     print(f"  Aligned {len(words)} words")
 
     violations = validate_alignment(words, 30.0, len(CHUNK_TEXTS))
