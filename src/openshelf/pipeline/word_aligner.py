@@ -27,6 +27,52 @@ def _next_start(chunk_audio_starts: list[float], current_idx: int) -> float:
     return float("inf")
 
 
+def validate_alignment(
+    words: list[WordEntry],
+    audio_duration: float,
+    num_chunks: int,
+) -> list[str]:
+    """Check alignment invariants. Returns a list of violation messages (empty = valid).
+
+    Invariants:
+    - Word timestamps are monotonically non-decreasing
+    - All timestamps fall within [0, audio_duration]
+    - All chunk_idx values are within [0, num_chunks)
+    - No empty word strings
+    """
+    violations: list[str] = []
+
+    for i, w in enumerate(words):
+        if not w.word.strip():
+            violations.append(f"word[{i}]: empty word string")
+
+        if w.start < 0.0:
+            violations.append(f"word[{i}] '{w.word}': start {w.start} < 0")
+        if w.end < 0.0:
+            violations.append(f"word[{i}] '{w.word}': end {w.end} < 0")
+
+        if w.start > audio_duration:
+            violations.append(
+                f"word[{i}] '{w.word}': start {w.start} > audio_duration {audio_duration}"
+            )
+        if w.end > audio_duration:
+            violations.append(
+                f"word[{i}] '{w.word}': end {w.end} > audio_duration {audio_duration}"
+            )
+
+        if w.chunk_idx < 0 or w.chunk_idx >= num_chunks:
+            violations.append(
+                f"word[{i}] '{w.word}': chunk_idx {w.chunk_idx} out of range [0, {num_chunks})"
+            )
+
+        if i > 0 and w.start < words[i - 1].start:
+            violations.append(
+                f"word[{i}] '{w.word}': start {w.start} < previous start {words[i - 1].start}"
+            )
+
+    return violations
+
+
 def align_chapter(
     audio_path: str,
     chunk_texts: list[str],
@@ -45,9 +91,8 @@ def align_chapter(
 
     Returns:
         List of WordEntry with word timestamps and chunk_idx.
+        Returns empty list on failure (graceful degradation).
     """
-    import whisperx  # lazy import — heavy dep
-
     # Build segments from known chunk start times (skip failed chunks)
     segments = []
     chunk_idx_map: list[int] = []  # segment index → original chunk index
@@ -61,9 +106,15 @@ def align_chapter(
     if not segments:
         return []
 
-    audio = whisperx.load_audio(audio_path)
-    model_a, metadata = whisperx.load_align_model(language_code=language, device=device)
-    result = whisperx.align(segments, model_a, metadata, audio, device)
+    try:
+        import whisperx  # lazy import — heavy dep
+
+        audio = whisperx.load_audio(audio_path)
+        model_a, metadata = whisperx.load_align_model(language_code=language, device=device)
+        result = whisperx.align(segments, model_a, metadata, audio, device)
+    except Exception:
+        logger.exception("WhisperX alignment failed for %s", audio_path)
+        return []
 
     # Map words back to chunk_idx using segment boundaries
     seg_boundaries = [(seg["start"], seg["end"], chunk_idx_map[j])
