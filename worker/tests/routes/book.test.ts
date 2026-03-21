@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { describe, it, expect, beforeAll } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import app from "../../src/index";
 
 const MANIFEST = {
@@ -7,7 +7,15 @@ const MANIFEST = {
 	author: "Franz Kafka",
 	source: "gutenberg",
 	rendition: "kokoro-af-heart",
-	chapters: [{ number: 1, title: "Chapter 1", filename: "chapter-01.opus", duration_seconds: 2880, word_count: 5200 }],
+	chapters: [
+		{
+			number: 1,
+			title: "Chapter 1",
+			filename: "chapter-01.opus",
+			duration_seconds: 2880,
+			word_count: 5200,
+		},
+	],
 };
 
 beforeAll(async () => {

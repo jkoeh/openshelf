@@ -3,8 +3,8 @@
 import os
 from pathlib import Path
 
-# Project root — two levels up from this file (src/openshelf/config.py)
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+# Project root — three levels up from this file (pipeline/src/openshelf/config.py)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 # Default paths
 DEFAULT_INPUT_DIR = PROJECT_ROOT / "download" / "books"

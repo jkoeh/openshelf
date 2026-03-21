@@ -14,11 +14,7 @@ export function immutableJsonResponse(data: unknown): Response {
 	return jsonResponse(data, CACHE_IMMUTABLE);
 }
 
-export function errorResponse(
-	code: string,
-	message: string,
-	status: number,
-): Response {
+export function errorResponse(code: string, message: string, status: number): Response {
 	return jsonResponse({ error: { code, message } }, "no-store", status);
 }
 

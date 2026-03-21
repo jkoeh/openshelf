@@ -44,7 +44,17 @@ async function seed() {
 
 	for (const { key, file } of seeds) {
 		const filePath = join(FIXTURES_DIR, file);
-		const args = ["npx", "wrangler", "r2", "object", "put", `openshelf/${key}`, "--file", filePath, "--local"];
+		const args = [
+			"npx",
+			"wrangler",
+			"r2",
+			"object",
+			"put",
+			`openshelf/${key}`,
+			"--file",
+			filePath,
+			"--local",
+		];
 		const proc = Bun?.spawn?.(args) ?? null;
 		if (!proc) {
 			// Fallback: use child_process

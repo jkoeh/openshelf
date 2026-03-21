@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { describe, it, expect, beforeAll } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import app from "../../src/index";
 
 const FAKE_AUDIO = new Uint8Array(1024).fill(0xff);
