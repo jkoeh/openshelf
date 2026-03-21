@@ -29,7 +29,7 @@ describe("GET /api/v1/books/:author/:title", () => {
 	it("returns manifest", async () => {
 		const res = await app.request("/api/v1/books/franz-kafka/the-trial", {}, env);
 		expect(res.status).toBe(200);
-		const body = await res.json();
+		const body = await res.json<typeof MANIFEST>();
 		expect(body.title).toBe("The Trial");
 		expect(body.author).toBe("Franz Kafka");
 	});
@@ -37,14 +37,14 @@ describe("GET /api/v1/books/:author/:title", () => {
 	it("returns 404 for unknown book", async () => {
 		const res = await app.request("/api/v1/books/nobody/nothing", {}, env);
 		expect(res.status).toBe(404);
-		const body = await res.json();
+		const body = await res.json<{ error: { code: string } }>();
 		expect(body.error.code).toBe("NOT_FOUND");
 	});
 
 	it("returns 400 for invalid slug", async () => {
 		const res = await app.request("/api/v1/books/INVALID/The-Trial", {}, env);
 		expect(res.status).toBe(400);
-		const body = await res.json();
+		const body = await res.json<{ error: { code: string } }>();
 		expect(body.error.code).toBe("INVALID_PARAM");
 	});
 

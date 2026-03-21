@@ -27,7 +27,7 @@ describe("GET /api/v1/books/:author/:title/alignment", () => {
 	it("returns alignment data", async () => {
 		const res = await app.request("/api/v1/books/franz-kafka/the-trial/alignment", {}, env);
 		expect(res.status).toBe(200);
-		const body = await res.json();
+		const body = await res.json<typeof ALIGNMENT>();
 		expect(body.version).toBe(1);
 		expect(body.chapters).toHaveLength(1);
 		expect(body.chapters[0].words).toHaveLength(2);

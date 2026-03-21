@@ -29,7 +29,7 @@ describe("GET /api/v1/books/:author/:title/chapters/:number", () => {
 	it("returns chapter text", async () => {
 		const res = await app.request("/api/v1/books/franz-kafka/the-trial/chapters/1", {}, env);
 		expect(res.status).toBe(200);
-		const body = await res.json();
+		const body = await res.json<{ number: number; title: string; chunks: string[]; word_count: number }>();
 		expect(body.number).toBe(1);
 		expect(body.title).toBe("Chapter 1");
 		expect(body.chunks).toHaveLength(2);
@@ -39,7 +39,7 @@ describe("GET /api/v1/books/:author/:title/chapters/:number", () => {
 	it("returns chapter 2", async () => {
 		const res = await app.request("/api/v1/books/franz-kafka/the-trial/chapters/2", {}, env);
 		expect(res.status).toBe(200);
-		const body = await res.json();
+		const body = await res.json<{ number: number }>();
 		expect(body.number).toBe(2);
 	});
 
