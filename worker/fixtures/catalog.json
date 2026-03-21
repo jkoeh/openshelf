@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "generated_at": "2025-01-15T12:00:00Z",
+  "books": [
+    {
+      "author": "Franz Kafka",
+      "author_slug": "franz-kafka",
+      "title": "The Trial",
+      "title_slug": "the-trial",
+      "source": "gutenberg",
+      "rendition": "kokoro-af-heart",
+      "total_duration_seconds": 28800.0,
+      "chapter_count": 10
+    },
+    {
+      "author": "Fyodor Dostoevsky",
+      "author_slug": "fyodor-dostoevsky",
+      "title": "Crime and Punishment",
+      "title_slug": "crime-and-punishment",
+      "source": "gutenberg",
+      "rendition": "kokoro-af-heart",
+      "total_duration_seconds": 77400.5,
+      "chapter_count": 42
+    }
+  ]
+}

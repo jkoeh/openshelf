@@ -2,7 +2,7 @@
 
 ## Context
 
-OpenShelf has a Python pipeline that converts EPUBs to AI-narrated audio and uploads to Cloudflare R2. There is currently **no API** for clients to consume this content. Web and mobile clients need endpoints to browse books, read EPUB chapters, and stream audio. Audio files are ~20MB per chapter (up to several GB per book), making egress cost the dominant concern. A Cloudflare Worker with native R2 binding provides **free egress**, edge-deployed global latency, and native Range request support — making it the optimal choice for audio streaming.
+OpenShelf has a Python pipeline that converts EPUBs to AI-narrated audio and uploads to Cloudflare R2. There is currently **no API** for clients to consume this content. Web and mobile clients need endpoints to browse books, read EPUB chapters, stream audio, and access word-level alignment data for text-audio sync. Audio files are ~20MB per chapter (up to several GB per book), making egress cost the dominant concern. A Cloudflare Worker with native R2 binding provides **free egress**, edge-deployed global latency, and native Range request support — making it the optimal choice for audio streaming.
 
 ## Architecture Overview
 
@@ -11,12 +11,13 @@ Client (web/mobile)
   │
   ▼
 Cloudflare Worker (JS/TS, Hono framework)
-  ├── /api/v1/catalog         → reads catalog.json from R2
-  ├── /api/v1/books/:a/:t     → reads manifest.json from R2
-  ├── /api/v1/books/:a/:t/chapters/:n → reads chunks.json from R2
-  ├── /api/v1/books/:a/:t/audio/:ch   → streams MP3 from R2 (Range support)
-  ├── /api/v1/books/:a/:t/epub        → streams EPUB from R2
-  └── /api/v1/auth/*          → JWT auth via D1 (SQLite)
+  ├── /api/v1/health                        → health check
+  ├── /api/v1/catalog                       → reads catalog.json from R2
+  ├── /api/v1/books/:a/:t                   → reads manifest.json from R2
+  ├── /api/v1/books/:a/:t/chapters/:n       → reads chunks.json from R2
+  ├── /api/v1/books/:a/:t/audio/:ch         → streams Opus from R2 (Range support)
+  ├── /api/v1/books/:a/:t/epub              → streams annotated EPUB from R2
+  └── /api/v1/books/:a/:t/alignment         → reads word_alignment.json from R2
 ```
 
 ## Cloudflare Services
@@ -24,9 +25,9 @@ Cloudflare Worker (JS/TS, Hono framework)
 | Service | Purpose | Binding |
 |---------|---------|---------|
 | Workers | API compute | -- |
-| R2 | Audio, EPUB, catalog storage | `R2_BUCKET` |
-| D1 | User accounts, refresh tokens | `DB` |
-| Secrets | `JWT_SECRET` | `wrangler secret put` |
+| R2 | Audio, EPUB, catalog, alignment storage | `R2_BUCKET` |
+
+Auth (D1, JWT) is deferred to v2 — all content is public domain, no legal reason to gate it. This eliminates D1, migrations, JWT secret management, and auth middleware from v1.
 
 ## Project Structure (new `worker/` directory)
 
@@ -34,53 +35,51 @@ Cloudflare Worker (JS/TS, Hono framework)
 worker/
   package.json
   tsconfig.json
-  wrangler.toml
+  wrangler.toml                # staging + production envs
   vitest.config.ts
+  biome.json
+  fixtures/                    # minimal test data for local dev
+    catalog.json
+    manifest.json
+    chunks.json
+    word_alignment.json
+    chapter-01.opus
+  scripts/
+    seed-local.ts              # load fixtures into miniflare R2
   src/
-    index.ts              # Hono app, route wiring
-    types.ts              # Env bindings, context types
-    constants.ts          # Mirrors Python config.py values
+    index.ts                   # Hono app, route wiring, error handler
+    types.ts                   # Env bindings
+    constants.ts               # Mirrors Python config.py values
     middleware/
-      cors.ts             # CORS headers for web/mobile
-      auth.ts             # JWT verification, attaches user to context
+      cors.ts                  # CORS headers for web/mobile
     routes/
-      catalog.ts          # GET /catalog — browse/search books
-      book.ts             # GET /books/:a/:t — book metadata
-      chapters.ts         # GET /books/:a/:t/chapters/:n — chapter text
-      audio.ts            # GET /books/:a/:t/audio/:ch — MP3 streaming
-      epub.ts             # GET /books/:a/:t/epub — EPUB download
-      auth.ts             # POST /auth/register, /auth/login, /auth/refresh
-    services/
-      jwt.ts              # Sign/verify tokens via Web Crypto
-      password.ts         # PBKDF2 hashing via crypto.subtle
-      catalog.ts          # Parse/filter/paginate catalog.json
-  migrations/
-    0001_create_users.sql
-    0002_create_refresh_tokens.sql
+      health.ts                # GET /health
+      catalog.ts               # GET /catalog — browse/search books
+      book.ts                  # GET /books/:a/:t — book metadata
+      chapters.ts              # GET /books/:a/:t/chapters/:n — chapter text
+      audio.ts                 # GET /books/:a/:t/audio/:ch — Opus streaming
+      epub.ts                  # GET /books/:a/:t/epub — annotated EPUB download
+      alignment.ts             # GET /books/:a/:t/alignment — word alignment
+    utils/
+      r2-keys.ts               # centralized R2 key builder
+      validation.ts            # slug validation (alphanumeric + hyphens)
+      response.ts              # cache-aware response helpers
   tests/
-    routes/               # Integration tests per route
-    services/             # Unit tests per service
+    routes/
+    utils/
 ```
 
-## API Endpoints
-
-### Public (no auth)
+## API Endpoints (all public in v1)
 
 | Method | Path | Description | Response |
 |--------|------|-------------|----------|
+| GET | `/api/v1/health` | Health check | `{ status, version }` |
 | GET | `/api/v1/catalog?q=&author=&page=&limit=&sort=` | Browse/search books | Paginated book list |
-| POST | `/api/v1/auth/register` | Create account | `{access_token, refresh_token}` |
-| POST | `/api/v1/auth/login` | Login | `{access_token, refresh_token}` |
-| POST | `/api/v1/auth/refresh` | Refresh token | `{access_token}` |
-
-### Protected (JWT required)
-
-| Method | Path | Description | Response |
-|--------|------|-------------|----------|
 | GET | `/api/v1/books/:author/:title` | Book metadata | manifest.json content |
 | GET | `/api/v1/books/:author/:title/chapters/:number` | Chapter text for reading | `{number, title, chunks[], word_count}` |
-| GET | `/api/v1/books/:author/:title/audio/:chapter` | Stream audio (Range support) | 200/206 audio/mpeg |
-| GET | `/api/v1/books/:author/:title/epub` | Download EPUB | application/epub+zip |
+| GET | `/api/v1/books/:author/:title/audio/:chapter` | Stream audio (Range support) | 200/206 audio/ogg |
+| GET | `/api/v1/books/:author/:title/epub` | Download annotated EPUB | application/epub+zip |
+| GET | `/api/v1/books/:author/:title/alignment` | Word-level alignment data | word_alignment.json content |
 
 ## Key Design Details
 
@@ -111,6 +110,8 @@ R2 has no query capability. Solution: a single `catalog.json` in R2, regenerated
 
 **Worker-side**: In-memory case-insensitive substring search on author/title. Pagination via array slicing. Cached via Workers Cache API (60s TTL).
 
+**Scalability note**: Single `catalog.json` works for the near term. Document the write-contention risk (parallel pipeline runs) and plan to migrate to D1 + FTS5 if the catalog exceeds ~1,000 books.
+
 ### 2. Audio Streaming with Range Requests
 
 R2 natively supports range requests via `bucket.get(key, { range })`.
@@ -118,13 +119,13 @@ R2 natively supports range requests via `bucket.get(key, { range })`.
 ```
 Worker logic:
 1. Validate slug params (alphanumeric + hyphens only)
-2. Build R2 key: books/{author}/{title}/audio/kokoro-af-heart/chapter-{ch}.mp3
+2. Build R2 key: books/{author}/{title}/audio/kokoro-af-heart/chapter-{ch}.opus
 3. Parse Range header → { offset, length } or { suffix }
 4. Call env.R2_BUCKET.get(key, { range })
 5. If null → 404
 6. Range present → 206 Partial Content with Content-Range header
 7. No range → 200 OK
-8. Headers: Content-Type: audio/mpeg, Accept-Ranges: bytes, Cache-Control: immutable
+8. Headers: Content-Type: audio/ogg, Accept-Ranges: bytes, Cache-Control: immutable
 ```
 
 ### 3. EPUB Chapter Reading
@@ -138,61 +139,122 @@ Worker logic:
 3. Return { chapter_number, title, chunks: string[], word_count }
 ```
 
-### 4. Auth System
+### 4. EPUB Download
 
-- **JWT**: HMAC-SHA256 via `crypto.subtle` (no npm deps). 15-min access tokens, 30-day refresh tokens.
-- **Passwords**: PBKDF2 via `crypto.subtle.deriveBits` (100K iterations, SHA-256). Native to Workers runtime.
-- **D1 schema**:
-  - `users(id, email UNIQUE, password_hash, created_at)`
-  - `refresh_tokens(id, user_id, token_hash, expires_at, created_at)`
-- Catalog browsing is public (discovery/SEO). Content streaming requires auth (usage tracking, future features like bookmarks).
+Streams the **annotated** EPUB from R2 — not the raw Gutenberg/Standard Ebooks file. The annotated EPUB contains stable element IDs injected by `epub_annotator.py`. These IDs link chunks.json and word_alignment.json entries to specific paragraphs, enabling text-audio sync in clients.
 
-### 5. CORS
+### 5. Word Alignment
+
+Serves `word_alignment.json` from R2 — enables WhisperSync-style text highlighting in clients. The alignment file maps each spoken word to a timestamp and back to a stable element ID + chunk index in the EPUB.
+
+```
+Worker logic:
+1. Build R2 key: books/{author}/{title}/audio/{rendition}/word_alignment.json
+2. Fetch from R2
+3. If null → 404
+4. Return JSON with immutable cache headers
+```
+
+### 6. Structured Error Responses
+
+All error responses use a consistent JSON format via a global Hono `onError` handler:
+
+```json
+{ "error": { "code": "NOT_FOUND", "message": "Book not found: kafka/the-trial" } }
+```
+
+Standard codes: `NOT_FOUND`, `INVALID_PARAM`, `RANGE_NOT_SATISFIABLE`, `INTERNAL_ERROR`.
+
+### 7. CORS
 
 ```
 Allowed origins: configurable (default "*", tighten in prod)
-Allowed methods: GET, POST, OPTIONS
-Allowed headers: Authorization, Content-Type, Range
+Allowed methods: GET, OPTIONS
+Allowed headers: Content-Type, Range
 Exposed headers: Content-Range, Accept-Ranges, Content-Length
 Preflight cache: 24h
 ```
 
-### 6. Caching Strategy
+### 8. Caching Strategy
 
 | Resource | Cache-Control | Rationale |
 |----------|--------------|-----------|
-| Audio MP3 | `public, max-age=31536000, immutable` | Never changes |
+| Audio Opus | `public, max-age=31536000, immutable` | Never changes |
 | EPUB | `public, max-age=31536000, immutable` | Never changes |
 | chunks.json | `public, max-age=31536000, immutable` | Versioned internally |
+| word_alignment.json | `public, max-age=31536000, immutable` | Never changes |
 | manifest.json | `public, max-age=60` | May update on reprocess |
 | catalog.json | `public, max-age=60` | Updates when books added |
-| Auth responses | `no-store` | Contains tokens |
+
+### 9. Shared Utilities
+
+- **`utils/r2-keys.ts`** — Centralized R2 key construction (`r2Key.audio(author, title, rendition, chapter)`, `r2Key.alignment(author, title, rendition)`, etc.). Prevents typos, single place to update.
+- **`utils/validation.ts`** — Slug validation (alphanumeric + hyphens). Rejects requests early with 400.
+- **`utils/response.ts`** — Response helpers (JSON with cache headers, Range streaming).
 
 ## R2 Key Mapping (must match Python pipeline)
 
 ```
 books/{author_slug}/{title_slug}/book.epub
 books/{author_slug}/{title_slug}/chunks.json
-books/{author_slug}/{title_slug}/audio/{rendition}/chapter-NN.mp3
+books/{author_slug}/{title_slug}/audio/{rendition}/chapter-NN.opus
 books/{author_slug}/{title_slug}/audio/{rendition}/manifest.json
+books/{author_slug}/{title_slug}/audio/{rendition}/word_alignment.json
 catalog.json   ← NEW (generated by Python pipeline)
 ```
 
 Source of truth for key format: `src/openshelf/pipeline/r2.py`
 Source of truth for slugs: `src/openshelf/scrapers/http.py` → `sanitize()`
 
+## Local Dev Workflow
+
+### Fixtures
+
+`worker/fixtures/` contains minimal test data so new contributors can run the Worker without the full Python TTS pipeline:
+- `catalog.json` — single-book catalog
+- `manifest.json` — matching manifest
+- `chunks.json` — one chapter with a few chunks
+- `word_alignment.json` — matching word-level alignment
+- `chapter-01.opus` — a few seconds of silence (tiny file)
+
+### Seed Script
+
+`worker/scripts/seed-local.ts` loads fixtures into miniflare's local R2 emulation. Run via `npm run seed`.
+
+## CI/CD Pipeline (GitHub Actions)
+
+1. **PR**: `npm ci && npm run typecheck && npm test`
+2. **Merge to main**: `wrangler deploy --env staging`
+3. **Release tag**: `wrangler deploy --env production`
+
+Define `[env.staging]` and `[env.production]` in `wrangler.toml` from the start.
+
+## Schema Drift Prevention
+
+Python produces 4 JSON artifacts consumed by TypeScript: `catalog.json`, `manifest.json`, `chunks.json`, `word_alignment.json`. To prevent drift:
+
+Create `schemas/` at repo root with JSON Schema files for each artifact. The TypeScript Worker generates types from them. Both Python (validation in tests) and TypeScript validate against the same source of truth.
+
+```
+schemas/
+  catalog.schema.json
+  manifest.schema.json
+  chunks.schema.json
+  word-alignment.schema.json
+```
+
 ## Implementation Order
 
-1. **Scaffold** — `package.json` (hono, wrangler, vitest), `tsconfig.json`, `wrangler.toml`, types, constants
-2. **CORS middleware** — needed by all routes
-3. **Audio streaming route** — core value, R2 get with Range support, tests with miniflare
-4. **Catalog route** — read `catalog.json` from R2, search/paginate
-5. **Book metadata route** — proxy `manifest.json` from R2
-6. **Chapter text route** — parse `chunks.json`, return chapter content
-7. **EPUB download route** — stream `book.epub` from R2
-8. **Auth system** — D1 migrations, JWT service, PBKDF2 passwords, register/login/refresh routes
-9. **Auth middleware** — wire onto protected routes (audio, epub, chapters, book metadata)
-10. **Python catalog generation** — add `update_catalog()` to `r2.py`, call from `runner.py`
+1. **Scaffold** — `package.json` (hono, wrangler, vitest), `tsconfig.json`, `wrangler.toml` (with staging/prod envs), types, constants, `r2-keys.ts`, error handler, CORS middleware, biome config
+2. **Health check** — validates scaffold works e2e
+3. **Audio streaming** — R2 get with Range, `Content-Type: audio/ogg`, fixtures + seed script
+4. **Catalog** — read `catalog.json` from R2, search/paginate
+5. **Book metadata** — proxy `manifest.json` from R2
+6. **Chapter text** — parse `chunks.json`, return chapter content
+7. **Word alignment** — proxy `word_alignment.json` from R2
+8. **EPUB download** — stream annotated EPUB
+9. **Python: catalog generation** — add `update_catalog()` to `r2.py`
+10. **CI/CD** — GitHub Actions for test + deploy
 
 ## Files Modified in Existing Python Codebase
 
@@ -215,16 +277,21 @@ Source of truth for slugs: `src/openshelf/scrapers/http.py` → `sanitize()`
 }
 ```
 
-No additional npm deps for JWT or password hashing — all done via native Web Crypto.
+No additional npm deps for auth in v1. Linting/formatting via `biome` (single tool, fast). Add `.editorconfig` for the polyglot repo.
 
 ## Verification
 
 1. `cd worker && npm install && npm run dev` — starts local dev server with miniflare
-2. `wrangler d1 migrations apply openshelf-users --local` — apply D1 schema locally
-3. Seed R2 locally with a test manifest.json, chunks.json, and small MP3
+2. `npm run seed` — load fixtures into local R2
+3. Test health: `curl http://localhost:8787/api/v1/health`
 4. Test catalog: `curl http://localhost:8787/api/v1/catalog`
-5. Test auth: `curl -X POST http://localhost:8787/api/v1/auth/register -d '{"email":"test@test.com","password":"test1234"}'`
-6. Test audio streaming: `curl -H "Authorization: Bearer <token>" -H "Range: bytes=0-1023" http://localhost:8787/api/v1/books/kafka/the-trial/audio/01`
-7. Test chapter reading: `curl -H "Authorization: Bearer <token>" http://localhost:8787/api/v1/books/kafka/the-trial/chapters/1`
+5. Test audio streaming: `curl -H "Range: bytes=0-1023" http://localhost:8787/api/v1/books/kafka/the-trial/audio/01`
+6. Test chapter reading: `curl http://localhost:8787/api/v1/books/kafka/the-trial/chapters/1`
+7. Test alignment: `curl http://localhost:8787/api/v1/books/kafka/the-trial/alignment`
 8. Run tests: `cd worker && npm test`
 9. Run Python tests: `python3 -m unittest discover -s tests -v` (verify catalog generation)
+
+## Future (v2)
+
+- **Auth**: D1 + JWT + PBKDF2 if needed for bookmarks, reading progress, or abuse prevention
+- **Catalog migration**: D1 + FTS5 when book count exceeds ~1,000

@@ -9,16 +9,16 @@ from unittest.mock import patch, MagicMock, call
 # Allow running without pip install
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from openshelf.pipeline.r2 import make_client, key_exists, upload_rendition, upload_epub, upload_chunks, upload_alignment
+from openshelf.pipeline.r2 import make_client, key_exists, upload_rendition, upload_epub, upload_chunks, upload_word_alignment
 from openshelf.config import R2_CACHE_CONTROL_IMMUTABLE, R2_CACHE_CONTROL_MANIFEST
 
 
 def _make_fake_audio_dir(tmp_dir: str, n_chapters: int = 2) -> tuple[str, str]:
-    """Create fake MP3 files and manifest in tmp_dir. Returns (audio_dir, manifest_path)."""
+    """Create fake Opus files and manifest in tmp_dir. Returns (audio_dir, manifest_path)."""
     audio_dir = os.path.join(tmp_dir, "audio")
     os.makedirs(audio_dir)
     for i in range(1, n_chapters + 1):
-        open(os.path.join(audio_dir, f"chapter-{i:02d}.mp3"), "w").close()
+        open(os.path.join(audio_dir, f"chapter-{i:02d}.opus"), "w").close()
     manifest_path = os.path.join(tmp_dir, "manifest.json")
     open(manifest_path, "w").close()
     return audio_dir, manifest_path
@@ -86,13 +86,13 @@ class TestKeyExists(unittest.TestCase):
 class TestUploadRenditionUploads(unittest.TestCase):
 
     @patch("openshelf.pipeline.r2.key_exists", return_value=False)
-    def test_uploads_mp3_and_manifest(self, mock_exists):
+    def test_uploads_opus_and_manifest(self, mock_exists):
         client = MagicMock()
         with tempfile.TemporaryDirectory() as tmp:
             audio_dir, manifest_path = _make_fake_audio_dir(tmp, n_chapters=2)
             upload_rendition(client, "openshelf", "kafka", "the-trial",
                              "kokoro-af-heart", audio_dir, manifest_path)
-        # 2 MP3s + 1 manifest
+        # 2 Opus files + 1 manifest
         self.assertEqual(client.upload_file.call_count, 3)
 
     @patch("openshelf.pipeline.r2.key_exists", return_value=False)
@@ -103,8 +103,8 @@ class TestUploadRenditionUploads(unittest.TestCase):
             upload_rendition(client, "openshelf", "kafka", "the-trial",
                              "kokoro-af-heart", audio_dir, manifest_path)
         keys = [c[0][2] for c in client.upload_file.call_args_list]
-        self.assertIn("books/kafka/the-trial/audio/kokoro-af-heart/chapter-01.mp3", keys)
-        self.assertIn("books/kafka/the-trial/audio/kokoro-af-heart/chapter-02.mp3", keys)
+        self.assertIn("books/kafka/the-trial/audio/kokoro-af-heart/chapter-01.opus", keys)
+        self.assertIn("books/kafka/the-trial/audio/kokoro-af-heart/chapter-02.opus", keys)
 
     @patch("openshelf.pipeline.r2.key_exists", return_value=False)
     def test_r2_key_format_for_manifest(self, mock_exists):
@@ -145,7 +145,7 @@ class TestUploadRenditionUploads(unittest.TestCase):
             upload_rendition(client, "openshelf", "kafka", "the-trial",
                              "multi-cast-v1", audio_dir, manifest_path)
         keys = [c[0][2] for c in client.upload_file.call_args_list]
-        self.assertIn("books/kafka/the-trial/audio/multi-cast-v1/chapter-01.mp3", keys)
+        self.assertIn("books/kafka/the-trial/audio/multi-cast-v1/chapter-01.opus", keys)
 
 
 class TestUploadRenditionIdempotency(unittest.TestCase):
@@ -183,17 +183,17 @@ class TestUploadRenditionIdempotency(unittest.TestCase):
 class TestUploadRenditionHeaders(unittest.TestCase):
 
     @patch("openshelf.pipeline.r2.key_exists", return_value=False)
-    def test_mp3_content_type(self, mock_exists):
+    def test_opus_content_type(self, mock_exists):
         client = MagicMock()
         with tempfile.TemporaryDirectory() as tmp:
             audio_dir, manifest_path = _make_fake_audio_dir(tmp, n_chapters=2)
             upload_rendition(client, "openshelf", "kafka", "the-trial",
                              "kokoro-af-heart", audio_dir, manifest_path)
-        mp3_calls = [c for c in client.upload_file.call_args_list
-                     if c[0][2].endswith(".mp3")]
-        self.assertTrue(len(mp3_calls) > 0)
-        for c in mp3_calls:
-            self.assertEqual(c[1]["ExtraArgs"]["ContentType"], "audio/mpeg")
+        opus_calls = [c for c in client.upload_file.call_args_list
+                      if c[0][2].endswith(".opus")]
+        self.assertTrue(len(opus_calls) > 0)
+        for c in opus_calls:
+            self.assertEqual(c[1]["ExtraArgs"]["ContentType"], "audio/ogg")
 
     @patch("openshelf.pipeline.r2.key_exists", return_value=False)
     def test_manifest_content_type(self, mock_exists):
@@ -207,16 +207,16 @@ class TestUploadRenditionHeaders(unittest.TestCase):
         self.assertEqual(manifest_call[1]["ExtraArgs"]["ContentType"], "application/json")
 
     @patch("openshelf.pipeline.r2.key_exists", return_value=False)
-    def test_mp3_cache_control(self, mock_exists):
-        """MP3 files must have immutable cache — they never change once written."""
+    def test_opus_cache_control(self, mock_exists):
+        """Opus files must have immutable cache — they never change once written."""
         client = MagicMock()
         with tempfile.TemporaryDirectory() as tmp:
             audio_dir, manifest_path = _make_fake_audio_dir(tmp, n_chapters=2)
             upload_rendition(client, "openshelf", "kafka", "the-trial",
                              "kokoro-af-heart", audio_dir, manifest_path)
-        mp3_calls = [c for c in client.upload_file.call_args_list
-                     if c[0][2].endswith(".mp3")]
-        for c in mp3_calls:
+        opus_calls = [c for c in client.upload_file.call_args_list
+                      if c[0][2].endswith(".opus")]
+        for c in opus_calls:
             self.assertEqual(c[1]["ExtraArgs"]["CacheControl"], R2_CACHE_CONTROL_IMMUTABLE)
 
     @patch("openshelf.pipeline.r2.key_exists", return_value=False)
@@ -232,16 +232,16 @@ class TestUploadRenditionHeaders(unittest.TestCase):
         self.assertEqual(manifest_call[1]["ExtraArgs"]["CacheControl"], R2_CACHE_CONTROL_MANIFEST)
 
     @patch("openshelf.pipeline.r2.key_exists", return_value=False)
-    def test_mp3_content_disposition_inline(self, mock_exists):
+    def test_opus_content_disposition_inline(self, mock_exists):
         """Without inline disposition, browsers download instead of streaming."""
         client = MagicMock()
         with tempfile.TemporaryDirectory() as tmp:
             audio_dir, manifest_path = _make_fake_audio_dir(tmp, n_chapters=2)
             upload_rendition(client, "openshelf", "kafka", "the-trial",
                              "kokoro-af-heart", audio_dir, manifest_path)
-        mp3_calls = [c for c in client.upload_file.call_args_list
-                     if c[0][2].endswith(".mp3")]
-        for c in mp3_calls:
+        opus_calls = [c for c in client.upload_file.call_args_list
+                      if c[0][2].endswith(".opus")]
+        for c in opus_calls:
             self.assertEqual(c[1]["ExtraArgs"]["ContentDisposition"], "inline")
 
 
@@ -339,7 +339,7 @@ class TestUploadChunks(unittest.TestCase):
         self.assertEqual(uploaded_key, "books/kafka/the-trial/chunks.json")
 
 
-class TestUploadAlignment(unittest.TestCase):
+class TestUploadWordAlignment(unittest.TestCase):
 
     def _make_client(self, key_exists_val: bool = False) -> MagicMock:
         client = MagicMock()
@@ -354,46 +354,46 @@ class TestUploadAlignment(unittest.TestCase):
     def test_uploads_file(self):
         client = self._make_client(key_exists_val=False)
         with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
-            upload_alignment(client, "openshelf", "dostoevsky", "demons", "kokoro-af-heart", tmp.name)
+            upload_word_alignment(client, "openshelf", "dostoevsky", "demons", "kokoro-af-heart", tmp.name)
         client.upload_file.assert_called_once()
 
     def test_r2_key_format(self):
         client = self._make_client(key_exists_val=False)
         with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
-            upload_alignment(client, "openshelf", "dostoevsky", "demons", "kokoro-af-heart", tmp.name)
+            upload_word_alignment(client, "openshelf", "dostoevsky", "demons", "kokoro-af-heart", tmp.name)
         key = client.upload_file.call_args[0][2]
-        self.assertEqual(key, "books/dostoevsky/demons/audio/kokoro-af-heart/alignment.json")
+        self.assertEqual(key, "books/dostoevsky/demons/audio/kokoro-af-heart/word_alignment.json")
 
     def test_skips_if_exists(self):
         client = self._make_client(key_exists_val=True)
         with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
-            result = upload_alignment(client, "openshelf", "dostoevsky", "demons", "kokoro-af-heart", tmp.name)
+            result = upload_word_alignment(client, "openshelf", "dostoevsky", "demons", "kokoro-af-heart", tmp.name)
         client.upload_file.assert_not_called()
         self.assertIsNone(result)
 
     def test_returns_key_on_upload(self):
         client = self._make_client(key_exists_val=False)
         with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
-            result = upload_alignment(client, "openshelf", "dostoevsky", "demons", "kokoro-af-heart", tmp.name)
-        self.assertEqual(result, "books/dostoevsky/demons/audio/kokoro-af-heart/alignment.json")
+            result = upload_word_alignment(client, "openshelf", "dostoevsky", "demons", "kokoro-af-heart", tmp.name)
+        self.assertEqual(result, "books/dostoevsky/demons/audio/kokoro-af-heart/word_alignment.json")
 
     def test_returns_none_on_skip(self):
         client = self._make_client(key_exists_val=True)
         with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
-            result = upload_alignment(client, "openshelf", "dostoevsky", "demons", "kokoro-af-heart", tmp.name)
+            result = upload_word_alignment(client, "openshelf", "dostoevsky", "demons", "kokoro-af-heart", tmp.name)
         self.assertIsNone(result)
 
     def test_content_type_json(self):
         client = self._make_client(key_exists_val=False)
         with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
-            upload_alignment(client, "openshelf", "dostoevsky", "demons", "kokoro-af-heart", tmp.name)
+            upload_word_alignment(client, "openshelf", "dostoevsky", "demons", "kokoro-af-heart", tmp.name)
         extra_args = client.upload_file.call_args[1]["ExtraArgs"]
         self.assertEqual(extra_args["ContentType"], "application/json")
 
     def test_cache_control_immutable(self):
         client = self._make_client(key_exists_val=False)
         with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
-            upload_alignment(client, "openshelf", "dostoevsky", "demons", "kokoro-af-heart", tmp.name)
+            upload_word_alignment(client, "openshelf", "dostoevsky", "demons", "kokoro-af-heart", tmp.name)
         extra_args = client.upload_file.call_args[1]["ExtraArgs"]
         self.assertEqual(extra_args["CacheControl"], R2_CACHE_CONTROL_IMMUTABLE)
 

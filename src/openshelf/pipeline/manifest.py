@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class ChapterMeta:
     number: int
     title: str
-    filename: str           # e.g. "chapter-01.mp3"
+    filename: str           # e.g. "chapter-01.opus"
     duration_seconds: float
     word_count: int
 

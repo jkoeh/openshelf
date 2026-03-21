@@ -1,0 +1,28 @@
+{
+  "name": "openshelf-worker",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy:staging": "wrangler deploy --env staging",
+    "deploy:production": "wrangler deploy --env production",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "seed": "tsx scripts/seed-local.ts",
+    "check": "biome check .",
+    "check:fix": "biome check --write ."
+  },
+  "dependencies": {
+    "hono": "^4"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1",
+    "@cloudflare/vitest-pool-workers": "^0.5",
+    "@cloudflare/workers-types": "^4",
+    "tsx": "^4",
+    "typescript": "^5",
+    "vitest": "^2",
+    "wrangler": "^3"
+  }
+}

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Upload already-generated audiobook files to Cloudflare R2.
 
-Generates manifest.json from existing MP3s (via ffprobe) if not already present,
-then uploads epub, chunks.json, and rendition (MP3s + manifest) to R2.
+Generates manifest.json from existing Opus files (via ffprobe) if not already present,
+then uploads epub, chunks.json, and rendition (Opus files + manifest) to R2.
 
 Usage:
     python3 scripts/upload-books.py <epub-path>
@@ -23,7 +23,7 @@ from ebooklib import epub as _epub_lib
 from openshelf.config import R2_BUCKET, R2_DEFAULT_RENDITION
 from openshelf.pipeline.encoder import audio_duration
 from openshelf.pipeline.manifest import ChapterMeta, generate_manifest
-from openshelf.pipeline.r2 import make_client, upload_epub, upload_chunks, upload_rendition, upload_alignment
+from openshelf.pipeline.r2 import make_client, upload_epub, upload_chunks, upload_rendition, upload_word_alignment
 from openshelf.scrapers.http import sanitize
 
 
@@ -75,17 +75,17 @@ def main():
         for ch in chunks_data.get("chapters", [])
     }
 
-    # Find all MP3s and get durations via ffprobe
-    mp3_files = sorted(f for f in os.listdir(rendition_dir) if f.endswith(".mp3"))
-    if not mp3_files:
-        print(f"Error: no MP3 files found in {rendition_dir}")
+    # Find all Opus files and get durations via ffprobe
+    opus_files = sorted(f for f in os.listdir(rendition_dir) if f.endswith(".opus"))
+    if not opus_files:
+        print(f"Error: no Opus files found in {rendition_dir}")
         sys.exit(1)
 
-    print(f"\nReading durations for {len(mp3_files)} chapters ...")
+    print(f"\nReading durations for {len(opus_files)} chapters ...")
     chapter_metas: list[ChapterMeta] = []
-    for filename in mp3_files:
+    for filename in opus_files:
         try:
-            ch_num = int(filename.replace("chapter-", "").replace(".mp3", ""))
+            ch_num = int(filename.replace("chapter-", "").replace(".opus", ""))
         except ValueError:
             continue
         mp3_path = os.path.join(rendition_dir, filename)
@@ -121,12 +121,12 @@ def main():
     upload_chunks(client, R2_BUCKET, author_slug, title_slug, chunks_path)
     upload_rendition(client, R2_BUCKET, author_slug, title_slug, args.rendition, rendition_dir, manifest_path)
 
-    alignment_path = os.path.join(rendition_dir, "alignment.json")
+    alignment_path = os.path.join(rendition_dir, "word_alignment.json")
     if os.path.isfile(alignment_path):
-        upload_alignment(client, R2_BUCKET, author_slug, title_slug, args.rendition, alignment_path)
-        print("Alignment uploaded.")
+        upload_word_alignment(client, R2_BUCKET, author_slug, title_slug, args.rendition, alignment_path)
+        print("Word alignment uploaded.")
     else:
-        print("Warning: alignment.json not found — run convert-book.py to generate alignment.")
+        print("Warning: word_alignment.json not found — run convert-book.py to generate alignment.")
 
     print("Upload complete.")
     print(f"R2 prefix: books/{author_slug}/{title_slug}/")

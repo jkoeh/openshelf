@@ -1,0 +1,22 @@
+name = "openshelf-api"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "openshelf"
+
+[env.staging]
+name = "openshelf-api-staging"
+
+[[env.staging.r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "openshelf-staging"
+
+[env.production]
+name = "openshelf-api"
+
+[[env.production.r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "openshelf"

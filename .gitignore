@@ -30,3 +30,7 @@ env/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Cloudflare Worker
+worker/node_modules/
+worker/.wrangler/
