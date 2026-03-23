@@ -19,7 +19,7 @@ export const r2Key = {
 		`${renditionPrefix(author, title, rendition)}/manifest.json`,
 
 	audio: (author: string, title: string, chapter: string, rendition?: string) =>
-		`${renditionPrefix(author, title, rendition)}/chapter-${chapter}.opus`,
+		`${renditionPrefix(author, title, rendition)}/chapter-${chapter}.m4a`,
 
 	alignment: (author: string, title: string, rendition?: string) =>
 		`${renditionPrefix(author, title, rendition)}/word_alignment.json`,

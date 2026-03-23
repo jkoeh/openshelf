@@ -39,7 +39,7 @@ app.get("/", async (c) => {
 	}
 
 	const headers: Record<string, string> = {
-		"Content-Type": "audio/ogg",
+		"Content-Type": "audio/mp4",
 		"Accept-Ranges": "bytes",
 		"Cache-Control": CACHE_IMMUTABLE,
 		"Content-Disposition": "inline",

@@ -88,7 +88,7 @@ def main():
     book_author = _author_meta[0][0] if _author_meta else author_slug
 
     print(f"\nBook:     {book_author} — {book_title}")
-    print(f"R2 keys:  books/{author_slug}/{title_slug}/audio/{args.rendition}/chapter-*.opus")
+    print(f"R2 keys:  books/{author_slug}/{title_slug}/audio/{args.rendition}/chapter-*.m4a")
     print(f"Local:    {os.path.abspath(output_dir)}/")
 
     if args.dry_run:
@@ -138,7 +138,7 @@ def main():
         chunks = ch_data["chunks"]
         chunk_texts = [c.text for c in chunks]
 
-        opus_path = os.path.join(output_dir, f"chapter-{ch_num:02d}.opus")
+        opus_path = os.path.join(output_dir, f"chapter-{ch_num:02d}.m4a")
 
         if os.path.exists(opus_path):
             duration = audio_duration(opus_path)
@@ -181,7 +181,7 @@ def main():
         ChapterMeta(
             number=ch_data["number"],
             title=ch_data["title"],
-            filename=f"chapter-{ch_data['number']:02d}.opus",
+            filename=f"chapter-{ch_data['number']:02d}.m4a",
             duration_seconds=chapter_durations.get(ch_data["number"], 0.0),
             word_count=word_count_map.get(ch_data["number"], 0),
         )
@@ -206,7 +206,7 @@ def main():
         word_chapters = []
         for ch_data in chunked_chapters:
             ch_num = ch_data["number"]
-            opus_path = os.path.join(output_dir, f"chapter-{ch_num:02d}.opus")
+            opus_path = os.path.join(output_dir, f"chapter-{ch_num:02d}.m4a")
             chunk_texts = [c.text for c in ch_data["chunks"]]
             words = align_chapter(
                 opus_path, chunk_texts, chapter_chunk_starts[ch_num], device=device

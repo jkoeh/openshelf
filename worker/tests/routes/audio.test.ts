@@ -6,7 +6,7 @@ const FAKE_AUDIO = new Uint8Array(1024).fill(0xff);
 
 beforeAll(async () => {
 	await env.R2_BUCKET.put(
-		"books/franz-kafka/the-trial/audio/kokoro-af-heart/chapter-01.opus",
+		"books/franz-kafka/the-trial/audio/kokoro-af-heart/chapter-01.m4a",
 		FAKE_AUDIO,
 	);
 });
@@ -15,7 +15,7 @@ describe("GET /api/v1/books/:author/:title/audio/:chapter", () => {
 	it("streams audio with correct content type", async () => {
 		const res = await app.request("/api/v1/books/franz-kafka/the-trial/audio/01", {}, env);
 		expect(res.status).toBe(200);
-		expect(res.headers.get("Content-Type")).toBe("audio/ogg");
+		expect(res.headers.get("Content-Type")).toBe("audio/mp4");
 		expect(res.headers.get("Accept-Ranges")).toBe("bytes");
 		expect(res.headers.get("Content-Disposition")).toBe("inline");
 		await res.arrayBuffer(); // drain body to release R2 handle

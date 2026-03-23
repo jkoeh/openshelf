@@ -128,7 +128,7 @@ class TestAlignChapter(unittest.TestCase):
 
         with patch.dict("sys.modules", {"whisperx": mock_wx}):
             result = align_chapter(
-                "/tmp/ch.opus",
+                "/tmp/ch.m4a",
                 ["Hello world"],
                 [0.0],
             )
@@ -148,7 +148,7 @@ class TestAlignChapter(unittest.TestCase):
 
         with patch.dict("sys.modules", {"whisperx": mock_wx}):
             result = align_chapter(
-                "/tmp/ch.opus",
+                "/tmp/ch.m4a",
                 ["bad chunk", "good chunk"],
                 [-1.0, 5.0],
             )
@@ -163,7 +163,7 @@ class TestAlignChapter(unittest.TestCase):
         mock_wx = MagicMock()
         with patch.dict("sys.modules", {"whisperx": mock_wx}):
             result = align_chapter(
-                "/tmp/ch.opus",
+                "/tmp/ch.m4a",
                 ["chunk one", "chunk two"],
                 [-1.0, -1.0],
             )
@@ -176,7 +176,7 @@ class TestAlignChapter(unittest.TestCase):
 
         with patch.dict("sys.modules", {"whisperx": mock_wx}):
             result = align_chapter(
-                "/tmp/ch.opus",
+                "/tmp/ch.m4a",
                 ["Hello world"],
                 [0.0],
             )
@@ -187,7 +187,7 @@ class TestAlignChapter(unittest.TestCase):
         # ImportError should propagate — missing dep is a setup problem
         with patch.dict("sys.modules", {"whisperx": None}):
             with self.assertRaises(ImportError):
-                align_chapter("/tmp/ch.opus", ["Hello world"], [0.0])
+                align_chapter("/tmp/ch.m4a", ["Hello world"], [0.0])
 
     def test_word_assigned_to_correct_chunk(self):
         word_segs = [
@@ -201,7 +201,7 @@ class TestAlignChapter(unittest.TestCase):
 
         with patch.dict("sys.modules", {"whisperx": mock_wx}):
             result = align_chapter(
-                "/tmp/ch.opus",
+                "/tmp/ch.m4a",
                 ["chunk one", "chunk two"],
                 [0.0, 5.0],
             )

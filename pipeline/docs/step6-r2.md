@@ -80,8 +80,8 @@ books/{author_slug}/{title_slug}/
   book.epub                                    # annotated EPUB
   chunks.json                                  # chunk-to-element mapping
   audio/{rendition}/
-    chapter-01.opus                            # audio files
-    chapter-02.opus
+    chapter-01.m4a                            # audio files
+    chapter-02.m4a
     manifest.json                              # chapter metadata
     word_alignment.json                        # word-level timestamps
 ```
@@ -107,7 +107,7 @@ This avoids O(N) HEAD requests per book. For a 20-chapter book, it's 4 HEAD requ
 
 | File | Content-Type |
 |---|---|
-| `.opus` | `audio/ogg` |
+| `.m4a` | `audio/mp4` |
 | `.epub` | `application/epub+zip` |
 | `.json` | `application/json` |
 

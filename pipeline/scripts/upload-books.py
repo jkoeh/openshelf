@@ -76,20 +76,20 @@ def main():
     }
 
     # Find all Opus files and get durations via ffprobe
-    opus_files = sorted(f for f in os.listdir(rendition_dir) if f.endswith(".opus"))
-    if not opus_files:
-        print(f"Error: no Opus files found in {rendition_dir}")
+    audio_files = sorted(f for f in os.listdir(rendition_dir) if f.endswith(".m4a"))
+    if not audio_files:
+        print(f"Error: no M4A files found in {rendition_dir}")
         sys.exit(1)
 
-    print(f"\nReading durations for {len(opus_files)} chapters ...")
+    print(f"\nReading durations for {len(audio_files)} chapters ...")
     chapter_metas: list[ChapterMeta] = []
-    for filename in opus_files:
+    for filename in audio_files:
         try:
-            ch_num = int(filename.replace("chapter-", "").replace(".opus", ""))
+            ch_num = int(filename.replace("chapter-", "").replace(".m4a", ""))
         except ValueError:
             continue
-        mp3_path = os.path.join(rendition_dir, filename)
-        duration = audio_duration(mp3_path)
+        audio_path = os.path.join(rendition_dir, filename)
+        duration = audio_duration(audio_path)
         chapter_metas.append(ChapterMeta(
             number=ch_num,
             title=title_map.get(ch_num, f"Chapter {ch_num}"),

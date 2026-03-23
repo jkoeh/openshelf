@@ -28,7 +28,7 @@ graph TD
 class ChapterMeta:
     number: int
     title: str
-    filename: str           # "chapter-01.opus"
+    filename: str           # "chapter-01.m4a"
     duration_seconds: float
     word_count: int
 ```
@@ -72,7 +72,7 @@ Created with `os.makedirs(exist_ok=True)` if it doesn't exist.
     {
       "number": 1,
       "title": "Part I, Chapter I",
-      "filename": "chapter-01.opus",
+      "filename": "chapter-01.m4a",
       "duration_seconds": 1847.3,
       "word_count": 3241
     }
@@ -90,7 +90,7 @@ Created with `os.makedirs(exist_ok=True)` if it doesn't exist.
 | `chunks_version` | Read from `chunks.json` at generation time |
 | `generated_at` | UTC ISO-8601 timestamp |
 | `total_duration_seconds` | Sum of all chapter durations |
-| `chapters[].filename` | Constructed by caller (e.g. `chapter-01.opus`) |
+| `chapters[].filename` | Constructed by caller (e.g. `chapter-01.m4a`) |
 | `chapters[].duration_seconds` | From encoder or ffprobe |
 | `chapters[].word_count` | From epub_parser |
 

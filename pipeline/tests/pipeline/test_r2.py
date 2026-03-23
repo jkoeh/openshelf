@@ -18,7 +18,7 @@ def _make_fake_audio_dir(tmp_dir: str, n_chapters: int = 2) -> tuple[str, str]:
     audio_dir = os.path.join(tmp_dir, "audio")
     os.makedirs(audio_dir)
     for i in range(1, n_chapters + 1):
-        open(os.path.join(audio_dir, f"chapter-{i:02d}.opus"), "w").close()
+        open(os.path.join(audio_dir, f"chapter-{i:02d}.m4a"), "w").close()
     manifest_path = os.path.join(tmp_dir, "manifest.json")
     open(manifest_path, "w").close()
     return audio_dir, manifest_path
@@ -103,8 +103,8 @@ class TestUploadRenditionUploads(unittest.TestCase):
             upload_rendition(client, "openshelf", "kafka", "the-trial",
                              "kokoro-af-heart", audio_dir, manifest_path)
         keys = [c[0][2] for c in client.upload_file.call_args_list]
-        self.assertIn("books/kafka/the-trial/audio/kokoro-af-heart/chapter-01.opus", keys)
-        self.assertIn("books/kafka/the-trial/audio/kokoro-af-heart/chapter-02.opus", keys)
+        self.assertIn("books/kafka/the-trial/audio/kokoro-af-heart/chapter-01.m4a", keys)
+        self.assertIn("books/kafka/the-trial/audio/kokoro-af-heart/chapter-02.m4a", keys)
 
     @patch("openshelf.pipeline.r2.key_exists", return_value=False)
     def test_r2_key_format_for_manifest(self, mock_exists):
@@ -145,7 +145,7 @@ class TestUploadRenditionUploads(unittest.TestCase):
             upload_rendition(client, "openshelf", "kafka", "the-trial",
                              "multi-cast-v1", audio_dir, manifest_path)
         keys = [c[0][2] for c in client.upload_file.call_args_list]
-        self.assertIn("books/kafka/the-trial/audio/multi-cast-v1/chapter-01.opus", keys)
+        self.assertIn("books/kafka/the-trial/audio/multi-cast-v1/chapter-01.m4a", keys)
 
 
 class TestUploadRenditionIdempotency(unittest.TestCase):
@@ -190,10 +190,10 @@ class TestUploadRenditionHeaders(unittest.TestCase):
             upload_rendition(client, "openshelf", "kafka", "the-trial",
                              "kokoro-af-heart", audio_dir, manifest_path)
         opus_calls = [c for c in client.upload_file.call_args_list
-                      if c[0][2].endswith(".opus")]
+                      if c[0][2].endswith(".m4a")]
         self.assertTrue(len(opus_calls) > 0)
         for c in opus_calls:
-            self.assertEqual(c[1]["ExtraArgs"]["ContentType"], "audio/ogg")
+            self.assertEqual(c[1]["ExtraArgs"]["ContentType"], "audio/mp4")
 
     @patch("openshelf.pipeline.r2.key_exists", return_value=False)
     def test_manifest_content_type(self, mock_exists):
@@ -215,7 +215,7 @@ class TestUploadRenditionHeaders(unittest.TestCase):
             upload_rendition(client, "openshelf", "kafka", "the-trial",
                              "kokoro-af-heart", audio_dir, manifest_path)
         opus_calls = [c for c in client.upload_file.call_args_list
-                      if c[0][2].endswith(".opus")]
+                      if c[0][2].endswith(".m4a")]
         for c in opus_calls:
             self.assertEqual(c[1]["ExtraArgs"]["CacheControl"], R2_CACHE_CONTROL_IMMUTABLE)
 
@@ -240,7 +240,7 @@ class TestUploadRenditionHeaders(unittest.TestCase):
             upload_rendition(client, "openshelf", "kafka", "the-trial",
                              "kokoro-af-heart", audio_dir, manifest_path)
         opus_calls = [c for c in client.upload_file.call_args_list
-                      if c[0][2].endswith(".opus")]
+                      if c[0][2].endswith(".m4a")]
         for c in opus_calls:
             self.assertEqual(c[1]["ExtraArgs"]["ContentDisposition"], "inline")
 

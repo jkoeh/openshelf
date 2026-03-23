@@ -11,7 +11,7 @@ const MANIFEST = {
 		{
 			number: 1,
 			title: "Chapter 1",
-			filename: "chapter-01.opus",
+			filename: "chapter-01.m4a",
 			duration_seconds: 2880,
 			word_count: 5200,
 		},

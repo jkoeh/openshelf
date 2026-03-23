@@ -36,7 +36,7 @@ def encode_to_opus(
 
     os.makedirs(os.path.dirname(opus_path), exist_ok=True)
     subprocess.run(
-        ["ffmpeg", "-i", wav_path, "-c:a", "libopus", "-b:a", bitrate, "-y", opus_path],
+        ["ffmpeg", "-i", wav_path, "-c:a", "libopus", "-b:a", bitrate, "-f", "mp4", "-y", opus_path],
         check=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

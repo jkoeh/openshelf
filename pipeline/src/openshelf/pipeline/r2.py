@@ -57,7 +57,7 @@ def upload_rendition(
 ) -> list[str]:
     """Upload all Opus files and manifest.json for a rendition to R2. Returns uploaded keys.
 
-    Key pattern: books/{author}/{title}/audio/{rendition}/chapter-NN.opus
+    Key pattern: books/{author}/{title}/audio/{rendition}/chapter-NN.m4a
     Idempotency: manifest.json is always uploaded last. Its presence on R2 signals
     that the rendition is complete. One HEAD request at the top — not one per file.
     """
@@ -70,7 +70,7 @@ def upload_rendition(
 
     uploaded: list[str] = []
 
-    opus_files = sorted(f for f in os.listdir(audio_dir) if f.endswith(".opus"))
+    opus_files = sorted(f for f in os.listdir(audio_dir) if f.endswith(".m4a"))
     for filename in opus_files:
         key = f"{prefix}/{filename}"
         client.upload_file(
@@ -78,7 +78,7 @@ def upload_rendition(
             bucket,
             key,
             ExtraArgs={
-                "ContentType": "audio/ogg",
+                "ContentType": "audio/mp4",
                 "CacheControl": R2_CACHE_CONTROL_IMMUTABLE,
                 "ContentDisposition": "inline",
             },
