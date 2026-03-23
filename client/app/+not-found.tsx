@@ -1,13 +1,22 @@
 import { Link } from "expo-router";
 import { Text, View } from "react-native";
+import Header from "../components/Header";
+import { useTheme } from "../hooks/useTheme";
 
 export default function NotFoundPage() {
+  const { colors } = useTheme();
+
   return (
-    <View className="flex-1 items-center justify-center bg-white">
-      <Text className="text-2xl font-bold mb-2">Page not found</Text>
-      <Link href="/" className="text-blue-600 underline">
-        Back to catalog
-      </Link>
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <Header title="Not Found" showBack />
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+        <Text style={{ color: colors.text, fontSize: 20, fontWeight: "700", marginBottom: 12 }}>
+          Page not found
+        </Text>
+        <Link href="/">
+          <Text style={{ color: colors.primary }}>Back to catalog</Text>
+        </Link>
+      </View>
     </View>
   );
 }

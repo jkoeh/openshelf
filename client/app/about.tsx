@@ -1,19 +1,29 @@
-import { Link } from "expo-router";
 import { Text, View } from "react-native";
+import Header from "../components/Header";
+import { useTheme } from "../hooks/useTheme";
 
 export default function AboutPage() {
+  const { colors } = useTheme();
+
   return (
-    <View className="flex-1 items-center justify-center bg-white px-6">
-      <Text className="text-2xl font-bold mb-4">About OpenShelf</Text>
-      <Text className="text-gray-600 text-center mb-6 max-w-lg">
-        OpenShelf is an open source public domain audiobook platform. It
-        downloads EPUB books from Project Gutenberg and Standard Ebooks,
-        converts them to AI-narrated audio with word-level text/audio sync, and
-        serves them globally via Cloudflare R2.
-      </Text>
-      <Link href="/" className="text-blue-600 underline">
-        Back to catalog
-      </Link>
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <Header title="About" showBack />
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <Text
+          style={{
+            color: colors.text,
+            fontSize: 16,
+            textAlign: "center",
+            maxWidth: 500,
+            lineHeight: 24,
+          }}
+        >
+          OpenShelf is an open source public domain audiobook platform. It
+          downloads EPUB books from Project Gutenberg and Standard Ebooks,
+          converts them to AI-narrated audio with word-level text/audio sync,
+          and serves them globally via Cloudflare R2.
+        </Text>
+      </View>
     </View>
   );
 }
