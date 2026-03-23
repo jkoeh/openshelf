@@ -21,6 +21,13 @@ worker/                 # TypeScript — Cloudflare Worker API
   package.json
   wrangler.toml
 
+client/                 # TypeScript — Expo app (web + iOS + Android)
+  app/                  # Expo Router file-based routes
+  components/           # Reusable UI components
+  lib/                  # Business logic (sync engine, API, storage)
+  package.json
+  app.json
+
 download/               # (gitignored) downloaded EPUBs
 audio/                  # (gitignored) generated audio files
 plans/                  # design docs and plans
@@ -28,7 +35,7 @@ plans/                  # design docs and plans
 
 ## Conventions
 
-- Each component owns its dependency file (`pipeline/requirements.txt`, `worker/package.json`)
+- Each component owns its dependency file (`pipeline/requirements.txt`, `worker/package.json`, `client/package.json`)
 - Shared data contract: pipeline writes JSON (manifest, chunks, word_alignment) to R2; worker reads it
 - `sanitize()` in `pipeline/src/openshelf/scrapers/http.py` is the single source of truth for slug generation
 - Idempotent at every level: file exists -> skip, R2 key exists -> skip

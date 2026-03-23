@@ -34,3 +34,8 @@ env/
 # Cloudflare Worker
 worker/node_modules/
 worker/.wrangler/
+
+# Expo Client
+client/node_modules/
+client/.expo/
+client/dist/
