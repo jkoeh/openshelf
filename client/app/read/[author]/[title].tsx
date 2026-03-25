@@ -1,7 +1,7 @@
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, AppState, Pressable, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, AppState, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import AudioPlayerBar, { nextRate } from "../../../components/AudioPlayerBar";
 import ChapterDropdown from "../../../components/ChapterDropdown";
 import Header from "../../../components/Header";
@@ -89,6 +89,27 @@ export default function ReaderPage() {
       player.clearLockScreenControls();
     };
   }, [manifest, currentChapter, status.isLoaded, player]);
+
+  // Keyboard shortcuts (web only)
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === " ") {
+        e.preventDefault();
+        if (status.playing) player.pause();
+        else player.play();
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        player.seekTo(Math.max(0, status.currentTime - 10));
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        player.seekTo(Math.min(status.duration, status.currentTime + 10));
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [player, status.playing, status.currentTime, status.duration]);
 
   // Set playback rate when player loads or rate changes
   useEffect(() => {
