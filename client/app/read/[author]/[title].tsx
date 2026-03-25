@@ -156,6 +156,19 @@ export default function ReaderPage() {
     [player],
   );
 
+  // Tap-to-seek: press a word → seek audio to that word's start time
+  const handleWordPress = useCallback(
+    (wordIndex: number) => {
+      const word = sync.words[wordIndex];
+      if (!word) return;
+      player.seekTo(word.start);
+      if (!status.playing) {
+        player.play();
+      }
+    },
+    [sync.words, player, status.playing],
+  );
+
   const handleRateChange = useCallback(() => {
     const newRate = nextRate(rate);
     setRate(newRate);
@@ -215,6 +228,7 @@ export default function ReaderPage() {
           words={sync.words}
           activeWordIndex={sync.activeWordIndex}
           activeChunkIndex={sync.activeChunkIndex}
+          onWordPress={handleWordPress}
         />
       ) : null}
 

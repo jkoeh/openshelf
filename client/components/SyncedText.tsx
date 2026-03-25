@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo } from "react";
-import { Text, View } from "react-native";
+import { type LayoutChangeEvent, Text, View } from "react-native";
 import { useTheme } from "../hooks/useTheme";
 import type { WordEntry } from "../types";
 import WordSpan from "./WordSpan";
@@ -13,6 +13,7 @@ interface SyncedChunkProps {
   fontSize: number;
   lineHeight: number;
   onWordPress?: (wordIndex: number) => void;
+  onLayout?: (event: LayoutChangeEvent) => void;
 }
 
 /**
@@ -29,6 +30,7 @@ const SyncedChunk = memo(function SyncedChunk({
   fontSize,
   lineHeight,
   onWordPress,
+  onLayout,
 }: SyncedChunkProps) {
   const { colors } = useTheme();
 
@@ -49,6 +51,7 @@ const SyncedChunk = memo(function SyncedChunk({
   if (chunkWords.length === 0 || !isActiveChunk) {
     return (
       <View
+        onLayout={onLayout}
         style={{
           marginBottom: 16,
           borderRadius: 4,
@@ -64,6 +67,7 @@ const SyncedChunk = memo(function SyncedChunk({
   // Render word-level spans for active chunk
   return (
     <View
+      onLayout={onLayout}
       style={{
         marginBottom: 16,
         borderRadius: 4,
@@ -101,6 +105,7 @@ interface SyncedTextProps {
   activeChunkIndex: number;
   fontSize: number;
   onWordPress?: (wordIndex: number) => void;
+  onChunkLayout?: (index: number, event: LayoutChangeEvent) => void;
 }
 
 export default function SyncedText({
@@ -110,6 +115,7 @@ export default function SyncedText({
   activeChunkIndex,
   fontSize,
   onWordPress,
+  onChunkLayout,
 }: SyncedTextProps) {
   const lineHeight = Math.round(fontSize * 1.7);
 
@@ -126,6 +132,7 @@ export default function SyncedText({
           fontSize={fontSize}
           lineHeight={lineHeight}
           onWordPress={onWordPress}
+          onLayout={onChunkLayout ? (e) => onChunkLayout(idx, e) : undefined}
         />
       ))}
     </>
