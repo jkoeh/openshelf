@@ -1,4 +1,4 @@
-import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
+import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, AppState, Pressable, ScrollView, Text, View } from "react-native";
@@ -66,6 +66,29 @@ export default function ReaderPage() {
     status.currentTime,
     syncEnabled,
   );
+
+  // Enable background audio and lock screen controls
+  useEffect(() => {
+    setAudioModeAsync({
+      playsInSilentMode: true,
+      shouldPlayInBackground: true,
+      interruptionMode: "doNotMix",
+    });
+  }, []);
+
+  // Set lock screen metadata when manifest loads
+  useEffect(() => {
+    if (!manifest || !status.isLoaded) return;
+    const chInfo = manifest.chapters.find((ch) => ch.number === currentChapter);
+    player.setActiveForLockScreen(true, {
+      title: chInfo ? `${chInfo.title}` : manifest.title,
+      artist: manifest.author,
+      albumTitle: manifest.title,
+    });
+    return () => {
+      player.clearLockScreenControls();
+    };
+  }, [manifest, currentChapter, status.isLoaded, player]);
 
   // Set playback rate when player loads or rate changes
   useEffect(() => {
