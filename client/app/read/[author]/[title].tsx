@@ -1,20 +1,33 @@
+import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
+import AudioPlayerBar, { nextRate } from "../../../components/AudioPlayerBar";
 import ChapterDropdown from "../../../components/ChapterDropdown";
 import Header from "../../../components/Header";
 import ReadingPane from "../../../components/ReadingPane";
 import SettingsPanel from "../../../components/SettingsPanel";
 import { useTheme } from "../../../hooks/useTheme";
-import { fetchBook, fetchChapter } from "../../../lib/api";
-import { getSavedFontSize, saveFontSize } from "../../../lib/storage";
+import { audioUrl, fetchBook, fetchChapter } from "../../../lib/api";
+import {
+  getSavedFontSize,
+  getSavedPlaybackRate,
+  saveFontSize,
+  savePlaybackRate,
+} from "../../../lib/storage";
 import type { ChapterResponse, Manifest } from "../../../types";
 
 export default function ReaderPage() {
-  const { author, title, chapter: chapterParam } = useLocalSearchParams<{
+  const {
+    author,
+    title,
+    chapter: chapterParam,
+    autoplay,
+  } = useLocalSearchParams<{
     author: string;
     title: string;
     chapter?: string;
+    autoplay?: string;
   }>();
   const { colors } = useTheme();
 
@@ -28,7 +41,48 @@ export default function ReaderPage() {
   const [fontSize, setFontSize] = useState(getSavedFontSize);
   const [showChapters, setShowChapters] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [rate, setRate] = useState(getSavedPlaybackRate);
   const scrollRef = useRef<ScrollView>(null);
+  const autoplayTriggered = useRef(false);
+
+  // Audio player
+  const audioSrc = author && title ? audioUrl(author, title, currentChapter) : null;
+  const player = useAudioPlayer(audioSrc, { updateInterval: 100 });
+  const status = useAudioPlayerStatus(player);
+
+  // Set playback rate when player loads or rate changes
+  useEffect(() => {
+    if (player && status.isLoaded) {
+      player.playbackRate = rate;
+    }
+  }, [player, status.isLoaded, rate]);
+
+  // Auto-play on first load if autoplay param is set
+  useEffect(() => {
+    if (autoplay === "1" && status.isLoaded && !autoplayTriggered.current) {
+      autoplayTriggered.current = true;
+      player.play();
+    }
+  }, [autoplay, status.isLoaded, player]);
+
+  // Auto-advance to next chapter when audio finishes
+  useEffect(() => {
+    if (status.didJustFinish && manifest) {
+      if (currentChapter < manifest.chapters.length) {
+        setCurrentChapter((prev) => prev + 1);
+        // New chapter will auto-play since didJustFinish means we were playing
+        autoplayTriggered.current = true;
+      }
+    }
+  }, [status.didJustFinish, manifest, currentChapter]);
+
+  // When chapter changes and audio was playing, auto-play the new chapter
+  useEffect(() => {
+    if (autoplayTriggered.current && status.isLoaded) {
+      player.play();
+      autoplayTriggered.current = false;
+    }
+  }, [status.isLoaded, player]);
 
   // Fetch manifest once
   useEffect(() => {
@@ -61,10 +115,41 @@ export default function ReaderPage() {
     (num: number) => {
       if (!manifest) return;
       const clamped = Math.max(1, Math.min(num, manifest.chapters.length));
-      setCurrentChapter(clamped);
+      if (clamped !== currentChapter) {
+        // If audio was playing, flag to auto-play new chapter
+        if (status.playing) {
+          autoplayTriggered.current = true;
+        }
+        player.pause();
+        setCurrentChapter(clamped);
+      }
     },
-    [manifest],
+    [manifest, currentChapter, status.playing, player],
   );
+
+  const handlePlayPause = useCallback(() => {
+    if (status.playing) {
+      player.pause();
+    } else {
+      player.play();
+    }
+  }, [player, status.playing]);
+
+  const handleSeek = useCallback(
+    (seconds: number) => {
+      player.seekTo(seconds);
+    },
+    [player],
+  );
+
+  const handleRateChange = useCallback(() => {
+    const newRate = nextRate(rate);
+    setRate(newRate);
+    savePlaybackRate(newRate);
+    if (status.isLoaded) {
+      player.playbackRate = newRate;
+    }
+  }, [rate, player, status.isLoaded]);
 
   if (!author || !title) {
     return (
@@ -79,6 +164,7 @@ export default function ReaderPage() {
 
   const chapterInfo = manifest?.chapters.find((ch) => ch.number === currentChapter);
   const headerTitle = chapterInfo ? `Ch. ${chapterInfo.number}` : "Loading...";
+  const totalChapters = manifest?.chapters.length ?? 0;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -90,7 +176,7 @@ export default function ReaderPage() {
             {manifest ? (
               <Pressable onPress={() => setShowChapters(true)}>
                 <Text style={{ color: colors.primary, fontSize: 14 }}>
-                  {currentChapter}/{manifest.chapters.length}
+                  {currentChapter}/{totalChapters}
                 </Text>
               </Pressable>
             ) : null}
@@ -116,39 +202,21 @@ export default function ReaderPage() {
         />
       ) : null}
 
-      {/* Chapter navigation footer */}
-      {manifest && !loading ? (
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
-            paddingHorizontal: 16,
-            paddingVertical: 12,
-            borderTopWidth: 1,
-            borderTopColor: colors.border,
-            backgroundColor: colors.background,
-          }}
-        >
-          <Pressable
-            onPress={() => goToChapter(currentChapter - 1)}
-            disabled={currentChapter <= 1}
-            style={{ opacity: currentChapter <= 1 ? 0.3 : 1 }}
-          >
-            <Text style={{ color: colors.primary, fontSize: 14 }}>Previous</Text>
-          </Pressable>
-          <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
-            Chapter {currentChapter} of {manifest.chapters.length}
-          </Text>
-          <Pressable
-            onPress={() => goToChapter(currentChapter + 1)}
-            disabled={currentChapter >= manifest.chapters.length}
-            style={{ opacity: currentChapter >= manifest.chapters.length ? 0.3 : 1 }}
-          >
-            <Text style={{ color: colors.primary, fontSize: 14 }}>Next</Text>
-          </Pressable>
-        </View>
-      ) : null}
+      {/* Audio player bar */}
+      <AudioPlayerBar
+        playing={status.playing}
+        currentTime={status.currentTime}
+        duration={status.duration}
+        playbackRate={rate}
+        isLoaded={status.isLoaded}
+        onPlayPause={handlePlayPause}
+        onSeek={handleSeek}
+        onPrev={() => goToChapter(currentChapter - 1)}
+        onNext={() => goToChapter(currentChapter + 1)}
+        onRateChange={handleRateChange}
+        canPrev={currentChapter > 1}
+        canNext={currentChapter < totalChapters}
+      />
 
       {/* Modals */}
       {manifest ? (
