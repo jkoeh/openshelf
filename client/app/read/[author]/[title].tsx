@@ -7,11 +7,13 @@ import ChapterDropdown from "../../../components/ChapterDropdown";
 import Header from "../../../components/Header";
 import ReadingPane from "../../../components/ReadingPane";
 import SettingsPanel from "../../../components/SettingsPanel";
+import { useSyncEngine } from "../../../hooks/useSyncEngine";
 import { useTheme } from "../../../hooks/useTheme";
 import { audioUrl, fetchBook, fetchChapter } from "../../../lib/api";
 import {
   getSavedFontSize,
   getSavedPlaybackRate,
+  isSyncEnabled as getIsSyncEnabled,
   saveFontSize,
   savePlaybackRate,
 } from "../../../lib/storage";
@@ -42,6 +44,7 @@ export default function ReaderPage() {
   const [showChapters, setShowChapters] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [rate, setRate] = useState(getSavedPlaybackRate);
+  const [syncEnabled] = useState(getIsSyncEnabled);
   const scrollRef = useRef<ScrollView>(null);
   const autoplayTriggered = useRef(false);
 
@@ -49,6 +52,17 @@ export default function ReaderPage() {
   const audioSrc = author && title ? audioUrl(author, title, currentChapter) : null;
   const player = useAudioPlayer(audioSrc, { updateInterval: 100 });
   const status = useAudioPlayerStatus(player);
+
+  // Sync engine
+  const totalChapters = manifest?.chapters.length ?? 0;
+  const sync = useSyncEngine(
+    author,
+    title,
+    currentChapter,
+    totalChapters,
+    status.currentTime,
+    syncEnabled,
+  );
 
   // Set playback rate when player loads or rate changes
   useEffect(() => {
@@ -164,7 +178,6 @@ export default function ReaderPage() {
 
   const chapterInfo = manifest?.chapters.find((ch) => ch.number === currentChapter);
   const headerTitle = chapterInfo ? `Ch. ${chapterInfo.number}` : "Loading...";
-  const totalChapters = manifest?.chapters.length ?? 0;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -199,6 +212,9 @@ export default function ReaderPage() {
           chapterTitle={chapterData.title}
           chunks={chapterData.chunks}
           fontSize={fontSize}
+          words={sync.words}
+          activeWordIndex={sync.activeWordIndex}
+          activeChunkIndex={sync.activeChunkIndex}
         />
       ) : null}
 

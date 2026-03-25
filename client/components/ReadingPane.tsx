@@ -1,17 +1,35 @@
 import { forwardRef } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { useTheme } from "../hooks/useTheme";
+import type { WordEntry } from "../types";
+import SyncedText from "./SyncedText";
 
 interface ReadingPaneProps {
   chapterTitle: string;
   chunks: string[];
   fontSize: number;
+  words?: WordEntry[];
+  activeWordIndex?: number;
+  activeChunkIndex?: number;
+  onWordPress?: (wordIndex: number) => void;
 }
 
 const ReadingPane = forwardRef<ScrollView, ReadingPaneProps>(
-  ({ chapterTitle, chunks, fontSize }, ref) => {
+  (
+    {
+      chapterTitle,
+      chunks,
+      fontSize,
+      words,
+      activeWordIndex = -1,
+      activeChunkIndex = -1,
+      onWordPress,
+    },
+    ref,
+  ) => {
     const { colors } = useTheme();
     const lineHeight = Math.round(fontSize * 1.7);
+    const hasSyncData = words && words.length > 0;
 
     return (
       <ScrollView
@@ -36,27 +54,30 @@ const ReadingPane = forwardRef<ScrollView, ReadingPaneProps>(
         >
           {chapterTitle}
         </Text>
-        {chunks.map((chunk, idx) => (
-          <View
-            key={idx}
-            style={{
-              marginBottom: 16,
-              borderRadius: 4,
-              paddingVertical: 2,
-              paddingHorizontal: 4,
-            }}
-          >
-            <Text
+        {hasSyncData ? (
+          <SyncedText
+            chunks={chunks}
+            words={words}
+            activeWordIndex={activeWordIndex}
+            activeChunkIndex={activeChunkIndex}
+            fontSize={fontSize}
+            onWordPress={onWordPress}
+          />
+        ) : (
+          chunks.map((chunk, idx) => (
+            <View
+              key={idx}
               style={{
-                color: colors.text,
-                fontSize,
-                lineHeight,
+                marginBottom: 16,
+                borderRadius: 4,
+                paddingVertical: 2,
+                paddingHorizontal: 4,
               }}
             >
-              {chunk}
-            </Text>
-          </View>
-        ))}
+              <Text style={{ color: colors.text, fontSize, lineHeight }}>{chunk}</Text>
+            </View>
+          ))
+        )}
       </ScrollView>
     );
   },
