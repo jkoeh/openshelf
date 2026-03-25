@@ -1,7 +1,7 @@
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, AppState, Pressable, ScrollView, Text, View } from "react-native";
 import AudioPlayerBar, { nextRate } from "../../../components/AudioPlayerBar";
 import ChapterDropdown from "../../../components/ChapterDropdown";
 import Header from "../../../components/Header";
@@ -16,6 +16,7 @@ import {
   isSyncEnabled as getIsSyncEnabled,
   saveFontSize,
   savePlaybackRate,
+  saveProgress,
 } from "../../../lib/storage";
 import type { ChapterResponse, Manifest } from "../../../types";
 
@@ -24,11 +25,13 @@ export default function ReaderPage() {
     author,
     title,
     chapter: chapterParam,
+    time: timeParam,
     autoplay,
   } = useLocalSearchParams<{
     author: string;
     title: string;
     chapter?: string;
+    time?: string;
     autoplay?: string;
   }>();
   const { colors } = useTheme();
@@ -70,6 +73,19 @@ export default function ReaderPage() {
       player.playbackRate = rate;
     }
   }, [player, status.isLoaded, rate]);
+
+  // Seek to saved time on initial load (continue from progress)
+  const initialSeekDone = useRef(false);
+  useEffect(() => {
+    if (timeParam && status.isLoaded && !initialSeekDone.current) {
+      initialSeekDone.current = true;
+      const t = Number.parseFloat(timeParam);
+      if (!Number.isNaN(t) && t > 0) {
+        player.seekTo(t);
+        player.play();
+      }
+    }
+  }, [timeParam, status.isLoaded, player]);
 
   // Auto-play on first load if autoplay param is set
   useEffect(() => {
@@ -119,6 +135,43 @@ export default function ReaderPage() {
       .catch((e) => setError(e instanceof Error ? e.message : "Failed to load chapter"))
       .finally(() => setLoading(false));
   }, [author, title, currentChapter]);
+
+  // Save progress every 10s while playing
+  useEffect(() => {
+    if (!author || !title || !status.playing) return;
+    const interval = setInterval(() => {
+      saveProgress(author, title, {
+        chapter: currentChapter,
+        audioTime: status.currentTime,
+        updatedAt: new Date().toISOString(),
+      });
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [author, title, currentChapter, status.playing, status.currentTime]);
+
+  // Save progress on chapter change
+  useEffect(() => {
+    if (!author || !title || status.currentTime <= 0) return;
+    saveProgress(author, title, {
+      chapter: currentChapter,
+      audioTime: status.currentTime,
+      updatedAt: new Date().toISOString(),
+    });
+  }, [currentChapter]);
+
+  // Save progress when app goes to background
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (nextState) => {
+      if (nextState !== "active" && author && title) {
+        saveProgress(author, title, {
+          chapter: currentChapter,
+          audioTime: status.currentTime,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    });
+    return () => sub.remove();
+  }, [author, title, currentChapter, status.currentTime]);
 
   const handleFontSizeChange = useCallback((size: number) => {
     setFontSize(size);
