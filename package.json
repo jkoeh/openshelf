@@ -1,0 +1,19 @@
+{
+  "name": "openshelf",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n worker,client -c blue,green \"npm run dev:worker\" \"npm run dev:client\"",
+    "dev:worker": "cd worker && npm run dev",
+    "dev:client": "cd client && npm start",
+    "test": "concurrently -n worker,client \"npm run test:worker\" \"npm run test:client\"",
+    "test:worker": "cd worker && npm test",
+    "test:client": "cd client && npm test",
+    "typecheck": "concurrently -n worker,client \"npm run typecheck:worker\" \"npm run typecheck:client\"",
+    "typecheck:worker": "cd worker && npm run typecheck",
+    "typecheck:client": "cd client && npm run typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^9"
+  }
+}

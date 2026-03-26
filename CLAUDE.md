@@ -33,6 +33,14 @@ audio/                  # (gitignored) generated audio files
 plans/                  # design docs and plans
 ```
 
+## Root Commands
+
+```bash
+npm run dev          # Start worker + client concurrently
+npm run test         # Run worker + client tests
+npm run typecheck    # Type-check worker + client
+```
+
 ## Conventions
 
 - Each component owns its dependency file (`pipeline/requirements.txt`, `worker/package.json`, `client/package.json`)
