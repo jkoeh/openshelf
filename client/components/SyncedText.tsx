@@ -34,11 +34,16 @@ const SyncedChunk = memo(function SyncedChunk({
 }: SyncedChunkProps) {
   const { colors } = useTheme();
 
-  // Only expand to word-level spans for active chunk and its neighbors
-  const chunkWords = useMemo(
-    () => words.filter((w) => w.chunk_idx === chunkIndex),
-    [words, chunkIndex],
-  );
+  // Collect words for this chunk with their global indices
+  const chunkWords = useMemo(() => {
+    const result: { word: WordEntry; globalIdx: number }[] = [];
+    for (let i = 0; i < words.length; i++) {
+      if (words[i].chunk_idx === chunkIndex) {
+        result.push({ word: words[i], globalIdx: i });
+      }
+    }
+    return result;
+  }, [words, chunkIndex]);
 
   const handleWordPress = useCallback(
     (wordIdx: number) => {
@@ -77,22 +82,18 @@ const SyncedChunk = memo(function SyncedChunk({
       }}
     >
       <Text style={{ flexDirection: "row", flexWrap: "wrap" }}>
-        {chunkWords.map((w) => {
-          // Find this word's global index in the words array
-          const globalIdx = words.indexOf(w);
-          return (
-            <WordSpan
-              key={w.element_id}
-              word={w.word}
-              isActive={globalIdx === activeWordIndex}
-              highlightColor={colors.highlight}
-              textColor={colors.text}
-              fontSize={fontSize}
-              lineHeight={lineHeight}
-              onPress={onWordPress ? () => handleWordPress(globalIdx) : undefined}
-            />
-          );
-        })}
+        {chunkWords.map(({ word: w, globalIdx }) => (
+          <WordSpan
+            key={globalIdx}
+            word={w.word}
+            isActive={globalIdx === activeWordIndex}
+            highlightColor={colors.highlight}
+            textColor={colors.text}
+            fontSize={fontSize}
+            lineHeight={lineHeight}
+            onPress={onWordPress ? () => handleWordPress(globalIdx) : undefined}
+          />
+        ))}
       </Text>
     </View>
   );
