@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { Pressable, Text } from "react-native";
+import { Text } from "react-native";
 
 interface WordSpanProps {
   word: string;
@@ -20,26 +20,9 @@ function WordSpanInner({
   lineHeight,
   onPress,
 }: WordSpanProps) {
-  if (onPress) {
-    return (
-      <Pressable onPress={onPress}>
-        <Text
-          style={{
-            color: textColor,
-            fontSize,
-            lineHeight,
-            backgroundColor: isActive ? highlightColor : "transparent",
-            borderRadius: isActive ? 2 : 0,
-          }}
-        >
-          {word}{" "}
-        </Text>
-      </Pressable>
-    );
-  }
-
   return (
     <Text
+      onPress={onPress}
       style={{
         color: textColor,
         fontSize,

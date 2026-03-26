@@ -53,7 +53,7 @@ export default function ReaderPage() {
 
   // Audio player
   const audioSrc = author && title ? audioUrl(author, title, currentChapter) : null;
-  const player = useAudioPlayer(audioSrc, { updateInterval: 100 });
+  const player = useAudioPlayer(audioSrc, { updateInterval: 100, crossOrigin: "anonymous" });
   const status = useAudioPlayerStatus(player);
 
   // Sync engine
