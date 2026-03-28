@@ -111,7 +111,9 @@
       "Bash(C:/Users/johnk/Documents/Projects/openshelf/.venv/Scripts/python.exe -c \"\nimport json\nwith open\\('C:/Users/johnk/Documents/Projects/openshelf/audio/kafka-franz/the-trial/kokoro-af-heart/word_alignment.json', encoding='utf-8'\\) as f:\n    data = json.load\\(f\\)\nprint\\('Top-level keys:', list\\(data.keys\\(\\)\\)\\)\nif 'chapters' in data:\n    ch = data['chapters'][0]\n    print\\('First chapter keys:', list\\(ch.keys\\(\\)\\)\\)\n    print\\('Chapter identifier:', ch.get\\('chapter', 'N/A'\\)\\)\n    print\\('Words count:', len\\(ch.get\\('words', []\\)\\)\\)\nelse:\n    print\\('Structure:', {k: type\\(v\\).__name__ for k, v in data.items\\(\\)}\\)\n    if isinstance\\(data, list\\):\n        print\\('Is list, length:', len\\(data\\)\\)\n        print\\('First item keys:', list\\(data[0].keys\\(\\)\\) if data else 'empty'\\)\n\")",
       "mcp__plugin_chrome-devtools-mcp_chrome-devtools__new_page",
       "mcp__plugin_chrome-devtools-mcp_chrome-devtools__navigate_page",
-      "mcp__plugin_chrome-devtools-mcp_chrome-devtools__wait_for"
+      "mcp__plugin_chrome-devtools-mcp_chrome-devtools__wait_for",
+      "Bash(wc -l /c/Users/johnk/Documents/Projects/openshelf/worker/src/**/*.ts /c/Users/johnk/Documents/Projects/openshelf/worker/tests/routes/**/*.test.ts)",
+      "Bash(wc:*)"
     ]
   }
 }
