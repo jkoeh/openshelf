@@ -6,6 +6,7 @@ compatibility_flags = ["nodejs_compat"]
 [[r2_buckets]]
 binding = "R2_BUCKET"
 bucket_name = "openshelf"
+preview_bucket_name = "openshelf"
 
 [env.staging]
 name = "openshelf-api-staging"

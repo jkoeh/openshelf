@@ -18,7 +18,7 @@ src/openshelf/
     epub_annotator.py       # Step 1b: inject stable element IDs into EPUB HTML
     text_chunker.py         # Step 2:  paragraphs -> TTS-sized Chunks
     tts.py                  # Step 3:  chunks -> WAV via Kokoro TTS
-    encoder.py              # Step 4:  WAV -> Opus via ffmpeg
+    encoder.py              # Step 4:  WAV -> AAC (.m4a) via ffmpeg
     manifest.py             # Step 5a: chapter metadata JSON
     word_aligner.py         # Step 5b: word-level alignment via WhisperX
     r2.py                   # Step 6:  upload to Cloudflare R2
@@ -26,7 +26,7 @@ src/openshelf/
 
 scripts/
   download-books.py         # CLI for book scraping
-  convert-book.py           # CLI for EPUB -> Opus conversion + alignment
+  convert-book.py           # CLI for EPUB -> audio conversion + alignment
   upload-books.py           # CLI for uploading pre-generated audio to R2
 
 tests/
@@ -40,7 +40,7 @@ tests/
 - Python 3.11+
 - Scraper: stdlib only (no pip deps)
 - Pipeline: kokoro, ebooklib, beautifulsoup4, soundfile, numpy, boto3, torch, whisperx
-- Audio: Opus 48kbps via ffmpeg (libopus)
+- Audio: AAC 48kbps via ffmpeg (.m4a container)
 - Storage: Cloudflare R2 (S3-compatible)
 
 ## Commands

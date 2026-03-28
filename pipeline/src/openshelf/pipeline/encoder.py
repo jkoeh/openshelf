@@ -1,4 +1,4 @@
-"""Step 4: Convert WAV audio to Opus."""
+"""Step 4: Convert WAV audio to AAC (.m4a)."""
 
 import logging
 import os
@@ -6,13 +6,13 @@ import subprocess
 
 import soundfile as sf
 
-from openshelf.config import OPUS_BITRATE, TTS_SAMPLE_RATE
+from openshelf.config import AAC_BITRATE, TTS_SAMPLE_RATE
 
 logger = logging.getLogger(__name__)
 
 
 def audio_duration(path: str) -> float:
-    """Get duration of an audio file via ffprobe. Works with WAV, Opus, etc."""
+    """Get duration of an audio file via ffprobe."""
     result = subprocess.run(
         ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", path],
         capture_output=True, text=True, check=True,
@@ -20,10 +20,10 @@ def audio_duration(path: str) -> float:
     return float(result.stdout.strip())
 
 
-def encode_to_opus(
+def encode_to_aac(
     wav_path: str,
-    opus_path: str,
-    bitrate: str = OPUS_BITRATE,
+    m4a_path: str,
+    bitrate: str = AAC_BITRATE,
     delete_wav: bool = True,
 ) -> float:
     info = sf.info(wav_path)
@@ -34,9 +34,9 @@ def encode_to_opus(
             info.samplerate, TTS_SAMPLE_RATE, wav_path,
         )
 
-    os.makedirs(os.path.dirname(opus_path), exist_ok=True)
+    os.makedirs(os.path.dirname(m4a_path), exist_ok=True)
     subprocess.run(
-        ["ffmpeg", "-i", wav_path, "-c:a", "libopus", "-b:a", bitrate, "-f", "mp4", "-y", opus_path],
+        ["ffmpeg", "-i", wav_path, "-c:a", "aac", "-b:a", bitrate, "-f", "mp4", "-y", m4a_path],
         check=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

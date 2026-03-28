@@ -46,7 +46,7 @@ export interface WordEntry {
   start: number;
   end: number;
   chunk_idx: number;
-  element_id: string;
+  element_id?: string;
 }
 
 export interface ChapterAlignment {

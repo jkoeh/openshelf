@@ -8,8 +8,8 @@ from unittest.mock import patch, MagicMock
 # Allow running without pip install
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from openshelf.pipeline.encoder import audio_duration, encode_to_opus
-from openshelf.config import OPUS_BITRATE
+from openshelf.pipeline.encoder import audio_duration, encode_to_aac
+from openshelf.config import AAC_BITRATE
 
 
 def _mock_info(duration_secs: float, samplerate: int = 24000) -> MagicMock:
@@ -20,16 +20,16 @@ def _mock_info(duration_secs: float, samplerate: int = 24000) -> MagicMock:
     return info
 
 
-class TestEncodeToOpusBasic(unittest.TestCase):
+class TestEncodeToAacBasic(unittest.TestCase):
 
     @patch("openshelf.pipeline.encoder.os.makedirs")
     @patch("openshelf.pipeline.encoder.os.remove")
     @patch("openshelf.pipeline.encoder.subprocess.run")
     @patch("openshelf.pipeline.encoder.sf.info")
-    def test_exports_opus(self, mock_info, mock_run, mock_remove, mock_makedirs):
+    def test_exports_m4a(self, mock_info, mock_run, mock_remove, mock_makedirs):
         mock_info.return_value = _mock_info(60.0)
 
-        encode_to_opus("/tmp/ch.wav", "/tmp/ch.m4a")
+        encode_to_aac("/tmp/ch.wav", "/tmp/ch.m4a")
 
         mock_run.assert_called_once()
         args = mock_run.call_args[0][0]
@@ -41,14 +41,14 @@ class TestEncodeToOpusBasic(unittest.TestCase):
     @patch("openshelf.pipeline.encoder.os.remove")
     @patch("openshelf.pipeline.encoder.subprocess.run")
     @patch("openshelf.pipeline.encoder.sf.info")
-    def test_uses_libopus_codec(self, mock_info, mock_run, mock_remove, mock_makedirs):
+    def test_uses_aac_codec(self, mock_info, mock_run, mock_remove, mock_makedirs):
         mock_info.return_value = _mock_info(60.0)
 
-        encode_to_opus("/tmp/ch.wav", "/tmp/ch.m4a")
+        encode_to_aac("/tmp/ch.wav", "/tmp/ch.m4a")
 
         args = mock_run.call_args[0][0]
         self.assertIn("-c:a", args)
-        self.assertIn("libopus", args)
+        self.assertIn("aac", args)
 
     @patch("openshelf.pipeline.encoder.os.makedirs")
     @patch("openshelf.pipeline.encoder.os.remove")
@@ -57,7 +57,7 @@ class TestEncodeToOpusBasic(unittest.TestCase):
     def test_returns_duration(self, mock_info, mock_run, mock_remove, mock_makedirs):
         mock_info.return_value = _mock_info(90.0)
 
-        duration = encode_to_opus("/tmp/ch.wav", "/tmp/ch.m4a")
+        duration = encode_to_aac("/tmp/ch.wav", "/tmp/ch.m4a")
 
         self.assertEqual(duration, 90.0)
 
@@ -68,10 +68,10 @@ class TestEncodeToOpusBasic(unittest.TestCase):
     def test_default_bitrate(self, mock_info, mock_run, mock_remove, mock_makedirs):
         mock_info.return_value = _mock_info(1.0)
 
-        encode_to_opus("/tmp/ch.wav", "/tmp/ch.m4a")
+        encode_to_aac("/tmp/ch.wav", "/tmp/ch.m4a")
 
         args = mock_run.call_args[0][0]
-        self.assertIn(OPUS_BITRATE, args)
+        self.assertIn(AAC_BITRATE, args)
 
     @patch("openshelf.pipeline.encoder.os.makedirs")
     @patch("openshelf.pipeline.encoder.os.remove")
@@ -80,13 +80,13 @@ class TestEncodeToOpusBasic(unittest.TestCase):
     def test_custom_bitrate(self, mock_info, mock_run, mock_remove, mock_makedirs):
         mock_info.return_value = _mock_info(1.0)
 
-        encode_to_opus("/tmp/ch.wav", "/tmp/ch.m4a", bitrate="32k")
+        encode_to_aac("/tmp/ch.wav", "/tmp/ch.m4a", bitrate="32k")
 
         args = mock_run.call_args[0][0]
         self.assertIn("32k", args)
 
 
-class TestEncodeToOpusWavCleanup(unittest.TestCase):
+class TestEncodeToAacWavCleanup(unittest.TestCase):
 
     @patch("openshelf.pipeline.encoder.os.makedirs")
     @patch("openshelf.pipeline.encoder.os.remove")
@@ -95,7 +95,7 @@ class TestEncodeToOpusWavCleanup(unittest.TestCase):
     def test_deletes_wav_by_default(self, mock_info, mock_run, mock_remove, mock_makedirs):
         mock_info.return_value = _mock_info(1.0)
 
-        encode_to_opus("/tmp/ch.wav", "/tmp/ch.m4a")
+        encode_to_aac("/tmp/ch.wav", "/tmp/ch.m4a")
 
         mock_remove.assert_called_once_with("/tmp/ch.wav")
 
@@ -106,12 +106,12 @@ class TestEncodeToOpusWavCleanup(unittest.TestCase):
     def test_keeps_wav_when_requested(self, mock_info, mock_run, mock_remove, mock_makedirs):
         mock_info.return_value = _mock_info(1.0)
 
-        encode_to_opus("/tmp/ch.wav", "/tmp/ch.m4a", delete_wav=False)
+        encode_to_aac("/tmp/ch.wav", "/tmp/ch.m4a", delete_wav=False)
 
         mock_remove.assert_not_called()
 
 
-class TestEncodeToOpusFileHandling(unittest.TestCase):
+class TestEncodeToAacFileHandling(unittest.TestCase):
 
     @patch("openshelf.pipeline.encoder.os.makedirs")
     @patch("openshelf.pipeline.encoder.os.remove")
@@ -120,7 +120,7 @@ class TestEncodeToOpusFileHandling(unittest.TestCase):
     def test_creates_output_directory(self, mock_info, mock_run, mock_remove, mock_makedirs):
         mock_info.return_value = _mock_info(1.0)
 
-        encode_to_opus("/tmp/ch.wav", "/tmp/new/dir/ch.m4a")
+        encode_to_aac("/tmp/ch.wav", "/tmp/new/dir/ch.m4a")
 
         mock_makedirs.assert_called_once_with("/tmp/new/dir", exist_ok=True)
 
@@ -131,7 +131,7 @@ class TestEncodeToOpusFileHandling(unittest.TestCase):
         mock_info.side_effect = FileNotFoundError("No such file")
 
         with self.assertRaises(FileNotFoundError):
-            encode_to_opus("/tmp/missing.wav", "/tmp/ch.m4a")
+            encode_to_aac("/tmp/missing.wav", "/tmp/ch.m4a")
 
     @patch("openshelf.pipeline.encoder.os.makedirs")
     @patch("openshelf.pipeline.encoder.os.remove")
@@ -140,7 +140,7 @@ class TestEncodeToOpusFileHandling(unittest.TestCase):
     def test_zero_duration(self, mock_info, mock_run, mock_remove, mock_makedirs):
         mock_info.return_value = _mock_info(0.0)
 
-        duration = encode_to_opus("/tmp/ch.wav", "/tmp/ch.m4a")
+        duration = encode_to_aac("/tmp/ch.wav", "/tmp/ch.m4a")
 
         self.assertEqual(duration, 0.0)
 

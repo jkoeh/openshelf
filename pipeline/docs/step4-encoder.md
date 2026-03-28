@@ -5,7 +5,7 @@
 
 ## Purpose
 
-Convert a WAV file to Opus format using ffmpeg. Returns the audio duration. Opus at 48kbps provides good speech quality at roughly 1/3 the size of MP3 128kbps.
+Convert a WAV file to AAC format in an M4A container using ffmpeg. Returns the audio duration. AAC at 48kbps provides good speech quality with universal playback support (iOS, Android, Windows, macOS, all browsers).
 
 ```mermaid
 graph TD
@@ -14,8 +14,8 @@ graph TD
     C -->|No| D[Log warning]
     C -->|Yes| E[Continue]
     D --> E
-    E --> F[ffmpeg -c:a libopus -b:a 48k]
-    F --> G[Opus file]
+    E --> F[ffmpeg -c:a aac -b:a 48k -f mp4]
+    F --> G[.m4a file]
     G --> H{delete_wav?}
     H -->|Yes| I[os.remove WAV]
     H -->|No| J[Keep WAV]
@@ -29,13 +29,13 @@ graph TD
 
 ```python
 def audio_duration(path: str) -> float
-    # Get duration of any audio file via ffprobe (WAV, Opus, etc.)
+    # Get duration of any audio file via ffprobe
     # Returns seconds as float
 
-def encode_to_opus(
+def encode_to_aac(
     wav_path: str,
-    opus_path: str,
-    bitrate: str = OPUS_BITRATE,   # "48k"
+    m4a_path: str,
+    bitrate: str = AAC_BITRATE,   # "48k"
     delete_wav: bool = True,
 ) -> float
     # Returns duration in seconds (from WAV sample count, not ffprobe)
@@ -45,7 +45,7 @@ def encode_to_opus(
 
 ### Encoding
 
-Runs ffmpeg as a subprocess: `ffmpeg -i <wav> -c:a libopus -b:a 48k -y <opus>`
+Runs ffmpeg as a subprocess: `ffmpeg -i <wav> -c:a aac -b:a 48k -f mp4 -y <m4a>`
 
 The `-y` flag overwrites existing output (safe because the caller checks for existence before calling).
 
@@ -59,11 +59,11 @@ If the WAV sample rate doesn't match `TTS_SAMPLE_RATE` (24000 Hz), a warning is 
 
 ### Output Directory
 
-Parent directories of `opus_path` are created with `os.makedirs(exist_ok=True)`.
+Parent directories of `m4a_path` are created with `os.makedirs(exist_ok=True)`.
 
 ### WAV Cleanup
 
-By default, the source WAV is deleted after successful Opus encoding. Pass `delete_wav=False` to keep it (useful for debugging or re-encoding).
+By default, the source WAV is deleted after successful encoding. Pass `delete_wav=False` to keep it (useful for debugging or re-encoding).
 
 ### Error Propagation
 
@@ -73,6 +73,6 @@ By default, the source WAV is deleted after successful Opus encoding. Pass `dele
 
 ## Dependencies
 
-- `ffmpeg` — system binary (must be installed with libopus support)
+- `ffmpeg` — system binary (AAC encoder is built-in)
 - `soundfile` — WAV metadata reading
-- Config: `OPUS_BITRATE` ("48k"), `TTS_SAMPLE_RATE` (24000)
+- Config: `AAC_BITRATE` ("48k"), `TTS_SAMPLE_RATE` (24000)

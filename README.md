@@ -10,7 +10,7 @@ graph LR
     B --> C[Annotate EPUB]
     B --> D[Chunk Text]
     D --> E[Kokoro TTS]
-    E --> F[Encode Opus]
+    E --> F[Encode AAC]
     F --> G[Manifest]
     F --> H[WhisperX Align]
     C --> I[Upload to R2]
@@ -26,7 +26,7 @@ An EPUB goes through a seven-step pipeline:
 2. **Annotate** — inject those IDs back into the EPUB HTML for client-side addressing
 3. **Chunk** — split paragraphs into TTS-sized pieces (max 450 words), tracking which paragraphs and element IDs each chunk covers
 4. **Synthesize** — generate audio via Kokoro TTS, recording the exact timestamp where each chunk starts
-5. **Encode** — convert WAV to Opus at 48kbps
+5. **Encode** — convert WAV to AAC at 48kbps (.m4a)
 6. **Manifest + Align** — write chapter metadata and run WhisperX forced alignment for word-level timestamps
 7. **Upload** — push everything to Cloudflare R2 with immutable cache headers
 
@@ -70,7 +70,7 @@ All audio/EPUB/chunk files use `Cache-Control: public, max-age=31536000, immutab
 ## Prerequisites
 
 - Python 3.11+
-- `ffmpeg` with libopus (for Opus encoding)
+- `ffmpeg` (for AAC encoding)
 - GPU recommended for TTS (CUDA or MPS); CPU works but is slow
 
 ## Install
@@ -159,6 +159,6 @@ All constants live in `src/openshelf/config.py`:
 | `TTS_SAMPLE_RATE` | `24000` | Sample rate in Hz |
 | `CHUNK_MAX_WORDS` | `450` | Max words per TTS chunk |
 | `SILENCE_BETWEEN_CHUNKS_MS` | `400` | Silence gap between chunks |
-| `OPUS_BITRATE` | `48k` | Opus encoding bitrate |
+| `AAC_BITRATE` | `48k` | AAC encoding bitrate |
 | `R2_BUCKET` | `openshelf` | R2 bucket name (env override) |
 | `R2_DEFAULT_RENDITION` | `kokoro-af-heart` | Default rendition name |

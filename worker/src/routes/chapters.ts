@@ -5,15 +5,24 @@ import { r2Key } from "../utils/r2-keys";
 import { badRequest, notFound } from "../utils/response";
 import { isValidSlug } from "../utils/validation";
 
+interface ChunkObj {
+	text: string;
+	element_id: string;
+}
+
 interface ChunksChapter {
 	number: number;
 	title: string;
-	chunks: string[];
+	chunks: (string | ChunkObj)[];
 }
 
 interface ChunksData {
 	version: number;
 	chapters: ChunksChapter[];
+}
+
+function chunkText(chunk: string | ChunkObj): string {
+	return typeof chunk === "string" ? chunk : chunk.text;
 }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -43,8 +52,9 @@ app.get("/", async (c) => {
 		return notFound(`Chapter ${chapterNum} not found in ${author}/${title}`);
 	}
 
-	const wordCount = chapter.chunks.reduce(
-		(sum, chunk) => sum + chunk.split(/\s+/).filter(Boolean).length,
+	const texts = chapter.chunks.map(chunkText);
+	const wordCount = texts.reduce(
+		(sum, text) => sum + text.split(/\s+/).filter(Boolean).length,
 		0,
 	);
 
@@ -52,7 +62,7 @@ app.get("/", async (c) => {
 		{
 			number: chapter.number,
 			title: chapter.title,
-			chunks: chapter.chunks,
+			chunks: texts,
 			word_count: wordCount,
 		},
 		200,

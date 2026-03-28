@@ -55,7 +55,7 @@ def upload_rendition(
     audio_dir: str,
     manifest_path: str,
 ) -> list[str]:
-    """Upload all Opus files and manifest.json for a rendition to R2. Returns uploaded keys.
+    """Upload all audio files and manifest.json for a rendition to R2. Returns uploaded keys.
 
     Key pattern: books/{author}/{title}/audio/{rendition}/chapter-NN.m4a
     Idempotency: manifest.json is always uploaded last. Its presence on R2 signals
@@ -70,8 +70,8 @@ def upload_rendition(
 
     uploaded: list[str] = []
 
-    opus_files = sorted(f for f in os.listdir(audio_dir) if f.endswith(".m4a"))
-    for filename in opus_files:
+    audio_files = sorted(f for f in os.listdir(audio_dir) if f.endswith(".m4a"))
+    for filename in audio_files:
         key = f"{prefix}/{filename}"
         client.upload_file(
             os.path.join(audio_dir, filename),

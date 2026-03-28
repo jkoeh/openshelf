@@ -71,7 +71,10 @@ def main():
         chunks_data = json.load(f)
     title_map = {ch["number"]: ch["title"] for ch in chunks_data.get("chapters", [])}
     word_count_map = {
-        ch["number"]: sum(len(chunk.split()) for chunk in ch["chunks"])
+        ch["number"]: sum(
+            len((chunk["text"] if isinstance(chunk, dict) else chunk).split())
+            for chunk in ch["chunks"]
+        )
         for ch in chunks_data.get("chapters", [])
     }
 

@@ -27,7 +27,7 @@ from openshelf.pipeline.epub_parser import parse_epub
 from openshelf.pipeline.manifest import ChapterMeta, generate_manifest
 from openshelf.pipeline.text_chunker import chunk_text, serialize_chunks, sha256_file
 from openshelf.pipeline.tts import load_pipeline, synthesize_chapter
-from openshelf.pipeline.encoder import audio_duration, encode_to_opus
+from openshelf.pipeline.encoder import audio_duration, encode_to_aac
 from openshelf.pipeline.word_aligner import align_chapter, write_word_alignment
 from openshelf.scrapers.http import sanitize
 
@@ -156,7 +156,7 @@ def main():
             synth_kwargs["voice"] = args.voice
 
         result = synthesize_chapter(pipeline, chunk_texts, wav_path, **synth_kwargs)
-        duration = encode_to_opus(wav_path, opus_path, delete_wav=not args.keep_wav)
+        duration = encode_to_aac(wav_path, opus_path, delete_wav=not args.keep_wav)
 
         chapter_durations[ch_num] = duration
         chapter_chunk_starts[ch_num] = result.chunk_audio_starts

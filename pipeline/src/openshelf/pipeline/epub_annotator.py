@@ -62,6 +62,25 @@ def annotate_epub(epub_path: str, chapters: list[Chapter]) -> bytes:
 
         item.set_content(str(soup).encode("utf-8"))
 
+    # Fix ebooklib bug: TOC entries with uid=None crash the NCX writer
+    _fix_toc_uids(book.toc)
+
     buf = io.BytesIO()
     epub.write_epub(buf, book)
     return buf.getvalue()
+
+
+def _fix_toc_uids(toc: list, counter: int = 0) -> int:
+    """Assign UIDs to TOC entries that have None as uid."""
+    for item in toc:
+        if isinstance(item, tuple):
+            # Section: (Section, [children])
+            section, children = item
+            if hasattr(section, "uid") and section.uid is None:
+                section.uid = f"navpoint-fix-{counter}"
+                counter += 1
+            counter = _fix_toc_uids(children, counter)
+        elif hasattr(item, "uid") and item.uid is None:
+            item.uid = f"navpoint-fix-{counter}"
+            counter += 1
+    return counter

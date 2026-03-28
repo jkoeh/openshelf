@@ -19,7 +19,7 @@ app.get("/", async (c) => {
 		return badRequest("Invalid chapter number");
 	}
 
-	const key = r2Key.audio(author, title, chapter.padStart(2, "0"));
+	const paddedChapter = chapter.padStart(2, "0");
 	const rangeHeader = c.req.header("Range");
 
 	let range: R2Range | undefined;
@@ -33,13 +33,23 @@ app.get("/", async (c) => {
 		range = end !== undefined ? { offset, length: end - offset + 1 } : { offset };
 	}
 
-	const obj = await c.env.R2_BUCKET.get(key, range ? { range } : undefined);
+	// Try .m4a first, fall back to .mp3 for legacy content
+	const m4aKey = r2Key.audio(author, title, paddedChapter);
+	let obj = await c.env.R2_BUCKET.get(m4aKey, range ? { range } : undefined);
+	let contentType = "audio/mp4";
+
+	if (!obj) {
+		const mp3Key = m4aKey.replace(/\.m4a$/, ".mp3");
+		obj = await c.env.R2_BUCKET.get(mp3Key, range ? { range } : undefined);
+		contentType = "audio/mpeg";
+	}
+
 	if (!obj) {
 		return notFound(`Audio not found: ${author}/${title} chapter ${chapter}`);
 	}
 
 	const headers: Record<string, string> = {
-		"Content-Type": "audio/mp4",
+		"Content-Type": contentType,
 		"Accept-Ranges": "bytes",
 		"Cache-Control": CACHE_IMMUTABLE,
 		"Content-Disposition": "inline",

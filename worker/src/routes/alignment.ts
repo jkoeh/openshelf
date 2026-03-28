@@ -6,7 +6,8 @@ import { badRequest, notFound } from "../utils/response";
 import { isValidChapter, isValidSlug } from "../utils/validation";
 
 interface AlignmentChapter {
-	chapter: number;
+	number?: number;
+	chapter?: number;
 	words: unknown[];
 }
 
@@ -42,12 +43,18 @@ app.get("/:chapter", async (c) => {
 	}
 
 	const chapterNum = Number.parseInt(chapter, 10);
-	const chapterData = data.chapters.find((ch) => ch.chapter === chapterNum);
+	const chapterData = data.chapters.find((ch) => (ch.chapter ?? ch.number) === chapterNum);
 	if (!chapterData) {
 		return notFound(`Alignment for chapter ${chapter} not found`);
 	}
 
-	return c.json(chapterData, 200, { "Cache-Control": CACHE_IMMUTABLE });
+	// Normalize to use "chapter" key in response
+	const response = {
+		chapter: chapterNum,
+		words: chapterData.words,
+	};
+
+	return c.json(response, 200, { "Cache-Control": CACHE_IMMUTABLE });
 });
 
 app.get("/", async (c) => {
