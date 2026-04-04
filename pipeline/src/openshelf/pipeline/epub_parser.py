@@ -43,7 +43,7 @@ def _extract_title(soup: BeautifulSoup, fallback_number: int) -> str:
     for tag in ("h1", "h2", "h3"):
         heading = soup.find(tag)
         if heading:
-            return heading.get_text(strip=True)
+            return re.sub(r"\s+", " ", heading.get_text(separator=" ")).strip()
     return f"Chapter {fallback_number}"
 
 

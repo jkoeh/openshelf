@@ -28,6 +28,49 @@ interface ReadingPaneProps {
   onWordPress?: (wordIndex: number) => void;
 }
 
+const CHAPTER_PREFIX = /^(chapter\s+[\w]+)(.*)/i;
+
+function ChapterHeading({
+  title,
+  fontSize,
+  color,
+}: { title: string; fontSize: number; color: string }) {
+  const match = title.match(CHAPTER_PREFIX);
+  if (match && match[2].trim()) {
+    return (
+      <View style={{ alignItems: "center", marginBottom: 24 }}>
+        <Text style={{ color, fontSize: fontSize + 4, fontWeight: "700", textAlign: "center" }}>
+          {match[1]}
+        </Text>
+        <Text
+          style={{
+            color,
+            fontSize: fontSize + 2,
+            fontWeight: "600",
+            textAlign: "center",
+            marginTop: 8,
+          }}
+        >
+          {match[2].trim()}
+        </Text>
+      </View>
+    );
+  }
+  return (
+    <Text
+      style={{
+        color,
+        fontSize: fontSize + 4,
+        fontWeight: "700",
+        textAlign: "center",
+        marginBottom: 24,
+      }}
+    >
+      {title}
+    </Text>
+  );
+}
+
 const AUTO_SCROLL_RESUME_DELAY = 5000;
 
 const ReadingPane = forwardRef<ScrollView, ReadingPaneProps>(
@@ -119,17 +162,7 @@ const ReadingPane = forwardRef<ScrollView, ReadingPaneProps>(
           alignSelf: "center",
         }}
       >
-        <Text
-          style={{
-            color: colors.text,
-            fontSize: fontSize + 4,
-            fontWeight: "700",
-            textAlign: "center",
-            marginBottom: 24,
-          }}
-        >
-          {chapterTitle}
-        </Text>
+        <ChapterHeading title={chapterTitle} fontSize={fontSize} color={colors.text} />
         {hasSyncData ? (
           <SyncedText
             chunks={chunks}
