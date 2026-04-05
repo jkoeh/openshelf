@@ -104,32 +104,57 @@ def _item_word_count(soup: BeautifulSoup) -> int:
 def extract_cover_image(epub_path: str) -> tuple[bytes, str] | None:
     """Extract the cover image from an EPUB. Returns (image_bytes, media_type) or None.
 
-    Tries in order: metadata cover reference, item named 'cover', largest image.
+    Tries in order:
+    1. ebooklib ITEM_COVER type (Gutenberg uses this)
+    2. OPF metadata cover reference (Standard Ebooks uses this)
+    3. Any image/cover item with 'cover' in the name
+    4. Largest image as fallback
     """
     book = epub.read_epub(epub_path)
 
-    # 1. Check metadata for cover reference (OPF <meta name="cover" content="...">)
+    # 1. Check for ITEM_COVER (ebooklib type 10) — Gutenberg EPUBs use this
+    for item in book.get_items_of_type(ebooklib.ITEM_COVER):
+        content = item.get_content()
+        media_type = item.media_type or _guess_media_type(item.get_name())
+        if content:
+            return content, media_type
+
+    # 2. Check metadata for cover reference (OPF <meta name="cover" content="...">)
     cover_meta = book.get_metadata("OPF", "cover")
     if cover_meta:
         cover_id = cover_meta[0][1].get("content", "") if len(cover_meta[0]) > 1 else cover_meta[0][0]
         item = book.get_item_with_id(cover_id)
         if item and hasattr(item, "get_content"):
-            return item.get_content(), item.media_type
+            media_type = item.media_type or _guess_media_type(item.get_name())
+            return item.get_content(), media_type
 
-    # 2. Look for items with 'cover' in the name
-    for item in book.get_items_of_type(ebooklib.ITEM_IMAGE):
-        name = item.get_name().lower()
-        if "cover" in name:
-            return item.get_content(), item.media_type
+    # 3. Look for items with 'cover' in the name (across all image types)
+    for item_type in (ebooklib.ITEM_IMAGE, ebooklib.ITEM_COVER):
+        for item in book.get_items_of_type(item_type):
+            name = item.get_name().lower()
+            if "cover" in name:
+                media_type = item.media_type or _guess_media_type(item.get_name())
+                return item.get_content(), media_type
 
-    # 3. Fall back to the largest image (likely the cover)
+    # 4. Fall back to the largest image (likely the cover)
     images = list(book.get_items_of_type(ebooklib.ITEM_IMAGE))
     if images:
         largest = max(images, key=lambda i: len(i.get_content()))
         if len(largest.get_content()) > 5000:  # skip tiny icons
-            return largest.get_content(), largest.media_type
+            media_type = largest.media_type or _guess_media_type(largest.get_name())
+            return largest.get_content(), media_type
 
     return None
+
+
+def _guess_media_type(filename: str) -> str:
+    """Guess media type from filename when ebooklib doesn't provide one."""
+    lower = filename.lower()
+    if lower.endswith(".png"):
+        return "image/png"
+    if lower.endswith(".gif"):
+        return "image/gif"
+    return "image/jpeg"
 
 
 def parse_epub(epub_path: str) -> list[Chapter]:
