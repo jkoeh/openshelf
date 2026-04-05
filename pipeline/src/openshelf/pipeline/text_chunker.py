@@ -42,6 +42,14 @@ def _split_sentences(text: str) -> list[str]:
     return [_restore_abbreviations(s) for s in raw if s.strip()]
 
 
+def extract_trailing_sentences(text: str, n: int = 2) -> str:
+    """Return the last *n* sentences of *text*, for use as TTS context overlap."""
+    sentences = _split_sentences(text)
+    if len(sentences) <= n:
+        return text
+    return " ".join(sentences[-n:])
+
+
 def _split_at_commas(sentence: str, max_words: int) -> list[str]:
     parts = sentence.split(", ")
     chunks: list[str] = []

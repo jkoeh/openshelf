@@ -7,7 +7,7 @@ import unittest
 # Allow running without pip install
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from openshelf.pipeline.text_chunker import Chunk, chunk_text, serialize_chunks, deserialize_chunks, sha256_file
+from openshelf.pipeline.text_chunker import Chunk, chunk_text, extract_trailing_sentences, serialize_chunks, deserialize_chunks, sha256_file
 from openshelf.config import CHUNK_MAX_WORDS
 
 
@@ -50,35 +50,35 @@ class TestChunkTextBasic(unittest.TestCase):
 class TestChunkTextSentenceSplitting(unittest.TestCase):
 
     def test_splits_on_period(self):
-        s1 = _words(300) + "."
-        s2 = _words(300) + "."
+        s1 = _words(150) + "."
+        s2 = _words(150) + "."
         result = chunk_text([f"{s1} {s2}"])
         self.assertEqual(len(result), 2)
 
     def test_splits_on_exclamation(self):
-        s1 = _words(300) + "!"
-        s2 = _words(300) + "!"
+        s1 = _words(150) + "!"
+        s2 = _words(150) + "!"
         result = chunk_text([f"{s1} {s2}"])
         self.assertEqual(len(result), 2)
 
     def test_splits_on_question_mark(self):
-        s1 = _words(300) + "?"
-        s2 = _words(300) + "?"
+        s1 = _words(150) + "?"
+        s2 = _words(150) + "?"
         result = chunk_text([f"{s1} {s2}"])
         self.assertEqual(len(result), 2)
 
     def test_no_mid_sentence_split(self):
-        s1 = _words(400) + "."
+        s1 = _words(CHUNK_MAX_WORDS) + "."
         s2 = _words(100) + "."
         result = chunk_text([f"{s1} {s2}"])
         self.assertEqual(len(result), 2)
-        self.assertEqual(_word_count(result[0].text), 400)
+        self.assertEqual(_word_count(result[0].text), CHUNK_MAX_WORDS)
         self.assertEqual(_word_count(result[1].text), 100)
 
     def test_greedy_accumulation(self):
-        s1 = _words(200) + "."
-        s2 = _words(200) + "."
-        s3 = _words(200) + "."
+        s1 = _words(100) + "."
+        s2 = _words(100) + "."
+        s3 = _words(100) + "."
         result = chunk_text([f"{s1} {s2} {s3}"])
         self.assertEqual(len(result), 2)
         self.assertLessEqual(_word_count(result[0].text), CHUNK_MAX_WORDS)
@@ -152,7 +152,7 @@ class TestChunkTextAbbreviations(unittest.TestCase):
 class TestChunkTextOversizedSentences(unittest.TestCase):
 
     def test_over_max_splits_at_commas(self):
-        parts = [_words(100) for _ in range(6)]
+        parts = [_words(50) for _ in range(6)]
         sentence = ", ".join(parts) + "."
         result = chunk_text([sentence])
         self.assertTrue(len(result) >= 2)
@@ -160,14 +160,14 @@ class TestChunkTextOversizedSentences(unittest.TestCase):
             self.assertLessEqual(_word_count(c.text), CHUNK_MAX_WORDS)
 
     def test_no_commas_splits_at_words(self):
-        result = chunk_text([_words(500) + "."])
+        result = chunk_text([_words(CHUNK_MAX_WORDS + 50) + "."])
         self.assertTrue(len(result) >= 2)
         for c in result:
             self.assertLessEqual(_word_count(c.text), CHUNK_MAX_WORDS)
 
     def test_mix_normal_and_oversized(self):
-        normal = _words(200) + "."
-        oversized = _words(600) + "."
+        normal = _words(100) + "."
+        oversized = _words(CHUNK_MAX_WORDS + 100) + "."
         result = chunk_text([f"{normal} {oversized}"])
         self.assertTrue(len(result) >= 2)
         for c in result:
@@ -177,8 +177,8 @@ class TestChunkTextOversizedSentences(unittest.TestCase):
         result = chunk_text([_words(CHUNK_MAX_WORDS) + "."])
         self.assertEqual(len(result), 1)
 
-    def test_sentence_at_451_words_no_commas(self):
-        result = chunk_text([_words(451) + "."])
+    def test_sentence_one_over_max_splits(self):
+        result = chunk_text([_words(CHUNK_MAX_WORDS + 1) + "."])
         self.assertEqual(len(result), 2)
         self.assertEqual(_word_count(result[0].text), CHUNK_MAX_WORDS)
         self.assertEqual(_word_count(result[1].text), 1)
@@ -195,21 +195,21 @@ class TestChunkTextParagraphAwareness(unittest.TestCase):
             self.assertLessEqual(_word_count(c.text), CHUNK_MAX_WORDS)
 
     def test_short_paragraphs_packed(self):
-        result = chunk_text([_words(100) + ".", _words(100) + "."])
-        # 100 + 100 = 200, fits in one chunk
+        result = chunk_text([_words(80) + ".", _words(80) + "."])
+        # 80 + 80 = 160, fits in one chunk (max=200)
         self.assertEqual(len(result), 1)
 
     def test_oversized_paragraph_split_at_sentences(self):
-        sentences = [_words(100) + "." for _ in range(6)]
-        para = " ".join(sentences)  # 600 words, one paragraph
+        sentences = [_words(80) + "." for _ in range(4)]
+        para = " ".join(sentences)  # 320 words, one paragraph
         result = chunk_text([para])
         self.assertTrue(len(result) >= 2)
         for c in result:
             self.assertLessEqual(_word_count(c.text), CHUNK_MAX_WORDS)
 
     def test_large_paragraphs_not_packed(self):
-        result = chunk_text([_words(300) + ".", _words(300) + "."])
-        # 300 + 300 = 600 > max, so must be 2 chunks
+        result = chunk_text([_words(150) + ".", _words(150) + "."])
+        # 150 + 150 = 300 > max(200), so must be 2 chunks
         self.assertEqual(len(result), 2)
 
     def test_dialogue_paragraphs_packed(self):
@@ -263,7 +263,7 @@ class TestChunkTextParaIndices(unittest.TestCase):
         self.assertEqual(result[0].para_end, 1)
 
     def test_two_large_paras_separate_chunks(self):
-        result = chunk_text([_words(300), _words(300)])
+        result = chunk_text([_words(150), _words(150)])
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0].para_start, 0)
         self.assertEqual(result[0].para_end, 0)
@@ -271,9 +271,8 @@ class TestChunkTextParaIndices(unittest.TestCase):
         self.assertEqual(result[1].para_end, 1)
 
     def test_oversized_para_splits_keep_same_index(self):
-        # 900-word single paragraph splits into 2 chunks, both from para 0
-        sentences = [_words(100) + "." for _ in range(9)]
-        para = " ".join(sentences)
+        sentences = [_words(80) + "." for _ in range(4)]
+        para = " ".join(sentences)  # 320 words, splits into 2+ chunks
         result = chunk_text([para])
         self.assertTrue(len(result) >= 2)
         for c in result:
@@ -281,8 +280,8 @@ class TestChunkTextParaIndices(unittest.TestCase):
             self.assertEqual(c.para_end, 0)
 
     def test_three_paragraphs_mixed_packing(self):
-        # para 0: 430 words (alone — 430+30>450), para 1+2: 30 words each (packed together)
-        result = chunk_text([_words(430), _words(30), _words(30)])
+        # para 0: 180 words (alone — 180+30>200), para 1+2: 30 words each (packed together)
+        result = chunk_text([_words(180), _words(30), _words(30)])
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0].para_start, 0)
         self.assertEqual(result[0].para_end, 0)
@@ -360,15 +359,15 @@ class TestSerializeChunks(unittest.TestCase):
 class TestChunkTextElementIds(unittest.TestCase):
 
     def test_element_ids_propagated_to_el_start_el_end(self):
-        paras = [_words(100), _words(100), _words(100)]
+        paras = [_words(50), _words(50), _words(50)]
         ids = ["ch1-el0000", "ch1-el0001", "ch1-el0002"]
         result = chunk_text(paras, element_ids=ids)
-        # all three pack into one chunk; el_start = first id, el_end = last id
+        # all three pack into one chunk (150 < 200); el_start = first id, el_end = last id
         self.assertEqual(result[0].el_start, "ch1-el0000")
         self.assertEqual(result[0].el_end, "ch1-el0002")
 
     def test_element_ids_two_chunks(self):
-        paras = [_words(300), _words(300)]
+        paras = [_words(150), _words(150)]
         ids = ["ch1-el0000", "ch1-el0001"]
         result = chunk_text(paras, element_ids=ids)
         self.assertEqual(len(result), 2)
@@ -394,6 +393,38 @@ class TestChunkTextElementIds(unittest.TestCase):
         result = deserialize_chunks(serialize_chunks(chapters, "abc"))
         self.assertEqual(result["chapters"][0]["chunks"][0]["el_start"], "ch1-el0000")
         self.assertEqual(result["chapters"][0]["chunks"][0]["el_end"], "ch1-el0000")
+
+
+class TestExtractTrailingSentences(unittest.TestCase):
+
+    def test_extracts_last_two(self):
+        text = "First sentence. Second sentence. Third sentence."
+        result = extract_trailing_sentences(text, n=2)
+        self.assertEqual(result, "Second sentence. Third sentence.")
+
+    def test_single_sentence_returns_full_text(self):
+        text = "Only one sentence."
+        result = extract_trailing_sentences(text, n=2)
+        self.assertEqual(result, text)
+
+    def test_two_sentences_returns_full_text(self):
+        text = "First sentence. Second sentence."
+        result = extract_trailing_sentences(text, n=2)
+        self.assertEqual(result, text)
+
+    def test_handles_abbreviations(self):
+        text = "Dr. Smith went home. He rested. She left."
+        result = extract_trailing_sentences(text, n=2)
+        self.assertEqual(result, "He rested. She left.")
+
+    def test_n_equals_one(self):
+        text = "First. Second. Third."
+        result = extract_trailing_sentences(text, n=1)
+        self.assertEqual(result, "Third.")
+
+    def test_empty_text(self):
+        result = extract_trailing_sentences("", n=2)
+        self.assertEqual(result, "")
 
 
 class TestSha256File(unittest.TestCase):

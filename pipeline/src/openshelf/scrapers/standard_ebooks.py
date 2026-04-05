@@ -64,8 +64,11 @@ def se_search(author=None, language=None, delay=2):
             author_slug = parts[1]
             title_slug = parts[2]
 
-            filename_parts = parts[1:]
-            filename = "_".join(filename_parts) + ".epub"
+            # Build download filename: author_title_translator.epub
+            # Path parts use _ between components (e.g. willa-muir_edwin-muir)
+            # but the filename joins ALL parts with _ after replacing internal _
+            # separators with - (e.g. willa-muir-edwin-muir)
+            filename = "_".join(p.replace("_", "-") for p in parts[1:]) + ".epub"
             epub_url = f"https://standardebooks.org{path}/downloads/{filename}"
 
             author_name = author_slug.replace("-", " ").title()

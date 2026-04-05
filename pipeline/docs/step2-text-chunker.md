@@ -5,7 +5,7 @@
 
 ## Purpose
 
-Split a chapter's spoken paragraphs into TTS-sized chunks (max 450 words), preserving paragraph boundaries and tracking which source paragraphs and element IDs each chunk covers. This mapping is what enables text/audio sync — given a chunk index, you can find the exact DOM elements it corresponds to.
+Split a chapter's spoken paragraphs into TTS-sized chunks (max 200 words), preserving paragraph boundaries and tracking which source paragraphs and element IDs each chunk covers. This mapping is what enables text/audio sync — given a chunk index, you can find the exact DOM elements it corresponds to. Smaller chunks (200 vs the original 450) improve TTS prosody — Kokoro produces more natural intonation on shorter passages.
 
 ```mermaid
 graph TD
@@ -44,9 +44,12 @@ class Chunk:
 ```python
 def chunk_text(
     paragraphs: list[str],
-    max_words: int = CHUNK_MAX_WORDS,       # 450
+    max_words: int = CHUNK_MAX_WORDS,       # 200
     element_ids: list[str] | None = None,   # parallel to paragraphs
 ) -> list[Chunk]
+
+def extract_trailing_sentences(text: str, n: int = 2) -> str
+    # Returns last n sentences of text (used for context overlap in TTS)
 
 def serialize_chunks(
     chapters: list[dict[str, Any]],  # [{"number", "title", "chunks": list[Chunk]}]
@@ -111,7 +114,14 @@ When `element_ids` is provided (parallel list to `paragraphs`), each chunk recor
 - Word order is preserved
 - No chunk internally contains text from non-adjacent paragraphs
 
+## Context Overlap Support
+
+`extract_trailing_sentences(text, n=2)` returns the last `n` sentences from a chunk's text. This is used by the TTS step to prepend context from the previous chunk, giving Kokoro prosodic continuity across chunk boundaries. If the text has `n` or fewer sentences, the full text is returned.
+
+Reuses the same abbreviation-aware `_split_sentences()` used by the chunking algorithm.
+
 ## Dependencies
 
-- `config.CHUNK_MAX_WORDS` (450)
+- `config.CHUNK_MAX_WORDS` (200)
+- `config.CONTEXT_OVERLAP_SENTENCES` (2) — used by callers, not directly by this module
 - Standard library only (re, hashlib, json)

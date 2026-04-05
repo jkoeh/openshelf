@@ -13,7 +13,9 @@ from openshelf.config import (
     TTS_VOICE,
     TTS_LANGUAGE,
     TTS_SAMPLE_RATE,
-    SILENCE_BETWEEN_CHUNKS_MS,
+    SILENCE_PARAGRAPH_BREAK_MS,
+    SILENCE_MID_PARAGRAPH_MS,
+    CROSSFADE_MS,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,6 +39,13 @@ def _import_kpipeline() -> Any:
         from kokoro import KPipeline as _KP
         KPipeline = _KP
     return KPipeline
+
+
+@dataclass
+class ChunkInfo:
+    text: str
+    ends_paragraph: bool = True
+    context_prefix: str = ""
 
 
 @dataclass
@@ -84,42 +93,132 @@ def _normalize(audio: np.ndarray, target_peak: float = 0.89) -> np.ndarray:
     return audio
 
 
+def _apply_boundary_fades(
+    audio: np.ndarray, sample_rate: int, fade_ms: int = CROSSFADE_MS
+) -> np.ndarray:
+    """Apply fade-in at start and fade-out at end to smooth chunk boundaries."""
+    fade_samples = int(sample_rate * fade_ms / 1000)
+    if len(audio) < 2 * fade_samples:
+        return audio
+    audio = audio.copy()
+    audio[:fade_samples] *= np.linspace(0, 1, fade_samples, dtype=np.float32)
+    audio[-fade_samples:] *= np.linspace(1, 0, fade_samples, dtype=np.float32)
+    return audio
+
+
+def _split_segments_at_prefix(
+    results: list[tuple], context_prefix: str, sample_rate: int,
+    fade_ms: int = CROSSFADE_MS,
+) -> np.ndarray:
+    """Use Kokoro segment graphemes to find where prefix ends, return only real-content audio.
+
+    Each result tuple is (graphemes, phonemes, audio_array).  We accumulate
+    grapheme text until it covers the context_prefix, then keep audio from
+    the remaining segments only.
+    """
+    prefix_clean = _text_for_matching(context_prefix)
+    prefix_len = len(prefix_clean)
+
+    if prefix_len == 0:
+        return np.concatenate([r[2] for r in results])
+
+    accumulated = 0
+    split_idx = 0  # first segment that belongs to real content
+
+    for idx, (graphemes, _phonemes, _audio) in enumerate(results):
+        seg_text = _text_for_matching(graphemes)
+        accumulated += len(seg_text)
+        if accumulated >= prefix_len:
+            split_idx = idx + 1
+            break
+
+    # If all segments were prefix (shouldn't happen), fall back to proportional
+    if split_idx >= len(results):
+        prefix_words = len(context_prefix.split())
+        total_words = sum(len(r[0].split()) for r in results)
+        full_audio = np.concatenate([r[2] for r in results])
+        if total_words > 0 and prefix_words < total_words:
+            trim_samples = int(len(full_audio) * prefix_words / total_words)
+            trimmed = full_audio[trim_samples:]
+        else:
+            trimmed = full_audio
+        fade_samples = min(int(sample_rate * fade_ms / 1000), len(trimmed))
+        if fade_samples > 0:
+            trimmed = trimmed.copy()
+            trimmed[:fade_samples] *= np.linspace(0, 1, fade_samples, dtype=np.float32)
+        return trimmed
+
+    # Keep only segments after the prefix
+    real_audio = np.concatenate([r[2] for r in results[split_idx:]])
+
+    # Fade-in at the start to smooth the splice
+    fade_samples = min(int(sample_rate * fade_ms / 1000), len(real_audio))
+    if fade_samples > 0:
+        real_audio = real_audio.copy()
+        real_audio[:fade_samples] *= np.linspace(0, 1, fade_samples, dtype=np.float32)
+
+    return real_audio
+
+
+def _text_for_matching(text: str) -> str:
+    """Normalize text for prefix matching — lowercase, collapse whitespace, strip punctuation."""
+    import re
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
 def synthesize_chapter(
     pipeline: Any,
-    chunks: list[str],
+    chunks: list[ChunkInfo],
     output_path: str,
     voice: str = TTS_VOICE,
     sample_rate: int = TTS_SAMPLE_RATE,
-    silence_ms: int = SILENCE_BETWEEN_CHUNKS_MS,
 ) -> SynthesisResult:
     if not chunks:
         raise ValueError("chunks list is empty")
 
-    silence = _generate_silence(sample_rate, silence_ms)
-    silence_frames = len(silence)
     audio_segments: list[np.ndarray] = []
     skipped = 0
     frames_so_far = 0
     chunk_audio_starts: list[float] = []
 
-    for i, chunk in enumerate(chunks):
+    for i, chunk_info in enumerate(chunks):
         try:
-            results = list(pipeline(chunk, voice=voice))
+            # Build synthesis text with optional context prefix
+            if chunk_info.context_prefix:
+                synth_text = chunk_info.context_prefix + " " + chunk_info.text
+            else:
+                synth_text = chunk_info.text
+
+            results = list(pipeline(synth_text, voice=voice))
             if not results:
                 raise RuntimeError(f"No audio returned for chunk {i}")
-            chunk_audio = np.concatenate([r[2] for r in results])
+
+            # Trim context prefix audio using segment boundaries
+            if chunk_info.context_prefix:
+                chunk_audio = _split_segments_at_prefix(
+                    results, chunk_info.context_prefix, sample_rate
+                )
+            else:
+                chunk_audio = np.concatenate([r[2] for r in results])
+
             chunk_audio = _normalize(chunk_audio)
+            chunk_audio = _apply_boundary_fades(chunk_audio, sample_rate)
 
             if audio_segments:
-                # Silence precedes all chunks after the first
-                frames_so_far += silence_frames
+                # Variable silence: longer at paragraph breaks, shorter mid-paragraph
+                if chunks[i - 1].ends_paragraph:
+                    gap_ms = SILENCE_PARAGRAPH_BREAK_MS
+                else:
+                    gap_ms = SILENCE_MID_PARAGRAPH_MS
+                silence = _generate_silence(sample_rate, gap_ms)
+                frames_so_far += len(silence)
                 audio_segments.append(silence)
 
             chunk_audio_starts.append(frames_so_far / sample_rate)
             audio_segments.append(chunk_audio)
             frames_so_far += len(chunk_audio)
         except Exception:
-            logger.warning("Chunk %d failed, skipping: %.40s...", i, chunk)
+            logger.warning("Chunk %d failed, skipping: %.40s...", i, chunk_info.text)
             chunk_audio_starts.append(-1.0)
             skipped += 1
 

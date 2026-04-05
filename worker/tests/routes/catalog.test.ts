@@ -2,37 +2,62 @@ import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import app from "../../src/index";
 
-const CATALOG = {
-	version: 1,
-	generated_at: "2025-01-15T12:00:00Z",
-	books: [
-		{
-			author: "Franz Kafka",
-			author_slug: "franz-kafka",
-			title: "The Trial",
-			title_slug: "the-trial",
-			source: "gutenberg",
-			rendition: "kokoro-af-heart",
-			total_duration_seconds: 28800,
-			chapter_count: 10,
-		},
-		{
-			author: "Fyodor Dostoevsky",
-			author_slug: "fyodor-dostoevsky",
-			title: "Crime and Punishment",
-			title_slug: "crime-and-punishment",
-			source: "gutenberg",
-			rendition: "kokoro-af-heart",
-			total_duration_seconds: 77400.5,
-			chapter_count: 42,
-		},
-	],
+// Manifests seeded at the R2 key paths the catalog route scans
+const KAFKA_MANIFEST = {
+	title: "The Trial",
+	author: "Franz Kafka",
+	source: "gutenberg",
+	rendition: "kokoro-af-heart",
+	total_duration_seconds: 28800,
+	chapters: Array.from({ length: 10 }, (_, i) => ({
+		number: i + 1,
+		title: `Chapter ${i + 1}`,
+		filename: `chapter-${String(i + 1).padStart(2, "0")}.m4a`,
+		duration_seconds: 2880,
+		word_count: 5000,
+	})),
 };
 
-type CatalogResponse = { books: typeof CATALOG.books; total: number; page: number; limit: number };
+const DOSTOEVSKY_MANIFEST = {
+	title: "Crime and Punishment",
+	author: "Fyodor Dostoevsky",
+	source: "gutenberg",
+	rendition: "kokoro-af-heart",
+	total_duration_seconds: 77400.5,
+	chapters: Array.from({ length: 42 }, (_, i) => ({
+		number: i + 1,
+		title: `Chapter ${i + 1}`,
+		filename: `chapter-${String(i + 1).padStart(2, "0")}.m4a`,
+		duration_seconds: 1842.87,
+		word_count: 3000,
+	})),
+};
+
+type CatalogResponse = {
+	books: Array<{
+		author: string;
+		author_slug: string;
+		title: string;
+		title_slug: string;
+		source: string;
+		rendition: string;
+		total_duration_seconds: number;
+		chapter_count: number;
+	}>;
+	total: number;
+	page: number;
+	limit: number;
+};
 
 beforeAll(async () => {
-	await env.R2_BUCKET.put("catalog.json", JSON.stringify(CATALOG));
+	await env.R2_BUCKET.put(
+		"books/franz-kafka/the-trial/audio/kokoro-af-heart/manifest.json",
+		JSON.stringify(KAFKA_MANIFEST),
+	);
+	await env.R2_BUCKET.put(
+		"books/fyodor-dostoevsky/crime-and-punishment/audio/kokoro-af-heart/manifest.json",
+		JSON.stringify(DOSTOEVSKY_MANIFEST),
+	);
 });
 
 describe("GET /api/v1/catalog", () => {
@@ -75,11 +100,29 @@ describe("GET /api/v1/catalog", () => {
 		expect(body.total).toBe(0);
 	});
 
-	it("returns 404 when catalog.json missing", async () => {
-		await env.R2_BUCKET.delete("catalog.json");
+	it("returns empty catalog when no manifests exist", async () => {
+		// Delete all manifests
+		await env.R2_BUCKET.delete(
+			"books/franz-kafka/the-trial/audio/kokoro-af-heart/manifest.json",
+		);
+		await env.R2_BUCKET.delete(
+			"books/fyodor-dostoevsky/crime-and-punishment/audio/kokoro-af-heart/manifest.json",
+		);
+
 		const res = await app.request("/api/v1/catalog", {}, env);
-		expect(res.status).toBe(404);
+		expect(res.status).toBe(200);
+		const body = await res.json<CatalogResponse>();
+		expect(body.books).toHaveLength(0);
+		expect(body.total).toBe(0);
+
 		// Restore for other tests
-		await env.R2_BUCKET.put("catalog.json", JSON.stringify(CATALOG));
+		await env.R2_BUCKET.put(
+			"books/franz-kafka/the-trial/audio/kokoro-af-heart/manifest.json",
+			JSON.stringify(KAFKA_MANIFEST),
+		);
+		await env.R2_BUCKET.put(
+			"books/fyodor-dostoevsky/crime-and-punishment/audio/kokoro-af-heart/manifest.json",
+			JSON.stringify(DOSTOEVSKY_MANIFEST),
+		);
 	});
 });

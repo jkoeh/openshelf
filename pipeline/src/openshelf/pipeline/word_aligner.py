@@ -19,6 +19,24 @@ class WordEntry:
     chunk_idx: int  # index into the chapter's chunk list
 
 
+def _split_into_sentences(text: str) -> list[str]:
+    """Split text into sentences for finer-grained WhisperX alignment.
+
+    Uses the same abbreviation-aware splitting as the text chunker.
+    """
+    import re
+    # Protect common abbreviations from being treated as sentence ends
+    _ABBREV = re.compile(
+        r"\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|Gen|Gov|Sgt|Cpl|Pvt|Rev|Hon|Pres"
+        r"|Vol|Dept|Univ|Inc|Corp|Ltd|Co|vs|etc|approx"
+        r"|Mt|Ft|Capt|Lt|Maj|Col"
+        r"|[A-Z])\."
+    )
+    protected = _ABBREV.sub(lambda m: m.group(1) + "\x00", text)
+    raw = re.split(r"(?<=[.!?])\s+", protected)
+    return [s.replace("\x00", ".") for s in raw if s.strip()]
+
+
 def _next_start(chunk_audio_starts: list[float], current_idx: int) -> float:
     """Return the start time of the next non-skipped chunk after current_idx."""
     for i in range(current_idx + 1, len(chunk_audio_starts)):
@@ -93,15 +111,30 @@ def align_chapter(
         List of WordEntry with word timestamps and chunk_idx.
         Returns empty list on failure (graceful degradation).
     """
-    # Build segments from known chunk start times (skip failed chunks)
+    # Build segments from known chunk start times (skip failed chunks).
+    # Split each chunk into sentences for better WhisperX alignment accuracy.
     segments = []
     chunk_idx_map: list[int] = []  # segment index → original chunk index
     for i, (text, start_s) in enumerate(zip(chunk_texts, chunk_audio_starts)):
         if start_s < 0.0:
             continue
         end_s = _next_start(chunk_audio_starts, i)
-        segments.append({"text": text, "start": start_s, "end": end_s})
-        chunk_idx_map.append(i)
+        # Split chunk into sentences; distribute time proportionally by word count
+        sentences = _split_into_sentences(text)
+        if len(sentences) <= 1:
+            segments.append({"text": text, "start": start_s, "end": end_s})
+            chunk_idx_map.append(i)
+        else:
+            chunk_duration = end_s - start_s
+            total_words = sum(len(s.split()) for s in sentences)
+            cursor = start_s
+            for sent in sentences:
+                sent_words = len(sent.split())
+                sent_duration = chunk_duration * sent_words / total_words if total_words > 0 else 0
+                sent_end = cursor + sent_duration
+                segments.append({"text": sent, "start": cursor, "end": sent_end})
+                chunk_idx_map.append(i)
+                cursor = sent_end
 
     if not segments:
         return []

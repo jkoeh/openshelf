@@ -6,6 +6,13 @@ from pathlib import Path
 # Project root — three levels up from this file (pipeline/src/openshelf/config.py)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
+# Load .env from project root if present
+try:
+    from dotenv import load_dotenv
+    load_dotenv(PROJECT_ROOT / ".env")
+except ImportError:
+    pass
+
 # Default paths
 DEFAULT_INPUT_DIR = PROJECT_ROOT / "download" / "books"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "audio"
@@ -19,8 +26,11 @@ SE_BASE = "https://standardebooks.org"
 TTS_VOICE = "af_heart"
 TTS_LANGUAGE = "a"  # Kokoro lang_code: a=American English, b=British English
 TTS_SAMPLE_RATE = 24000
-CHUNK_MAX_WORDS = 450
-SILENCE_BETWEEN_CHUNKS_MS = 400
+CHUNK_MAX_WORDS = 200
+SILENCE_PARAGRAPH_BREAK_MS = 700
+SILENCE_MID_PARAGRAPH_MS = 200
+CROSSFADE_MS = 15
+CONTEXT_OVERLAP_SENTENCES = 2
 
 # Encoder
 AAC_BITRATE = "48k"

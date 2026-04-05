@@ -9,7 +9,8 @@ function renditionPrefix(author: string, title: string, rendition = R2_DEFAULT_R
 }
 
 export const r2Key = {
-	catalog: () => "catalog.json",
+	cover: (author: string, title: string, ext = "jpg") =>
+		`${bookPrefix(author, title)}/cover.${ext}`,
 
 	epub: (author: string, title: string) => `${bookPrefix(author, title)}/book.epub`,
 

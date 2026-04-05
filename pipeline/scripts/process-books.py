@@ -7,6 +7,7 @@ Usage:
     python3 pipeline/scripts/process-books.py --author "Shakespeare" --book "Romeo"
     python3 pipeline/scripts/process-books.py --author "Kafka" --upload
     python3 pipeline/scripts/process-books.py --author "Kafka" --dry-run
+    python3 pipeline/scripts/process-books.py --epub path/to/book.epub --upload
 """
 
 import argparse
@@ -89,6 +90,7 @@ def main():
     parser = argparse.ArgumentParser(description="Download and convert books to audio")
     parser.add_argument("--author", help="Filter by author name")
     parser.add_argument("--book", help="Filter by book title")
+    parser.add_argument("--epub", help="Path to a local EPUB file (skips download)")
     parser.add_argument("--source", default="all", choices=["gutenberg", "standard-ebooks", "all"])
     parser.add_argument("--output", "-o", default="audio", help="Audio output directory (default: audio/)")
     parser.add_argument("--voice", default=None, help="Kokoro voice ID")
@@ -100,18 +102,33 @@ def main():
     parser.add_argument("--download-dir", default="download/books", help="Download directory (default: download/books)")
     args = parser.parse_args()
 
-    if not args.author and not args.book:
-        parser.error("at least one of --author or --book is required")
+    if not args.author and not args.book and not args.epub:
+        parser.error("at least one of --author, --book, or --epub is required")
 
-    # Phase 1: Search and download
-    print("Phase 1: Downloading books ...\n")
-    downloaded = search_and_download(args)
+    # If --epub is given, skip search/download entirely
+    if args.epub:
+        epub_path = os.path.abspath(args.epub)
+        if not os.path.isfile(epub_path):
+            print(f"Error: file not found: {epub_path}")
+            sys.exit(1)
+        # Infer source from path, default to "local"
+        source_name = "local"
+        for src in ("gutenberg", "standard-ebooks"):
+            if src in epub_path:
+                source_name = src
+                break
+        downloaded = [(epub_path, source_name)]
+        print(f"Using local EPUB: {epub_path}\n")
+    else:
+        # Phase 1: Search and download
+        print("Phase 1: Downloading books ...\n")
+        downloaded = search_and_download(args)
 
-    if not downloaded:
-        print("\nNo books downloaded.")
-        return
+        if not downloaded:
+            print("\nNo books downloaded.")
+            return
 
-    print(f"\n{len(downloaded)} book(s) downloaded.\n")
+        print(f"\n{len(downloaded)} book(s) downloaded.\n")
 
     # Phase 2: Convert each book
     print("Phase 2: Converting books ...\n")

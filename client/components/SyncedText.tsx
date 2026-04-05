@@ -13,13 +13,16 @@ interface SyncedChunkProps {
   fontSize: number;
   lineHeight: number;
   onWordPress?: (wordIndex: number) => void;
-  onLayout?: (event: LayoutChangeEvent) => void;
+  onChunkLayout?: (index: number, event: LayoutChangeEvent) => void;
 }
 
 /**
  * A single chunk (paragraph) that renders with word-level highlighting
  * when it's the active chunk, or as plain text otherwise.
  * Memoized at the paragraph level so only the active paragraph re-renders.
+ *
+ * Key memo invariant: non-active chunks receive activeWordIndex=-1,
+ * so their props don't change on every audio tick.
  */
 const SyncedChunk = memo(function SyncedChunk({
   chunkIndex,
@@ -30,9 +33,14 @@ const SyncedChunk = memo(function SyncedChunk({
   fontSize,
   lineHeight,
   onWordPress,
-  onLayout,
+  onChunkLayout,
 }: SyncedChunkProps) {
   const { colors } = useTheme();
+
+  const handleLayout = useCallback(
+    (e: LayoutChangeEvent) => onChunkLayout?.(chunkIndex, e),
+    [onChunkLayout, chunkIndex],
+  );
 
   // Collect words for this chunk with their global indices
   const chunkWords = useMemo(() => {
@@ -45,18 +53,11 @@ const SyncedChunk = memo(function SyncedChunk({
     return result;
   }, [words, chunkIndex]);
 
-  const handleWordPress = useCallback(
-    (wordIdx: number) => {
-      onWordPress?.(wordIdx);
-    },
-    [onWordPress],
-  );
-
-  // If no words for this chunk or not near active chunk, render plain text
+  // If no words for this chunk or not the active chunk, render plain text
   if (chunkWords.length === 0 || !isActiveChunk) {
     return (
       <View
-        onLayout={onLayout}
+        onLayout={handleLayout}
         style={{
           marginBottom: 16,
           borderRadius: 4,
@@ -72,7 +73,7 @@ const SyncedChunk = memo(function SyncedChunk({
   // Render word-level spans for active chunk
   return (
     <View
-      onLayout={onLayout}
+      onLayout={handleLayout}
       style={{
         marginBottom: 16,
         borderRadius: 4,
@@ -87,11 +88,12 @@ const SyncedChunk = memo(function SyncedChunk({
             key={globalIdx}
             word={w.word}
             isActive={globalIdx === activeWordIndex}
+            wordIndex={globalIdx}
             highlightColor={colors.highlight}
             textColor={colors.text}
             fontSize={fontSize}
             lineHeight={lineHeight}
-            onPress={onWordPress ? () => handleWordPress(globalIdx) : undefined}
+            onWordPress={onWordPress}
           />
         ))}
       </Text>
@@ -128,12 +130,12 @@ export default function SyncedText({
           chunkIndex={idx}
           chunkText={chunk}
           words={words}
-          activeWordIndex={activeWordIndex}
+          activeWordIndex={idx === activeChunkIndex ? activeWordIndex : -1}
           isActiveChunk={idx === activeChunkIndex}
           fontSize={fontSize}
           lineHeight={lineHeight}
           onWordPress={onWordPress}
-          onLayout={onChunkLayout ? (e) => onChunkLayout(idx, e) : undefined}
+          onChunkLayout={onChunkLayout}
         />
       ))}
     </>

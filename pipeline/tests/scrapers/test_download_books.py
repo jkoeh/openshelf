@@ -151,6 +151,20 @@ class TestSeSearch(unittest.TestCase):
         self.assertIn(".epub", url)
 
     @patch.object(standard_ebooks, "make_request")
+    def test_download_url_uses_hyphens_for_translators(self, mock_req):
+        html = '<li about="/ebooks/franz-kafka/the-metamorphosis/willa-muir_edwin-muir">'
+        mock_req.return_value = html.encode()
+        results = list(standard_ebooks.se_search(delay=0))
+        _, _, url = results[0]
+        # Translators separated by _ in path become - in filename
+        expected = (
+            "https://standardebooks.org/ebooks/franz-kafka/the-metamorphosis"
+            "/willa-muir_edwin-muir/downloads"
+            "/franz-kafka_the-metamorphosis_willa-muir-edwin-muir.epub"
+        )
+        self.assertEqual(url, expected)
+
+    @patch.object(standard_ebooks, "make_request")
     def test_no_ebooks_matched(self, mock_req):
         mock_req.return_value = b"<p>No ebooks matched your filter.</p>"
         results = list(standard_ebooks.se_search(delay=0))

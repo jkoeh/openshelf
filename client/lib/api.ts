@@ -84,6 +84,10 @@ export function audioUrl(author: string, title: string, chapter: number): string
 	return `${API_BASE}/books/${author}/${title}/audio/${ch}`;
 }
 
+export function coverUrl(author: string, title: string): string {
+	return `${API_BASE}/books/${author}/${title}/cover`;
+}
+
 export function epubUrl(author: string, title: string): string {
 	return `${API_BASE}/books/${author}/${title}/epub`;
 }

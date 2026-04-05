@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -53,7 +54,7 @@ export default function ReaderPage() {
 
   // Audio player
   const audioSrc = author && title ? audioUrl(author, title, currentChapter) : null;
-  const player = useAudioPlayer(audioSrc, { updateInterval: 100, crossOrigin: "anonymous" });
+  const player = useAudioPlayer(audioSrc, { updateInterval: 50, crossOrigin: "anonymous" });
   const status = useAudioPlayerStatus(player);
 
   // Sync engine
@@ -295,16 +296,14 @@ export default function ReaderPage() {
         title={headerTitle}
         showBack
         rightElement={
-          <View style={{ flexDirection: "row", gap: 12 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 16 }}>
             {manifest ? (
-              <Pressable onPress={() => setShowChapters(true)}>
-                <Text style={{ color: colors.primary, fontSize: 14 }}>
-                  {currentChapter}/{totalChapters}
-                </Text>
+              <Pressable onPress={() => setShowChapters(true)} hitSlop={8}>
+                <Ionicons name="list" size={22} color={colors.primary} />
               </Pressable>
             ) : null}
-            <Pressable onPress={() => setShowSettings(true)}>
-              <Text style={{ color: colors.primary, fontSize: 16 }}>Aa</Text>
+            <Pressable onPress={() => setShowSettings(true)} hitSlop={8}>
+              <Ionicons name="text" size={20} color={colors.primary} />
             </Pressable>
           </View>
         }

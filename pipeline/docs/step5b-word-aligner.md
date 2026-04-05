@@ -11,13 +11,14 @@ Run WhisperX forced alignment on each chapter's audio to produce word-level time
 graph TD
     A[Opus audio file] --> B[whisperx.load_audio]
     C[chunk_texts + chunk_audio_starts] --> D[Build segments from known starts]
-    D --> E{Any non-skipped chunks?}
+    D --> D2[Split each chunk into sentences]
+    D2 --> E{Any non-skipped chunks?}
     E -->|No| F[Return empty list]
     E -->|Yes| G[whisperx.load_align_model]
     B --> H[whisperx.align segments]
     G --> H
     H --> I[Word segments with timestamps]
-    I --> J[Map each word to chunk_idx]
+    I --> J[Map each word to chunk_idx via segment boundaries]
     J --> K[list of WordEntry]
 ```
 
@@ -59,12 +60,20 @@ def write_word_alignment(
 WhisperX needs pre-segmented text with approximate time boundaries. These are built from `chunk_audio_starts`:
 
 - For each chunk where `audio_start >= 0.0`: create a segment with `text`, `start`, and `end`
-- The segment's `end` is the next non-skipped chunk's start time (or `inf` for the last chunk)
+- The segment's `end` is the next non-skipped chunk's start time (or `inf` for the last chunk, capped to actual audio duration)
 - Skipped chunks (`-1.0`) are excluded entirely
+
+### Sentence-Level Splitting
+
+Each chunk's text is further split into individual sentences before being passed to WhisperX. This prevents the "backtrack failed" warning that WhisperX emits on long, complex text segments (especially those with dialogue or nested punctuation). Time boundaries for sentences within a chunk are estimated proportionally by word count.
+
+Uses the same abbreviation-aware splitting as the text chunker — common abbreviations (Mr., Dr., etc.) and single uppercase initials are protected from being treated as sentence boundaries.
+
+A `chunk_idx_map` tracks which original chunk index each sentence-segment belongs to, so words are correctly mapped back to chunks after alignment.
 
 ### Word-to-Chunk Mapping
 
-After WhisperX returns word timestamps, each word is assigned to a chunk by finding which segment boundary it falls within (`seg_start <= word_start < seg_end`).
+After WhisperX returns word timestamps, each word is assigned to a chunk by finding which segment boundary it falls within (`seg_start <= word_start < seg_end`). The segment boundaries carry the original `chunk_idx` via `chunk_idx_map`.
 
 ### Idempotency
 
@@ -94,6 +103,16 @@ After WhisperX returns word timestamps, each word is assigned to a chunk by find
 - All chunks skipped (`-1.0`): returns empty word list for that chapter
 - Pre-existing Opus files (no chunk_audio_starts from TTS): all starts are `-1.0`, alignment returns empty — frontend degrades gracefully
 
+### Validation
+
+`validate_alignment()` checks invariants on the output word list:
+- Timestamps are monotonically non-decreasing
+- All timestamps fall within `[0, audio_duration]`
+- All `chunk_idx` values are within valid range
+- No empty word strings
+
+Returns a list of violation messages (empty = valid). Used by the integration test script (`scripts/test-audio-quality.py`).
+
 ### Lazy Import
 
 `whisperx` is imported inside `align_chapter()`, not at module level. This keeps the module importable in environments without the WhisperX dependency.
@@ -101,4 +120,4 @@ After WhisperX returns word timestamps, each word is assigned to a chunk by find
 ## Dependencies
 
 - `whisperx` — forced alignment engine (lazy import)
-- Standard library (dataclasses, json, os)
+- Standard library (dataclasses, json, os, re)

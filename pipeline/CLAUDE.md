@@ -25,9 +25,12 @@ src/openshelf/
     runner.py               # orchestrator (stub)
 
 scripts/
-  download-books.py         # CLI for book scraping
+  process-books.py          # End-to-end: search, download, convert, (optionally) upload
+  download-books.py         # CLI for book scraping only
   convert-book.py           # CLI for EPUB -> audio conversion + alignment
   upload-books.py           # CLI for uploading pre-generated audio to R2
+  build-catalog.py          # Rebuild catalog.json on R2 from all uploaded manifests
+  test-audio-quality.py     # Integration test: validates audio output quality and alignment
 
 tests/
   scrapers/                 # scraper tests (mocked, offline)
@@ -51,18 +54,43 @@ All commands run from the **repo root**.
 # Install dependencies
 uv pip install -r pipeline/requirements.txt
 
-# Run scraper
-python3 pipeline/scripts/download-books.py --dry-run --author "Kafka"
+# End-to-end: search + download + convert (+ upload)
+python3 pipeline/scripts/process-books.py --author "Kafka"
+python3 pipeline/scripts/process-books.py --author "Shakespeare" --book "Romeo"
+python3 pipeline/scripts/process-books.py --author "Kafka" --upload
+python3 pipeline/scripts/process-books.py --author "Kafka" --dry-run  # download + parse only, no audio
+python3 pipeline/scripts/process-books.py --epub path/to/book.epub --upload  # local file, skip download
 
-# Convert a book
+# process-books.py options:
+#   --epub <path>             Local EPUB file (skips search/download)
+#   --author <name>           Filter by author (required unless --book or --epub)
+#   --book <title>            Filter by book title (required unless --author or --epub)
+#   --source gutenberg|standard-ebooks|all  (default: all)
+#   --upload                  Upload to R2 after conversion
+#   --dry-run                 Download + parse only, no audio generation
+#   --voice <id>              Kokoro voice ID (default: af_heart)
+#   --device cuda|mps|cpu     (default: auto-detect)
+#   --keep-wav                Keep WAV files after AAC encoding
+#   --delay <seconds>         Seconds between HTTP requests (default: 2)
+#   --download-dir <path>     (default: download/books)
+#   --output <path>           Audio output directory (default: audio/)
+
+# Rebuild catalog after uploading new books
+python3 pipeline/scripts/build-catalog.py
+python3 pipeline/scripts/build-catalog.py --dry-run  # preview without uploading
+
+# Individual steps (if you need them separately):
+python3 pipeline/scripts/download-books.py --dry-run --author "Kafka"
 python3 pipeline/scripts/convert-book.py <epub-path>
 python3 pipeline/scripts/convert-book.py <epub-path> --upload
-
-# Upload pre-generated audio
 python3 pipeline/scripts/upload-books.py <epub-path>
 
 # Run tests
 python3 -m unittest discover -s pipeline/tests -v
+
+# Run audio quality integration test (requires GPU deps)
+python3 pipeline/scripts/test-audio-quality.py
+python3 pipeline/scripts/test-audio-quality.py --epub <path> --chapters 1-2
 ```
 
 ## Conventions

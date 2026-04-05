@@ -101,6 +101,39 @@ def upload_rendition(
     return uploaded
 
 
+def upload_cover(
+    client,
+    bucket: str,
+    author_slug: str,
+    title_slug: str,
+    cover_path: str,
+    content_type: str = "image/jpeg",
+) -> str | None:
+    """Upload cover image to R2. Returns the key, or None if already exists.
+
+    Key pattern: books/{author}/{title}/cover.jpg
+    Idempotent: skips upload if the key already exists.
+    """
+    ext = ".jpg" if "jpeg" in content_type or "jpg" in content_type else ".png"
+    key = f"{_book_prefix(author_slug, title_slug)}/cover{ext}"
+
+    if key_exists(client, bucket, key):
+        logger.info("Cover already uploaded, skipping: %s", key)
+        return None
+
+    client.upload_file(
+        cover_path,
+        bucket,
+        key,
+        ExtraArgs={
+            "ContentType": content_type,
+            "CacheControl": R2_CACHE_CONTROL_IMMUTABLE,
+        },
+    )
+    logger.info("Uploaded: %s", key)
+    return key
+
+
 def upload_epub(
     client,
     bucket: str,

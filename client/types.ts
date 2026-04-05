@@ -7,6 +7,7 @@ export interface CatalogBook {
   rendition: string;
   total_duration_seconds: number;
   chapter_count: number;
+  has_cover?: boolean;
 }
 
 export interface CatalogResponse {

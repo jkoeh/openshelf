@@ -58,7 +58,7 @@ export default function CatalogPage() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <Header />
+      <Header large />
       <SearchBar value={query} onChangeText={setQuery} />
       {error ? (
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>

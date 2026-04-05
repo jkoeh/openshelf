@@ -101,6 +101,37 @@ def _item_word_count(soup: BeautifulSoup) -> int:
     return words
 
 
+def extract_cover_image(epub_path: str) -> tuple[bytes, str] | None:
+    """Extract the cover image from an EPUB. Returns (image_bytes, media_type) or None.
+
+    Tries in order: metadata cover reference, item named 'cover', largest image.
+    """
+    book = epub.read_epub(epub_path)
+
+    # 1. Check metadata for cover reference (OPF <meta name="cover" content="...">)
+    cover_meta = book.get_metadata("OPF", "cover")
+    if cover_meta:
+        cover_id = cover_meta[0][1].get("content", "") if len(cover_meta[0]) > 1 else cover_meta[0][0]
+        item = book.get_item_with_id(cover_id)
+        if item and hasattr(item, "get_content"):
+            return item.get_content(), item.media_type
+
+    # 2. Look for items with 'cover' in the name
+    for item in book.get_items_of_type(ebooklib.ITEM_IMAGE):
+        name = item.get_name().lower()
+        if "cover" in name:
+            return item.get_content(), item.media_type
+
+    # 3. Fall back to the largest image (likely the cover)
+    images = list(book.get_items_of_type(ebooklib.ITEM_IMAGE))
+    if images:
+        largest = max(images, key=lambda i: len(i.get_content()))
+        if len(largest.get_content()) > 5000:  # skip tiny icons
+            return largest.get_content(), largest.media_type
+
+    return None
+
+
 def parse_epub(epub_path: str) -> list[Chapter]:
     book = epub.read_epub(epub_path)
     items = book.get_items_of_type(ebooklib.ITEM_DOCUMENT)

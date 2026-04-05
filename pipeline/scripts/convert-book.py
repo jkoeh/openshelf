@@ -21,12 +21,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from ebooklib import epub as _epub_lib
 
-from openshelf.config import R2_BUCKET, R2_DEFAULT_RENDITION
+from openshelf.config import R2_BUCKET, R2_DEFAULT_RENDITION, CONTEXT_OVERLAP_SENTENCES
 from openshelf.pipeline.epub_annotator import annotate_epub
-from openshelf.pipeline.epub_parser import parse_epub
+from openshelf.pipeline.epub_parser import extract_cover_image, parse_epub
 from openshelf.pipeline.manifest import ChapterMeta, generate_manifest
-from openshelf.pipeline.text_chunker import chunk_text, serialize_chunks, sha256_file
-from openshelf.pipeline.tts import load_pipeline, synthesize_chapter
+from openshelf.pipeline.text_chunker import chunk_text, extract_trailing_sentences, serialize_chunks, sha256_file
+from openshelf.pipeline.tts import ChunkInfo, load_pipeline, synthesize_chapter
 from openshelf.pipeline.encoder import audio_duration, encode_to_aac
 from openshelf.pipeline.word_aligner import align_chapter, write_word_alignment
 from openshelf.scrapers.http import sanitize
@@ -106,6 +106,28 @@ def main():
     else:
         print(f"\nAnnotated EPUB already exists: {annotated_epub_path}")
 
+    # Extract cover image
+    cover_path = None
+    cover_content_type = "image/jpeg"
+    for ext in ("jpg", "png"):
+        candidate = os.path.join(book_dir, f"cover.{ext}")
+        if os.path.exists(candidate):
+            cover_path = candidate
+            cover_content_type = "image/png" if ext == "png" else "image/jpeg"
+            break
+    if not cover_path:
+        cover_result = extract_cover_image(args.epub)
+        if cover_result:
+            img_data, media_type = cover_result
+            cover_ext = "png" if "png" in media_type else "jpg"
+            cover_path = os.path.join(book_dir, f"cover.{cover_ext}")
+            cover_content_type = media_type
+            with open(cover_path, "wb") as f:
+                f.write(img_data)
+            print(f"Cover extracted: {cover_path}")
+        else:
+            print("No cover image found in EPUB.")
+
     # Write chunks.json at the book level (shared across renditions)
     chunks_path = os.path.join(book_dir, "chunks.json")
     if not os.path.exists(chunks_path):
@@ -136,7 +158,16 @@ def main():
         ch_num = ch_data["number"]
         ch_title = ch_data["title"]
         chunks = ch_data["chunks"]
-        chunk_texts = [c.text for c in chunks]
+
+        # Build ChunkInfo list with paragraph boundary info and context prefixes
+        chunk_infos = []
+        for ci, c in enumerate(chunks):
+            ends_para = (ci == len(chunks) - 1) or (c.para_end != chunks[ci + 1].para_start)
+            if ci > 0:
+                prefix = extract_trailing_sentences(chunks[ci - 1].text, CONTEXT_OVERLAP_SENTENCES)
+            else:
+                prefix = ""
+            chunk_infos.append(ChunkInfo(text=c.text, ends_paragraph=ends_para, context_prefix=prefix))
 
         opus_path = os.path.join(output_dir, f"chapter-{ch_num:02d}.m4a")
 
@@ -155,7 +186,7 @@ def main():
         if args.voice:
             synth_kwargs["voice"] = args.voice
 
-        result = synthesize_chapter(pipeline, chunk_texts, wav_path, **synth_kwargs)
+        result = synthesize_chapter(pipeline, chunk_infos, wav_path, **synth_kwargs)
         duration = encode_to_aac(wav_path, opus_path, delete_wav=not args.keep_wav)
 
         chapter_durations[ch_num] = duration
@@ -219,9 +250,11 @@ def main():
 
     # Step 6: Upload to R2
     if args.upload:
-        from openshelf.pipeline.r2 import make_client, upload_epub, upload_chunks, upload_rendition, upload_word_alignment
+        from openshelf.pipeline.r2 import make_client, upload_cover, upload_epub, upload_chunks, upload_rendition, upload_word_alignment
         print("\nUploading to R2 ...")
         client = make_client()
+        if cover_path:
+            upload_cover(client, R2_BUCKET, author_slug, title_slug, cover_path, cover_content_type)
         upload_epub(client, R2_BUCKET, author_slug, title_slug, annotated_epub_path)
         upload_chunks(client, R2_BUCKET, author_slug, title_slug, chunks_path)
         upload_rendition(client, R2_BUCKET, author_slug, title_slug, args.rendition, output_dir, manifest_path)
