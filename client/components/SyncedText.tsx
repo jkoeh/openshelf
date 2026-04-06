@@ -53,8 +53,8 @@ const SyncedChunk = memo(function SyncedChunk({
     return result;
   }, [words, chunkIndex]);
 
-  // If no words for this chunk or not the active chunk, render plain text
-  if (chunkWords.length === 0 || !isActiveChunk) {
+  // If no words for this chunk, render plain text
+  if (chunkWords.length === 0) {
     return (
       <View
         onLayout={handleLayout}
@@ -70,7 +70,7 @@ const SyncedChunk = memo(function SyncedChunk({
     );
   }
 
-  // Render word-level spans for active chunk
+  // Render word-level spans (active chunk gets tint + highlight, others are still pressable)
   return (
     <View
       onLayout={handleLayout}
@@ -79,7 +79,7 @@ const SyncedChunk = memo(function SyncedChunk({
         borderRadius: 4,
         paddingVertical: 2,
         paddingHorizontal: 4,
-        backgroundColor: colors.chunkTint,
+        backgroundColor: isActiveChunk ? colors.chunkTint : "transparent",
       }}
     >
       <Text style={{ flexDirection: "row", flexWrap: "wrap" }}>
@@ -87,7 +87,7 @@ const SyncedChunk = memo(function SyncedChunk({
           <WordSpan
             key={globalIdx}
             word={w.word}
-            isActive={globalIdx === activeWordIndex}
+            isActive={isActiveChunk && globalIdx === activeWordIndex}
             wordIndex={globalIdx}
             highlightColor={colors.highlight}
             textColor={colors.text}
