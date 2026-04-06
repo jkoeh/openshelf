@@ -113,7 +113,8 @@
       "mcp__plugin_chrome-devtools-mcp_chrome-devtools__navigate_page",
       "mcp__plugin_chrome-devtools-mcp_chrome-devtools__wait_for",
       "Bash(wc -l /c/Users/johnk/Documents/Projects/openshelf/worker/src/**/*.ts /c/Users/johnk/Documents/Projects/openshelf/worker/tests/routes/**/*.test.ts)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(npx --prefix worker wrangler whoami)"
     ]
   }
 }
