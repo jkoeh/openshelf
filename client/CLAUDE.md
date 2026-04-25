@@ -55,6 +55,7 @@ npm run check
 - Hooks in `hooks/` bridge lib logic to React components
 - API base URL via `EXPO_PUBLIC_API_BASE` env var (defaults to localhost:8787)
 - Styling via NativeWind `className` prop — no inline StyleSheet unless necessary
+- `useSyncEngine` reads `player.currentTime` directly inside a `requestAnimationFrame` loop and only setStates when the active word/chunk index changes — do **not** drive sync from `useAudioPlayerStatus` (which fires every ~50ms and triggers full re-renders). The hook accepts an optional `preloadedWords` arg; when the chapter response already carries inline words (the default since `chapter_data.json` was introduced), it skips the separate alignment fetch.
 
 ## Do NOT
 

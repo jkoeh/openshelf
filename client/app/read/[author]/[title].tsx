@@ -57,15 +57,16 @@ export default function ReaderPage() {
   const player = useAudioPlayer(audioSrc, { updateInterval: 50, crossOrigin: "anonymous" });
   const status = useAudioPlayerStatus(player);
 
-  // Sync engine
+  // Sync engine — reads player.currentTime directly via rAF, not via status
   const totalChapters = manifest?.chapters.length ?? 0;
   const sync = useSyncEngine(
     author,
     title,
     currentChapter,
     totalChapters,
-    status.currentTime,
+    player,
     syncEnabled,
+    chapterData?.words,
   );
 
   // Enable background audio and lock screen controls

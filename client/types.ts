@@ -40,6 +40,7 @@ export interface ChapterResponse {
   title: string;
   chunks: string[];
   word_count: number;
+  words?: WordEntry[];
 }
 
 export interface WordEntry {

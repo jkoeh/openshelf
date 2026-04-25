@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { AudioPlayer } from "expo-audio";
+import { Platform } from "react-native";
 import { fetchChapterAlignment } from "../lib/api";
-import { findChunkAtTime, findWordAtTime } from "../lib/sync-engine";
+import { findWordAtTime } from "../lib/sync-engine";
 import type { WordEntry } from "../types";
 
 interface SyncState {
@@ -12,7 +14,11 @@ interface SyncState {
 
 /**
  * Hook that fetches alignment data for the current chapter and computes
- * the active word/chunk indices from the audio's currentTime.
+ * the active word/chunk indices by reading player.currentTime directly
+ * in a requestAnimationFrame loop.
+ *
+ * Only triggers React re-renders when the active word actually changes,
+ * not on every audio time tick.
  *
  * Also prefetches alignment for the next chapter.
  */
@@ -21,17 +27,26 @@ export function useSyncEngine(
   title: string | undefined,
   chapter: number,
   totalChapters: number,
-  currentTime: number,
+  player: AudioPlayer | null,
   syncEnabled: boolean,
+  preloadedWords?: WordEntry[],
 ): SyncState {
   const [words, setWords] = useState<WordEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [activeWordIndex, setActiveWordIndex] = useState(-1);
+  const [activeChunkIndex, setActiveChunkIndex] = useState(-1);
   const cache = useRef<Map<number, WordEntry[]>>(new Map());
 
-  // Fetch alignment for current chapter
+  // Use preloaded words (from chapter_data.json) or fetch alignment separately
   useEffect(() => {
     if (!author || !title || !syncEnabled) {
       setWords([]);
+      return;
+    }
+
+    // Words came inline with the chapter response — use them directly
+    if (preloadedWords && preloadedWords.length > 0) {
+      setWords(preloadedWords);
       return;
     }
 
@@ -51,11 +66,12 @@ export function useSyncEngine(
         setWords([]);
       })
       .finally(() => setLoading(false));
-  }, [author, title, chapter, syncEnabled]);
+  }, [author, title, chapter, syncEnabled, preloadedWords]);
 
-  // Prefetch next chapter's alignment
+  // Prefetch next chapter's alignment (only when words aren't inline)
   useEffect(() => {
     if (!author || !title || !syncEnabled) return;
+    if (preloadedWords && preloadedWords.length > 0) return;
     const next = chapter + 1;
     if (next > totalChapters || cache.current.has(next)) return;
 
@@ -66,18 +82,28 @@ export function useSyncEngine(
       .catch(() => {
         // prefetch failure is non-critical
       });
-  }, [author, title, chapter, totalChapters, syncEnabled]);
+  }, [author, title, chapter, totalChapters, syncEnabled, preloadedWords]);
 
-  // Compute active indices via binary search
-  const { activeWordIndex, activeChunkIndex } = useMemo(() => {
-    if (!syncEnabled || words.length === 0) {
-      return { activeWordIndex: -1, activeChunkIndex: -1 };
+  // rAF loop: read player.currentTime directly, only setState when indices change
+  useEffect(() => {
+    if (!syncEnabled || words.length === 0 || !player) {
+      setActiveWordIndex(-1);
+      setActiveChunkIndex(-1);
+      return;
     }
-    return {
-      activeWordIndex: findWordAtTime(words, currentTime),
-      activeChunkIndex: findChunkAtTime(words, currentTime),
+
+    let raf: number;
+    const tick = () => {
+      const t = player.currentTime;
+      const newWord = findWordAtTime(words, t);
+      const newChunk = newWord >= 0 ? words[newWord].chunk_idx : -1;
+      setActiveWordIndex((prev) => (prev === newWord ? prev : newWord));
+      setActiveChunkIndex((prev) => (prev === newChunk ? prev : newChunk));
+      raf = requestAnimationFrame(tick);
     };
-  }, [words, currentTime, syncEnabled]);
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [player, words, syncEnabled]);
 
   return { words, activeWordIndex, activeChunkIndex, loading };
 }
