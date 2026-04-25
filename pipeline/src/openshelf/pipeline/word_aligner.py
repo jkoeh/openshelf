@@ -144,11 +144,20 @@ def align_chapter(
     try:
         audio = whisperx.load_audio(audio_path)
 
-        # Cap inf end times to actual audio duration (WhisperX can't handle inf).
-        # whisperx.load_audio always resamples to 16kHz.
+        # Cap segment times to actual audio duration (WhisperX resamples to 16kHz).
+        # Drop segments that start beyond the audio and clamp end times.
         audio_duration_s = len(audio) / 16000
+        valid = [(seg, cidx) for seg, cidx in zip(segments, chunk_idx_map)
+                 if seg["start"] < audio_duration_s]
+        if valid:
+            segments, chunk_idx_map = zip(*valid)
+            segments = list(segments)
+            chunk_idx_map = list(chunk_idx_map)
+        else:
+            segments = []
+            chunk_idx_map = []
         for seg in segments:
-            if seg["end"] == float("inf"):
+            if seg["end"] > audio_duration_s:
                 seg["end"] = audio_duration_s
 
         model_a, metadata = whisperx.load_align_model(language_code=language, device=device)

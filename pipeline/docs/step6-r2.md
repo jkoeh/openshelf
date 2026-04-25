@@ -11,26 +11,24 @@ Upload all pipeline artifacts to Cloudflare R2 (S3-compatible object storage). E
 graph TD
     A[Pipeline outputs] --> B[make_client]
     B --> C[upload_epub]
-    B --> D[upload_chunks]
+    B --> D[upload_cover]
     B --> E[upload_rendition]
-    B --> F[upload_word_alignment]
+    B --> F[upload_chapter_data]
+    B --> G[upload_word_alignment - opt-in]
+    B --> H[upload_chunks - legacy, unused by worker]
 
-    C --> G{book.epub exists on R2?}
-    G -->|Yes| H[Skip]
-    G -->|No| I[PUT book.epub]
+    C --> C1{book.epub exists on R2?}
+    C1 -->|Yes| C2[Skip]
+    C1 -->|No| C3[PUT book.epub]
 
-    D --> J{chunks.json exists on R2?}
-    J -->|Yes| K[Skip]
-    J -->|No| L[PUT chunks.json]
+    E --> E1{manifest.json exists on R2?}
+    E1 -->|Yes| E2[Skip entire rendition]
+    E1 -->|No| E3[PUT all m4a files]
+    E3 --> E4[PUT manifest.json last]
 
-    E --> M{manifest.json exists on R2?}
-    M -->|Yes| N[Skip entire rendition]
-    M -->|No| O[PUT all Opus files]
-    O --> P[PUT manifest.json last]
-
-    F --> Q{word_alignment.json exists on R2?}
-    Q -->|Yes| R[Skip]
-    Q -->|No| S[PUT word_alignment.json]
+    F --> F1{chapter_data.json exists on R2?}
+    F1 -->|Yes| F2[Skip]
+    F1 -->|No| F3[PUT chapter_data.json]
 ```
 
 ## Interface
@@ -59,14 +57,21 @@ def upload_epub(
 ) -> str | None
     # Returns key or None if already exists
 
-def upload_word_alignment(
+def upload_chapter_data(
+    client, bucket: str,
+    author_slug: str, title_slug: str,
+    rendition: str,
+    chapter_data_path: str,
+) -> str | None
+
+def upload_word_alignment(            # opt-in only (--whisperx)
     client, bucket: str,
     author_slug: str, title_slug: str,
     rendition: str,
     word_alignment_path: str,
 ) -> str | None
 
-def upload_chunks(
+def upload_chunks(                    # legacy; not consumed by worker
     client, bucket: str,
     author_slug: str, title_slug: str,
     chunks_path: str,
@@ -78,13 +83,42 @@ def upload_chunks(
 ```
 books/{author_slug}/{title_slug}/
   book.epub                                    # annotated EPUB
-  chunks.json                                  # chunk-to-element mapping
+  cover.{jpg|png}                              # cover image
+  chunks.json                                  # legacy, no longer read by worker
   audio/{rendition}/
-    chapter-01.m4a                            # audio files
+    chapter-01.m4a                             # audio files
     chapter-02.m4a
     manifest.json                              # chapter metadata
-    word_alignment.json                        # word-level timestamps
+    chapter_data.json                          # per-chunk text + Kokoro word timestamps
+    word_alignment.json                        # only present if --whisperx was used
 ```
+
+### `chapter_data.json` shape
+
+```json
+{
+  "version": 1,
+  "rendition": "kokoro-af-heart",
+  "chapters": [
+    {
+      "number": 1,
+      "title": "Chapter 1",
+      "word_count": 1234,
+      "chunks": [
+        {
+          "text": "Someone must have been telling lies about Josef K.",
+          "words": [
+            {"word": "Someone", "start": 0.0, "end": 0.31},
+            {"word": "must",    "start": 0.31, "end": 0.48}
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+The worker's `/chapters/:n` endpoint reads this file directly: it returns `chunks` as flat strings, plus a flattened `words` array with `chunk_idx` injected per word.
 
 ## Behavior
 
@@ -92,15 +126,15 @@ books/{author_slug}/{title_slug}/
 
 **Rendition upload** uses a single-gate pattern: only `manifest.json` existence is checked (one HEAD request). If it exists, the entire rendition is skipped. This works because manifest is always uploaded **last** — its presence guarantees all Opus files are already on R2. A partial previous run's files are safely overwritten on retry (PUT is idempotent).
 
-**Other uploads** (EPUB, chunks, word alignment) each check their own key existence independently.
+**Other uploads** (EPUB, cover, chapter_data, chunks, word_alignment) each check their own key existence independently.
 
-This avoids O(N) HEAD requests per book. For a 20-chapter book, it's 4 HEAD requests total instead of 24.
+This avoids O(N) HEAD requests per book. For a 20-chapter book, it's a handful of HEAD requests total instead of 24.
 
 ### Cache Headers
 
 | File type | Cache-Control | Rationale |
 |---|---|---|
-| Opus, EPUB, chunks, alignment | `public, max-age=31536000, immutable` | Content never changes once written |
+| m4a, EPUB, cover, chunks, chapter_data, alignment | `public, max-age=31536000, immutable` | Content never changes once written |
 | manifest.json | `public, max-age=60` | Allows updates to propagate on reprocessing |
 
 ### Content Types

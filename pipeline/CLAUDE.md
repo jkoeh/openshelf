@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Python pipeline that downloads EPUB books, converts them to AI-narrated audio (Kokoro TTS), generates word-level alignment (WhisperX), and uploads everything to Cloudflare R2.
+Python pipeline that downloads EPUB books, converts them to AI-narrated audio (Kokoro TTS), captures word-level timestamps directly from Kokoro's token output, and uploads everything to Cloudflare R2. WhisperX forced alignment is supported as an optional/legacy path (`convert-book.py --whisperx`) and is also used by the audio-quality test for roundtrip transcription.
 
 ## Structure
 
@@ -17,15 +17,17 @@ src/openshelf/
     epub_parser.py          # Step 1:  EPUB -> chapters with ContentElements
     epub_annotator.py       # Step 1b: inject stable element IDs into EPUB HTML
     text_chunker.py         # Step 2:  paragraphs -> TTS-sized Chunks
-    tts.py                  # Step 3:  chunks -> WAV via Kokoro TTS
+    tts.py                  # Step 3:  chunks -> WAV + per-chunk word timestamps via Kokoro
     encoder.py              # Step 4:  WAV -> AAC (.m4a) via ffmpeg
     manifest.py             # Step 5a: chapter metadata JSON
-    word_aligner.py         # Step 5b: word-level alignment via WhisperX
+    word_aligner.py         # Step 5b: WhisperX forced alignment (opt-in via --whisperx)
+    transcriber.py          # WhisperX ASR + WER (used by test-audio-quality)
     r2.py                   # Step 6:  upload to Cloudflare R2
     runner.py               # orchestrator (stub)
 
 scripts/
   process-books.py          # End-to-end: search, download, convert, (optionally) upload
+  e2e-book.py               # Convenience wrapper: author + title -> process-books --upload
   download-books.py         # CLI for book scraping only
   convert-book.py           # CLI for EPUB -> audio conversion + alignment
   upload-books.py           # CLI for uploading pre-generated audio to R2
@@ -58,6 +60,7 @@ uv pip install -r pipeline/requirements.txt
 python3 pipeline/scripts/process-books.py --author "Kafka"
 python3 pipeline/scripts/process-books.py --author "Shakespeare" --book "Romeo"
 python3 pipeline/scripts/process-books.py --author "Kafka" --upload
+python3 pipeline/scripts/e2e-book.py Kafka Metamorphosis  # shorthand: always uploads
 python3 pipeline/scripts/process-books.py --author "Kafka" --dry-run  # download + parse only, no audio
 python3 pipeline/scripts/process-books.py --epub path/to/book.epub --upload  # local file, skip download
 

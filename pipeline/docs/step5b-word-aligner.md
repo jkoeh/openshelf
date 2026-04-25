@@ -1,11 +1,19 @@
-# Step 5b: Word Aligner
+# Step 5b: Word Aligner (optional / legacy)
 
 **Module:** `src/openshelf/pipeline/word_aligner.py`
 **Test:** `tests/pipeline/test_word_aligner.py`
 
+## Status
+
+> **Default path: skipped.** Word timestamps are now extracted directly from Kokoro's token output during TTS (see Step 3) and serialized into `chapter_data.json`. No alignment pass is required for client text/audio sync.
+>
+> This module is still used in two cases:
+> 1. `convert-book.py --whisperx` — opt-in flag to also produce a `word_alignment.json` file (e.g. for sanity-checking Kokoro timestamps against forced alignment)
+> 2. The audio-quality test in `scripts/test-audio-quality.py` runs WhisperX-based ASR + WER as a roundtrip content check (see `transcriber.py`)
+
 ## Purpose
 
-Run WhisperX forced alignment on each chapter's audio to produce word-level timestamps. Each word is tagged with its chunk index, enabling precise text/audio sync — the client can highlight individual words as they're spoken.
+Run WhisperX forced alignment on each chapter's audio to produce word-level timestamps. Each word is tagged with its chunk index. Output schema is preserved for backwards-compatible debugging/validation.
 
 ```mermaid
 graph TD

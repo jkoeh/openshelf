@@ -26,9 +26,8 @@ from openshelf.pipeline.epub_annotator import annotate_epub
 from openshelf.pipeline.epub_parser import extract_cover_image, parse_epub
 from openshelf.pipeline.manifest import ChapterMeta, generate_manifest
 from openshelf.pipeline.text_chunker import chunk_text, extract_trailing_sentences, serialize_chunks, sha256_file
-from openshelf.pipeline.tts import ChunkInfo, load_pipeline, synthesize_chapter
+from openshelf.pipeline.tts import ChunkInfo, WordTimestamp, load_pipeline, synthesize_chapter
 from openshelf.pipeline.encoder import audio_duration, encode_to_aac
-from openshelf.pipeline.word_aligner import align_chapter, write_word_alignment
 from openshelf.scrapers.http import sanitize
 
 
@@ -42,6 +41,7 @@ def main():
     parser.add_argument("--device", default=None, help="Device: cuda, mps, cpu (default: auto)")
     parser.add_argument("--dry-run", action="store_true", help="Parse and chunk only, no audio")
     parser.add_argument("--keep-wav", action="store_true", help="Keep WAV files after encoding")
+    parser.add_argument("--whisperx", action="store_true", help="Also run WhisperX alignment (legacy)")
     parser.add_argument("--upload", action="store_true", help="Upload to Cloudflare R2 after conversion")
     args = parser.parse_args()
 
@@ -152,6 +152,7 @@ def main():
     total_skipped = 0
     chapter_durations: dict[int, float] = {}
     chapter_chunk_starts: dict[int, list[float]] = {}
+    chapter_chunk_words: dict[int, list[list[WordTimestamp]]] = {}
     start = time.time()
 
     for ch_data in chunked_chapters:
@@ -175,6 +176,7 @@ def main():
             duration = audio_duration(opus_path)
             chapter_durations[ch_num] = duration
             chapter_chunk_starts[ch_num] = [-1.0] * len(chunks)
+            chapter_chunk_words[ch_num] = [[] for _ in chunks]
             print(f"  [{ch_num:>2}/{len(chapters)}] {ch_title} — [SKIP] exists")
             continue
 
@@ -191,6 +193,7 @@ def main():
 
         chapter_durations[ch_num] = duration
         chapter_chunk_starts[ch_num] = result.chunk_audio_starts
+        chapter_chunk_words[ch_num] = result.chunk_words
         total_duration += duration
         total_skipped += result.skipped_chunks
 
@@ -230,27 +233,62 @@ def main():
     )
     print(f"Manifest: {manifest_path}")
 
-    # Step 5b: Word-level alignment via WhisperX
-    word_alignment_path = os.path.join(output_dir, "word_alignment.json")
-    if not os.path.exists(word_alignment_path):
-        print("\nRunning word alignment ...")
-        word_chapters = []
+    # Step 5b: Write chapter_data.json (merged chunks + word timestamps from Kokoro)
+    import dataclasses
+    chapter_data_path = os.path.join(output_dir, "chapter_data.json")
+    if not os.path.exists(chapter_data_path):
+        chapter_data = {
+            "version": 1,
+            "rendition": args.rendition,
+            "chapters": [],
+        }
         for ch_data in chunked_chapters:
             ch_num = ch_data["number"]
-            opus_path = os.path.join(output_dir, f"chapter-{ch_num:02d}.m4a")
-            chunk_texts = [c.text for c in ch_data["chunks"]]
-            words = align_chapter(
-                opus_path, chunk_texts, chapter_chunk_starts[ch_num], device=device
-            )
-            word_chapters.append({"number": ch_num, "words": words})
-        write_word_alignment(word_chapters, args.rendition, word_alignment_path)
-        print(f"Word alignment: {word_alignment_path}")
+            chunks = ch_data["chunks"]
+            words_per_chunk = chapter_chunk_words.get(ch_num, [[] for _ in chunks])
+            ch_entry = {
+                "number": ch_num,
+                "title": ch_data["title"],
+                "chunks": [],
+                "word_count": sum(len(c.text.split()) for c in chunks),
+            }
+            for ci, c in enumerate(chunks):
+                chunk_entry = {
+                    "text": c.text,
+                    "words": [dataclasses.asdict(w) for w in (words_per_chunk[ci] if ci < len(words_per_chunk) else [])],
+                }
+                ch_entry["chunks"].append(chunk_entry)
+            chapter_data["chapters"].append(ch_entry)
+
+        with open(chapter_data_path, "w", encoding="utf-8") as f:
+            json.dump(chapter_data, f, indent=2, ensure_ascii=False)
+        print(f"\nChapter data: {chapter_data_path}")
     else:
-        print(f"Word alignment already exists: {word_alignment_path}")
+        print(f"\nChapter data already exists: {chapter_data_path}")
+
+    # Step 5c: Optional WhisperX alignment (legacy, for validation)
+    word_alignment_path = os.path.join(output_dir, "word_alignment.json")
+    if args.whisperx:
+        from openshelf.pipeline.word_aligner import align_chapter, write_word_alignment
+        if not os.path.exists(word_alignment_path):
+            print("\nRunning WhisperX word alignment ...")
+            word_chapters = []
+            for ch_data in chunked_chapters:
+                ch_num = ch_data["number"]
+                opus_path = os.path.join(output_dir, f"chapter-{ch_num:02d}.m4a")
+                chunk_texts = [c.text for c in ch_data["chunks"]]
+                words = align_chapter(
+                    opus_path, chunk_texts, chapter_chunk_starts[ch_num], device=device
+                )
+                word_chapters.append({"number": ch_num, "words": words})
+            write_word_alignment(word_chapters, args.rendition, word_alignment_path)
+            print(f"Word alignment: {word_alignment_path}")
+        else:
+            print(f"Word alignment already exists: {word_alignment_path}")
 
     # Step 6: Upload to R2
     if args.upload:
-        from openshelf.pipeline.r2 import make_client, upload_cover, upload_epub, upload_chunks, upload_rendition, upload_word_alignment
+        from openshelf.pipeline.r2 import make_client, upload_cover, upload_epub, upload_chunks, upload_rendition, upload_chapter_data
         print("\nUploading to R2 ...")
         client = make_client()
         if cover_path:
@@ -258,7 +296,7 @@ def main():
         upload_epub(client, R2_BUCKET, author_slug, title_slug, annotated_epub_path)
         upload_chunks(client, R2_BUCKET, author_slug, title_slug, chunks_path)
         upload_rendition(client, R2_BUCKET, author_slug, title_slug, args.rendition, output_dir, manifest_path)
-        upload_word_alignment(client, R2_BUCKET, author_slug, title_slug, args.rendition, word_alignment_path)
+        upload_chapter_data(client, R2_BUCKET, author_slug, title_slug, args.rendition, chapter_data_path)
         print("Upload complete.")
         print(f"R2 prefix: books/{author_slug}/{title_slug}/")
 

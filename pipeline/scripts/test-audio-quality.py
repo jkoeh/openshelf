@@ -30,8 +30,11 @@ from openshelf.config import (
     SILENCE_MID_PARAGRAPH_MS,
     SILENCE_PARAGRAPH_BREAK_MS,
     TTS_SAMPLE_RATE,
+    WER_THRESHOLD,
+    WER_AVG_THRESHOLD,
 )
 from openshelf.pipeline.text_chunker import chunk_text, extract_trailing_sentences
+from openshelf.pipeline.transcriber import compute_wer, transcribe_audio
 from openshelf.pipeline.tts import ChunkInfo, load_pipeline, synthesize_chapter
 from openshelf.pipeline.word_aligner import align_chapter, validate_alignment
 
@@ -210,6 +213,48 @@ def run_validation(pipeline, chapters, device, output_dir):
             print(f"  [{status}] Context overlap leakage check (excess: {actual_excess:.1f}s, threshold: {leak_threshold:.1f}s)")
             if not leak_ok:
                 all_passed = False
+
+        # --- Validation 6: Roundtrip WER (transcription fidelity) ---
+        try:
+            chunk_wers = []
+            for i, (text, start_s) in enumerate(zip(chunk_texts, starts)):
+                if start_s < 0:
+                    continue
+                # Find end of this chunk's audio
+                end_s = result.duration_seconds
+                for j in range(i + 1, len(starts)):
+                    if starts[j] >= 0:
+                        end_s = starts[j]
+                        break
+                start_sample = int(start_s * sr)
+                end_sample = int(end_s * sr)
+                chunk_audio_slice = audio[start_sample:end_sample]
+                if len(chunk_audio_slice) == 0:
+                    continue
+                chunk_wav = os.path.join(output_dir, f"chunk-{ch_num:02d}-{i:02d}.wav")
+                sf.write(chunk_wav, chunk_audio_slice, sr)
+                transcription = transcribe_audio(chunk_wav, device=device)
+                wer = compute_wer(text, transcription)
+                chunk_wers.append((i, wer, text, transcription))
+                os.remove(chunk_wav)
+
+            if chunk_wers:
+                max_wer = max(w for _, w, _, _ in chunk_wers)
+                avg_wer = sum(w for _, w, _, _ in chunk_wers) / len(chunk_wers)
+                wer_ok = max_wer < WER_THRESHOLD and avg_wer < WER_AVG_THRESHOLD
+                status = "PASS" if wer_ok else "FAIL"
+                print(f"  [{status}] Roundtrip WER: avg {avg_wer:.1%}, max {max_wer:.1%} (thresholds: avg<{WER_AVG_THRESHOLD:.0%}, max<{WER_THRESHOLD:.0%})")
+                if not wer_ok:
+                    for idx, wer, ref, hyp in chunk_wers:
+                        if wer >= WER_THRESHOLD:
+                            print(f"    chunk {idx}: WER={wer:.1%}")
+                            print(f"      ref: {ref[:100]}")
+                            print(f"      hyp: {hyp[:100]}")
+                    all_passed = False
+            else:
+                print("  [SKIP] No valid chunks for WER validation")
+        except Exception as e:
+            print(f"  [SKIP] Roundtrip WER: {e}")
 
         results.append({
             "chapter": ch_num,

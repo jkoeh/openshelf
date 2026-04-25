@@ -16,10 +16,12 @@ from openshelf.pipeline.tts import (
     synthesize_chapter,
     SynthesisResult,
     ChunkInfo,
+    WordTimestamp,
     _generate_silence,
     _normalize,
     _apply_boundary_fades,
     _split_segments_at_prefix,
+    _extract_words,
     _text_for_matching,
 )
 from openshelf.config import (
@@ -500,9 +502,9 @@ class TestSplitSegmentsAtPrefix(unittest.TestCase):
             ("Hello world.", "p", _fake_audio(5000)),  # prefix segment
             ("Real content here.", "p", _fake_audio(3000)),  # real segment
         ]
-        audio = _split_segments_at_prefix(results, "Hello world.", TTS_SAMPLE_RATE)
-        # Only the second segment's 3000 samples should remain
+        audio, trim = _split_segments_at_prefix(results, "Hello world.", TTS_SAMPLE_RATE)
         self.assertEqual(len(audio), 3000)
+        self.assertEqual(trim, 5000)
 
     def test_multiple_prefix_segments(self):
         """Multiple segments can be part of the prefix."""
@@ -511,20 +513,21 @@ class TestSplitSegmentsAtPrefix(unittest.TestCase):
             ("Second prefix.", "p", _fake_audio(2000)),
             ("Real content.", "p", _fake_audio(3000)),
         ]
-        audio = _split_segments_at_prefix(
+        audio, trim = _split_segments_at_prefix(
             results, "First prefix. Second prefix.", TTS_SAMPLE_RATE
         )
         self.assertEqual(len(audio), 3000)
+        self.assertEqual(trim, 4000)
 
     def test_single_segment_falls_back(self):
         """When all text is in one segment, falls back to proportional trim."""
         results = [
             ("Hello world real content.", "p", _fake_audio(10000)),
         ]
-        audio = _split_segments_at_prefix(results, "Hello world", TTS_SAMPLE_RATE)
-        # Should still return something (proportional fallback)
+        audio, trim = _split_segments_at_prefix(results, "Hello world", TTS_SAMPLE_RATE)
         self.assertGreater(len(audio), 0)
         self.assertLess(len(audio), 10000)
+        self.assertGreater(trim, 0)
 
     def test_fade_in_applied(self):
         """A fade-in is applied at the start of the real content."""
@@ -532,8 +535,7 @@ class TestSplitSegmentsAtPrefix(unittest.TestCase):
             ("Prefix text.", "p", _fake_audio(2000)),
             ("Real text.", "p", np.ones(3000, dtype=np.float32)),
         ]
-        audio = _split_segments_at_prefix(results, "Prefix text.", TTS_SAMPLE_RATE)
-        # First sample should be near zero (faded in)
+        audio, _ = _split_segments_at_prefix(results, "Prefix text.", TTS_SAMPLE_RATE)
         self.assertAlmostEqual(audio[0], 0.0, places=3)
 
     def test_no_prefix_returns_all(self):
@@ -542,8 +544,9 @@ class TestSplitSegmentsAtPrefix(unittest.TestCase):
             ("Hello.", "p", _fake_audio(2000)),
             ("World.", "p", _fake_audio(3000)),
         ]
-        audio = _split_segments_at_prefix(results, "", TTS_SAMPLE_RATE)
+        audio, trim = _split_segments_at_prefix(results, "", TTS_SAMPLE_RATE)
         self.assertEqual(len(audio), 5000)
+        self.assertEqual(trim, 0)
 
 
 class TestTextForMatching(unittest.TestCase):
@@ -556,6 +559,150 @@ class TestTextForMatching(unittest.TestCase):
 
     def test_strips_whitespace(self):
         self.assertEqual(_text_for_matching("a  b  c"), "abc")
+
+
+class _FakeToken:
+    """Mock Kokoro MToken for testing."""
+    def __init__(self, text, start_ts, end_ts):
+        self.text = text
+        self.start_ts = start_ts
+        self.end_ts = end_ts
+
+
+class _FakeResult:
+    """Mock Kokoro Result for testing."""
+    def __init__(self, graphemes, phonemes, audio, tokens=None):
+        self.graphemes = graphemes
+        self.phonemes = phonemes
+        self.audio = audio
+        self.tokens = tokens or []
+
+    def __iter__(self):
+        return iter((self.graphemes, self.phonemes, self.audio))
+
+
+class TestExtractWords(unittest.TestCase):
+
+    def test_basic_extraction(self):
+        results = [
+            _FakeResult("Hello world.", "p", _fake_audio(2000), [
+                _FakeToken("Hello", 0.0, 0.3),
+                _FakeToken("world.", 0.3, 0.6),
+            ]),
+        ]
+        words = _extract_words(results, 0.0)
+        self.assertEqual(len(words), 2)
+        self.assertEqual(words[0].word, "Hello")
+        self.assertAlmostEqual(words[0].start, 0.0)
+        self.assertEqual(words[1].word, "world.")
+        self.assertAlmostEqual(words[1].start, 0.3)
+
+    def test_filters_prefix_tokens(self):
+        results = [
+            _FakeResult("Prefix text. Real content.", "p", _fake_audio(4000), [
+                _FakeToken("Prefix", 0.0, 0.2),
+                _FakeToken("text.", 0.2, 0.4),
+                _FakeToken("Real", 0.5, 0.7),
+                _FakeToken("content.", 0.7, 0.9),
+            ]),
+        ]
+        # trim_offset=0.45 means tokens before 0.44 are prefix
+        words = _extract_words(results, 0.45)
+        self.assertEqual(len(words), 2)
+        self.assertEqual(words[0].word, "Real")
+        self.assertAlmostEqual(words[0].start, 0.05, places=2)
+
+    def test_skips_tokens_without_timestamps(self):
+        results = [
+            _FakeResult("Hello.", "p", _fake_audio(1000), [
+                _FakeToken("Hello", 0.0, 0.3),
+                _FakeToken(",", None, None),  # punctuation
+                _FakeToken("world", 0.3, 0.6),
+            ]),
+        ]
+        words = _extract_words(results, 0.0)
+        self.assertEqual(len(words), 2)
+        self.assertEqual(words[0].word, "Hello")
+        self.assertEqual(words[1].word, "world")
+
+    def test_empty_results(self):
+        words = _extract_words([], 0.0)
+        self.assertEqual(words, [])
+
+    def test_results_without_tokens(self):
+        """Tuple-style results (no .tokens) return empty words."""
+        results = [("graphemes", "phonemes", _fake_audio(1000))]
+        words = _extract_words(results, 0.0)
+        self.assertEqual(words, [])
+
+    def test_multiple_results(self):
+        results = [
+            _FakeResult("First.", "p", _fake_audio(1000), [
+                _FakeToken("First.", 0.0, 0.3),
+            ]),
+            _FakeResult("Second.", "p", _fake_audio(1000), [
+                _FakeToken("Second.", 0.3, 0.6),
+            ]),
+        ]
+        words = _extract_words(results, 0.0)
+        self.assertEqual(len(words), 2)
+
+
+class TestSynthesizeChapterWords(unittest.TestCase):
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_chunk_words_populated(self, mock_sf_write):
+        """synthesize_chapter returns chunk_words with word timestamps."""
+        def make_iter(text, voice=None):
+            return iter([_FakeResult("g", "p", _fake_audio(1000), [
+                _FakeToken("word", 0.0, 0.3),
+            ])])
+
+        pipeline = MagicMock(side_effect=make_iter)
+        result = synthesize_chapter(pipeline, _make_chunks(["text"]), "/tmp/out.wav")
+
+        self.assertEqual(len(result.chunk_words), 1)
+        self.assertEqual(len(result.chunk_words[0]), 1)
+        self.assertEqual(result.chunk_words[0][0].word, "word")
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_chunk_words_offset_by_start(self, mock_sf_write):
+        """Word timestamps in later chunks are offset by chunk_audio_starts."""
+        def make_iter(text, voice=None):
+            return iter([_FakeResult("g", "p", _fake_audio(1000), [
+                _FakeToken("word", 0.0, 0.3),
+            ])])
+
+        pipeline = MagicMock(side_effect=make_iter)
+        result = synthesize_chapter(pipeline, _make_chunks(["A.", "B."]), "/tmp/out.wav")
+
+        self.assertEqual(len(result.chunk_words), 2)
+        # Second chunk's word should be offset
+        self.assertGreater(result.chunk_words[1][0].start, 0.0)
+        self.assertAlmostEqual(
+            result.chunk_words[1][0].start,
+            result.chunk_audio_starts[1],
+            places=3,
+        )
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_skipped_chunk_has_empty_words(self, mock_sf_write):
+        """Failed chunks get empty word lists."""
+        def side_effect(text, voice=None):
+            if "bad" in text:
+                raise RuntimeError("TTS error")
+            return iter([_FakeResult("g", "p", _fake_audio(1000), [
+                _FakeToken("word", 0.0, 0.3),
+            ])])
+
+        pipeline = MagicMock(side_effect=side_effect)
+        result = synthesize_chapter(
+            pipeline,
+            [ChunkInfo(text="bad"), ChunkInfo(text="good")],
+            "/tmp/out.wav",
+        )
+        self.assertEqual(result.chunk_words[0], [])
+        self.assertEqual(len(result.chunk_words[1]), 1)
 
 
 if __name__ == "__main__":

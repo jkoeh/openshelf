@@ -198,6 +198,39 @@ def upload_word_alignment(
     return key
 
 
+def upload_chapter_data(
+    client,
+    bucket: str,
+    author_slug: str,
+    title_slug: str,
+    rendition: str,
+    chapter_data_path: str,
+) -> str | None:
+    """Upload chapter_data.json to R2. Returns the key, or None if already exists.
+
+    Key pattern: books/{author}/{title}/audio/{rendition}/chapter_data.json
+    Idempotent: skips upload if the key already exists.
+    """
+    prefix = f"{_book_prefix(author_slug, title_slug)}/audio/{rendition}"
+    key = f"{prefix}/chapter_data.json"
+
+    if key_exists(client, bucket, key):
+        logger.info("Chapter data already uploaded, skipping: %s", key)
+        return None
+
+    client.upload_file(
+        chapter_data_path,
+        bucket,
+        key,
+        ExtraArgs={
+            "ContentType": "application/json",
+            "CacheControl": R2_CACHE_CONTROL_IMMUTABLE,
+        },
+    )
+    logger.info("Uploaded: %s", key)
+    return key
+
+
 def upload_chunks(
     client,
     bucket: str,
