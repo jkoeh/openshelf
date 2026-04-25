@@ -1,69 +1,122 @@
-import { Hono } from "hono";
+import { createRoute, z } from "@hono/zod-openapi";
 import { CACHE_IMMUTABLE } from "../constants";
+import { ErrorSchema } from "../schemas/error";
+import { ChapterNumberStringSchema, SlugSchema } from "../schemas/params";
 import type { Env } from "../types";
+import { createOpenAPIApp } from "../utils/openapi-app";
 import { r2Key } from "../utils/r2-keys";
-import { badRequest, notFound } from "../utils/response";
-import { isValidSlug } from "../utils/validation";
 
-interface ChunkObj {
+const ParamsSchema = z.object({
+	author: SlugSchema.openapi({ param: { name: "author", in: "path" }, example: "franz-kafka" }),
+	title: SlugSchema.openapi({ param: { name: "title", in: "path" }, example: "the-trial" }),
+	number: ChapterNumberStringSchema.openapi({
+		param: { name: "number", in: "path" },
+		example: "1",
+	}),
+});
+
+const WordSchema = z.object({
+	word: z.string(),
+	start: z.number(),
+	end: z.number(),
+	chunk_idx: z.number().int().nonnegative(),
+});
+
+const ChapterResponseSchema = z
+	.object({
+		number: z.number().int(),
+		title: z.string(),
+		chunks: z.array(z.string()),
+		word_count: z.number().int(),
+		words: z.array(WordSchema),
+	})
+	.openapi("Chapter");
+
+interface ChapterDataChunk {
 	text: string;
-	element_id: string;
+	words: { word: string; start: number; end: number }[];
 }
 
-interface ChunksChapter {
+interface ChapterDataChapter {
 	number: number;
 	title: string;
-	chunks: (string | ChunkObj)[];
+	chunks: ChapterDataChunk[];
+	word_count: number;
 }
 
-interface ChunksData {
+interface ChapterData {
 	version: number;
-	chapters: ChunksChapter[];
+	rendition: string;
+	chapters: ChapterDataChapter[];
 }
 
-function chunkText(chunk: string | ChunkObj): string {
-	return typeof chunk === "string" ? chunk : chunk.text;
+function flattenWords(chunks: ChapterDataChunk[]) {
+	const words: z.infer<typeof WordSchema>[] = [];
+	for (let i = 0; i < chunks.length; i++) {
+		for (const w of chunks[i].words) {
+			words.push({ ...w, chunk_idx: i });
+		}
+	}
+	return words;
 }
 
-const app = new Hono<{ Bindings: Env }>();
+const route = createRoute({
+	method: "get",
+	path: "/",
+	tags: ["chapters"],
+	summary: "Get chapter text + word timestamps",
+	request: { params: ParamsSchema },
+	responses: {
+		200: {
+			description: "Chapter payload with flattened word timestamps",
+			content: { "application/json": { schema: ChapterResponseSchema } },
+		},
+		400: {
+			description: "Invalid slug or chapter number",
+			content: { "application/json": { schema: ErrorSchema } },
+		},
+		404: {
+			description: "Book or chapter not found",
+			content: { "application/json": { schema: ErrorSchema } },
+		},
+	},
+});
 
-app.get("/", async (c) => {
-	const author = c.req.param("author");
-	const title = c.req.param("title");
-	const numberParam = c.req.param("number") ?? "";
+const app = createOpenAPIApp<{ Bindings: Env }>();
 
-	if (!isValidSlug(author) || !isValidSlug(title)) {
-		return badRequest("Invalid author or title slug");
-	}
+app.openapi(route, async (c) => {
+	const { author, title, number } = c.req.valid("param");
+	const chapterNum = Number(number);
 
-	const chapterNum = Number(numberParam);
-	if (!Number.isInteger(chapterNum) || chapterNum < 1) {
-		return badRequest("Invalid chapter number");
-	}
-
-	const obj = await c.env.R2_BUCKET.get(r2Key.chunks(author, title));
+	const obj = await c.env.R2_BUCKET.get(r2Key.chapterData(author, title));
 	if (!obj) {
-		return notFound(`Book not found: ${author}/${title}`);
+		return c.json(
+			{ error: { code: "NOT_FOUND", message: `Book not found: ${author}/${title}` } },
+			404,
+		);
 	}
 
-	const data: ChunksData = await obj.json();
+	const data = (await obj.json()) as ChapterData;
 	const chapter = data.chapters.find((ch) => ch.number === chapterNum);
 	if (!chapter) {
-		return notFound(`Chapter ${chapterNum} not found in ${author}/${title}`);
+		return c.json(
+			{
+				error: {
+					code: "NOT_FOUND",
+					message: `Chapter ${chapterNum} not found in ${author}/${title}`,
+				},
+			},
+			404,
+		);
 	}
-
-	const texts = chapter.chunks.map(chunkText);
-	const wordCount = texts.reduce(
-		(sum, text) => sum + text.split(/\s+/).filter(Boolean).length,
-		0,
-	);
 
 	return c.json(
 		{
 			number: chapter.number,
 			title: chapter.title,
-			chunks: texts,
-			word_count: wordCount,
+			chunks: chapter.chunks.map((ch) => ch.text),
+			word_count: chapter.word_count,
+			words: flattenWords(chapter.chunks),
 		},
 		200,
 		{ "Cache-Control": CACHE_IMMUTABLE },

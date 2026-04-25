@@ -14,8 +14,6 @@ export const r2Key = {
 
 	epub: (author: string, title: string) => `${bookPrefix(author, title)}/book.epub`,
 
-	chunks: (author: string, title: string) => `${bookPrefix(author, title)}/chunks.json`,
-
 	manifest: (author: string, title: string, rendition?: string) =>
 		`${renditionPrefix(author, title, rendition)}/manifest.json`,
 
@@ -24,4 +22,7 @@ export const r2Key = {
 
 	alignment: (author: string, title: string, rendition?: string) =>
 		`${renditionPrefix(author, title, rendition)}/word_alignment.json`,
+
+	chapterData: (author: string, title: string, rendition?: string) =>
+		`${renditionPrefix(author, title, rendition)}/chapter_data.json`,
 };

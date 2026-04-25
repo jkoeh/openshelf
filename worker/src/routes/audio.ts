@@ -1,24 +1,74 @@
-import { Hono } from "hono";
+import { createRoute, z } from "@hono/zod-openapi";
 import { CACHE_IMMUTABLE } from "../constants";
+import { ErrorSchema } from "../schemas/error";
+import { ChapterNumberStringSchema, SlugSchema } from "../schemas/params";
 import type { Env } from "../types";
+import { createOpenAPIApp } from "../utils/openapi-app";
 import { r2Key } from "../utils/r2-keys";
-import { badRequest, errorResponse, notFound } from "../utils/response";
-import { isValidChapter, isValidSlug } from "../utils/validation";
 
-const app = new Hono<{ Bindings: Env }>();
+const ParamsSchema = z.object({
+	author: SlugSchema.openapi({ param: { name: "author", in: "path" }, example: "franz-kafka" }),
+	title: SlugSchema.openapi({ param: { name: "title", in: "path" }, example: "the-trial" }),
+	chapter: ChapterNumberStringSchema.openapi({
+		param: { name: "chapter", in: "path" },
+		example: "01",
+	}),
+});
 
-app.get("/", async (c) => {
-	const author = c.req.param("author");
-	const title = c.req.param("title");
-	const chapter = c.req.param("chapter");
+const HeadersSchema = z.object({
+	range: z
+		.string()
+		.optional()
+		.openapi({ description: "Standard HTTP Range header (bytes=start-end)" }),
+});
 
-	if (!isValidSlug(author) || !isValidSlug(title)) {
-		return badRequest("Invalid author or title slug");
-	}
-	if (!isValidChapter(chapter)) {
-		return badRequest("Invalid chapter number");
-	}
+const BinaryAudioContent = {
+	"audio/mp4": { schema: { type: "string", format: "binary" } as const },
+	"audio/mpeg": { schema: { type: "string", format: "binary" } as const },
+};
 
+const route = createRoute({
+	method: "get",
+	path: "/",
+	tags: ["audio"],
+	summary: "Stream a chapter's audio (m4a / mp3 fallback)",
+	request: { params: ParamsSchema, headers: HeadersSchema },
+	responses: {
+		200: {
+			description: "Full audio stream",
+			headers: {
+				"Content-Length": { schema: { type: "string" } },
+				"Accept-Ranges": { schema: { type: "string" } },
+			},
+			content: BinaryAudioContent,
+		},
+		206: {
+			description: "Partial content (Range request)",
+			headers: {
+				"Content-Range": { schema: { type: "string" } },
+				"Content-Length": { schema: { type: "string" } },
+			},
+			content: BinaryAudioContent,
+		},
+		400: {
+			description: "Invalid params",
+			content: { "application/json": { schema: ErrorSchema } },
+		},
+		404: {
+			description: "Audio not found",
+			content: { "application/json": { schema: ErrorSchema } },
+		},
+		416: {
+			description: "Invalid Range header",
+			content: { "application/json": { schema: ErrorSchema } },
+		},
+	},
+});
+
+const app = createOpenAPIApp<{ Bindings: Env }>();
+
+app.openapi(route, async (c) => {
+	const { author, title, chapter } = c.req.valid("param");
 	const paddedChapter = chapter.padStart(2, "0");
 	const rangeHeader = c.req.header("Range");
 
@@ -26,7 +76,10 @@ app.get("/", async (c) => {
 	if (rangeHeader) {
 		const match = rangeHeader.match(/^bytes=(\d+)-(\d*)$/);
 		if (!match) {
-			return errorResponse("RANGE_NOT_SATISFIABLE", "Invalid Range header", 416);
+			return c.json(
+				{ error: { code: "RANGE_NOT_SATISFIABLE", message: "Invalid Range header" } },
+				416,
+			);
 		}
 		const offset = Number(match[1]);
 		const end = match[2] ? Number(match[2]) : undefined;
@@ -45,7 +98,15 @@ app.get("/", async (c) => {
 	}
 
 	if (!obj) {
-		return notFound(`Audio not found: ${author}/${title} chapter ${chapter}`);
+		return c.json(
+			{
+				error: {
+					code: "NOT_FOUND",
+					message: `Audio not found: ${author}/${title} chapter ${chapter}`,
+				},
+			},
+			404,
+		);
 	}
 
 	const headers: Record<string, string> = {

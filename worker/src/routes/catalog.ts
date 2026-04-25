@@ -1,23 +1,45 @@
-import { Hono } from "hono";
+import { createRoute, z } from "@hono/zod-openapi";
 import {
 	CACHE_SHORT,
 	CATALOG_PAGE_SIZE_DEFAULT,
 	CATALOG_PAGE_SIZE_MAX,
 	R2_PREFIX_BOOKS,
 } from "../constants";
+import { ErrorSchema } from "../schemas/error";
 import type { Env } from "../types";
+import { createOpenAPIApp } from "../utils/openapi-app";
 
-interface CatalogBook {
-	author: string;
-	author_slug: string;
-	title: string;
-	title_slug: string;
-	source: string;
-	rendition: string;
-	total_duration_seconds: number;
-	chapter_count: number;
-	has_cover: boolean;
-}
+const CatalogBookSchema = z
+	.object({
+		author: z.string(),
+		author_slug: z.string(),
+		title: z.string(),
+		title_slug: z.string(),
+		source: z.string(),
+		rendition: z.string(),
+		total_duration_seconds: z.number(),
+		chapter_count: z.number().int(),
+		has_cover: z.boolean(),
+	})
+	.openapi("CatalogBook");
+
+const CatalogResponseSchema = z
+	.object({
+		books: z.array(CatalogBookSchema),
+		total: z.number().int().nonnegative(),
+		page: z.number().int().positive(),
+		limit: z.number().int().positive(),
+	})
+	.openapi("Catalog");
+
+const QuerySchema = z.object({
+	q: z.string().optional().openapi({ description: "Case-insensitive substring filter on title + author" }),
+	author: z.string().optional().openapi({ description: "Case-insensitive substring filter on author" }),
+	page: z.string().optional().openapi({ example: "1" }),
+	limit: z.string().optional().openapi({ example: "20" }),
+});
+
+interface CatalogBook extends z.infer<typeof CatalogBookSchema> {}
 
 interface Manifest {
 	title: string;
@@ -36,17 +58,14 @@ async function buildCatalog(bucket: R2Bucket): Promise<CatalogBook[]> {
 	const books: CatalogBook[] = [];
 	let cursor: string | undefined;
 
-	// List all objects under books/ and filter for manifest.json
 	do {
 		const listed = await bucket.list({ prefix: `${R2_PREFIX_BOOKS}/`, cursor });
 
 		const manifestObjects = listed.objects.filter((obj) => obj.key.endsWith("/manifest.json"));
 
-		// Fetch all manifests in parallel
 		const results = await Promise.all(
 			manifestObjects.map(async (obj) => {
 				const parts = obj.key.split("/");
-				// books/<author>/<title>/audio/<rendition>/manifest.json
 				if (parts.length !== 6) return null;
 
 				const [r2Obj, coverJpg, coverPng] = await Promise.all([
@@ -81,30 +100,46 @@ async function buildCatalog(bucket: R2Bucket): Promise<CatalogBook[]> {
 	return books;
 }
 
-const app = new Hono<{ Bindings: Env }>();
+const route = createRoute({
+	method: "get",
+	path: "/",
+	tags: ["catalog"],
+	summary: "List all available books",
+	request: { query: QuerySchema },
+	responses: {
+		200: {
+			description: "Filtered + paginated catalog",
+			content: { "application/json": { schema: CatalogResponseSchema } },
+		},
+		400: {
+			description: "Invalid query params",
+			content: { "application/json": { schema: ErrorSchema } },
+		},
+	},
+});
 
-app.get("/", async (c) => {
+const app = createOpenAPIApp<{ Bindings: Env }>();
+
+app.openapi(route, async (c) => {
+	const { q, author: authorFilter, page: pageStr, limit: limitStr } = c.req.valid("query");
 	let books = await buildCatalog(c.env.R2_BUCKET);
 
-	// Filter by query (case-insensitive substring on title + author)
-	const q = c.req.query("q")?.toLowerCase();
 	if (q) {
+		const ql = q.toLowerCase();
 		books = books.filter(
-			(b) => b.title.toLowerCase().includes(q) || b.author.toLowerCase().includes(q),
+			(b) => b.title.toLowerCase().includes(ql) || b.author.toLowerCase().includes(ql),
 		);
 	}
 
-	// Filter by author
-	const authorFilter = c.req.query("author")?.toLowerCase();
 	if (authorFilter) {
-		books = books.filter((b) => b.author.toLowerCase().includes(authorFilter));
+		const al = authorFilter.toLowerCase();
+		books = books.filter((b) => b.author.toLowerCase().includes(al));
 	}
 
-	// Paginate
-	const page = Math.max(1, Number(c.req.query("page")) || 1);
+	const page = Math.max(1, Number(pageStr) || 1);
 	const limit = Math.min(
 		CATALOG_PAGE_SIZE_MAX,
-		Math.max(1, Number(c.req.query("limit")) || CATALOG_PAGE_SIZE_DEFAULT),
+		Math.max(1, Number(limitStr) || CATALOG_PAGE_SIZE_DEFAULT),
 	);
 	const start = (page - 1) * limit;
 	const paged = books.slice(start, start + limit);
