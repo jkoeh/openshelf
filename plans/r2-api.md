@@ -22,10 +22,12 @@ Cloudflare Worker (JS/TS, Hono framework)
 
 ## Cloudflare Services
 
-| Service | Purpose | Binding |
-|---------|---------|---------|
-| Workers | API compute | -- |
-| R2 | Audio, EPUB, catalog, alignment storage | `R2_BUCKET` |
+
+| Service | Purpose                                 | Binding     |
+| ------- | --------------------------------------- | ----------- |
+| Workers | API compute                             | --          |
+| R2      | Audio, EPUB, catalog, alignment storage | `R2_BUCKET` |
+
 
 Auth (D1, JWT) is deferred to v2 — all content is public domain, no legal reason to gate it. This eliminates D1, migrations, JWT secret management, and auth middleware from v1.
 
@@ -71,15 +73,17 @@ worker/
 
 ## API Endpoints (all public in v1)
 
-| Method | Path | Description | Response |
-|--------|------|-------------|----------|
-| GET | `/api/v1/health` | Health check | `{ status, version }` |
-| GET | `/api/v1/catalog?q=&author=&page=&limit=&sort=` | Browse/search books | Paginated book list |
-| GET | `/api/v1/books/:author/:title` | Book metadata | manifest.json content |
-| GET | `/api/v1/books/:author/:title/chapters/:number` | Chapter text for reading | `{number, title, chunks[], word_count}` |
-| GET | `/api/v1/books/:author/:title/audio/:chapter` | Stream audio (Range support) | 200/206 audio/mp4 |
-| GET | `/api/v1/books/:author/:title/epub` | Download annotated EPUB | application/epub+zip |
-| GET | `/api/v1/books/:author/:title/alignment` | Word-level alignment data | word_alignment.json content |
+
+| Method | Path                                            | Description                  | Response                                |
+| ------ | ----------------------------------------------- | ---------------------------- | --------------------------------------- |
+| GET    | `/api/v1/health`                                | Health check                 | `{ status, version }`                   |
+| GET    | `/api/v1/catalog?q=&author=&page=&limit=&sort=` | Browse/search books          | Paginated book list                     |
+| GET    | `/api/v1/books/:author/:title`                  | Book metadata                | manifest.json content                   |
+| GET    | `/api/v1/books/:author/:title/chapters/:number` | Chapter text for reading     | `{number, title, chunks[], word_count}` |
+| GET    | `/api/v1/books/:author/:title/audio/:chapter`   | Stream audio (Range support) | 200/206 audio/mp4                       |
+| GET    | `/api/v1/books/:author/:title/epub`             | Download annotated EPUB      | application/epub+zip                    |
+| GET    | `/api/v1/books/:author/:title/alignment`        | Word-level alignment data    | word_alignment.json content             |
+
 
 ## Key Design Details
 
@@ -177,20 +181,22 @@ Preflight cache: 24h
 
 ### 8. Caching Strategy
 
-| Resource | Cache-Control | Rationale |
-|----------|--------------|-----------|
-| Audio Opus | `public, max-age=31536000, immutable` | Never changes |
-| EPUB | `public, max-age=31536000, immutable` | Never changes |
-| chunks.json | `public, max-age=31536000, immutable` | Versioned internally |
-| word_alignment.json | `public, max-age=31536000, immutable` | Never changes |
-| manifest.json | `public, max-age=60` | May update on reprocess |
-| catalog.json | `public, max-age=60` | Updates when books added |
+
+| Resource            | Cache-Control                         | Rationale                |
+| ------------------- | ------------------------------------- | ------------------------ |
+| Audio Opus          | `public, max-age=31536000, immutable` | Never changes            |
+| EPUB                | `public, max-age=31536000, immutable` | Never changes            |
+| chunks.json         | `public, max-age=31536000, immutable` | Versioned internally     |
+| word_alignment.json | `public, max-age=31536000, immutable` | Never changes            |
+| manifest.json       | `public, max-age=60`                  | May update on reprocess  |
+| catalog.json        | `public, max-age=60`                  | Updates when books added |
+
 
 ### 9. Shared Utilities
 
-- **`utils/r2-keys.ts`** — Centralized R2 key construction (`r2Key.audio(author, title, rendition, chapter)`, `r2Key.alignment(author, title, rendition)`, etc.). Prevents typos, single place to update.
-- **`utils/validation.ts`** — Slug validation (alphanumeric + hyphens). Rejects requests early with 400.
-- **`utils/response.ts`** — Response helpers (JSON with cache headers, Range streaming).
+- `**utils/r2-keys.ts**` — Centralized R2 key construction (`r2Key.audio(author, title, rendition, chapter)`, `r2Key.alignment(author, title, rendition)`, etc.). Prevents typos, single place to update.
+- `**utils/validation.ts**` — Slug validation (alphanumeric + hyphens). Rejects requests early with 400.
+- `**utils/response.ts**` — Response helpers (JSON with cache headers, Range streaming).
 
 ## R2 Key Mapping (must match Python pipeline)
 
@@ -211,6 +217,7 @@ Source of truth for slugs: `src/openshelf/scrapers/http.py` → `sanitize()`
 ### Fixtures
 
 `worker/fixtures/` contains minimal test data so new contributors can run the Worker without the full Python TTS pipeline:
+
 - `catalog.json` — single-book catalog
 - `manifest.json` — matching manifest
 - `chunks.json` — one chapter with a few chunks
@@ -295,3 +302,4 @@ No additional npm deps for auth in v1. Linting/formatting via `biome` (single to
 
 - **Auth**: D1 + JWT + PBKDF2 if needed for bookmarks, reading progress, or abuse prevention
 - **Catalog migration**: D1 + FTS5 when book count exceeds ~1,000
+

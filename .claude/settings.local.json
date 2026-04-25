@@ -114,7 +114,11 @@
       "mcp__plugin_chrome-devtools-mcp_chrome-devtools__wait_for",
       "Bash(wc -l /c/Users/johnk/Documents/Projects/openshelf/worker/src/**/*.ts /c/Users/johnk/Documents/Projects/openshelf/worker/tests/routes/**/*.test.ts)",
       "Bash(wc:*)",
-      "Bash(npx --prefix worker wrangler whoami)"
+      "Bash(npx --prefix worker wrangler whoami)",
+      "Bash(pip3 install:*)",
+      "Bash(pip3 show:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(grep -E \"\\\\.\\(ts|json\\)$\")"
     ]
   }
 }
