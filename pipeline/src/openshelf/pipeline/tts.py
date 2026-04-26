@@ -45,7 +45,6 @@ def _import_kpipeline() -> Any:
 class ChunkInfo:
     text: str
     ends_paragraph: bool = True
-    context_prefix: str = ""
 
 
 @dataclass
@@ -116,111 +115,10 @@ def _apply_boundary_fades(
     return audio
 
 
-def _split_segments_at_prefix(
-    results: list, context_prefix: str, sample_rate: int,
-    fade_ms: int = CROSSFADE_MS,
-) -> tuple[np.ndarray, int]:
-    """Trim prefix audio from Kokoro results. Returns (audio, trim_samples).
+def _extract_words(results: list) -> list[WordTimestamp]:
+    """Extract word timestamps from Kokoro Result objects (chunk-relative).
 
-    Each result has .graphemes and audio (index 2 or .audio).
-    trim_samples = total samples removed from the front (for timestamp adjustment).
-    """
-    def _get_graphemes(r: Any) -> str:
-        return r.graphemes if hasattr(r, "graphemes") else r[0]
-
-    def _get_audio(r: Any) -> np.ndarray:
-        raw = r.audio if hasattr(r, "audio") else r[2]
-        return np.asarray(raw, dtype=np.float32)
-
-    prefix_clean = _text_for_matching(context_prefix)
-    prefix_len = len(prefix_clean)
-
-    if prefix_len == 0:
-        return np.concatenate([_get_audio(r) for r in results]), 0
-
-    # Count samples in segments before the straddle point
-    accumulated = 0
-    straddle_idx = -1
-    samples_before_straddle = 0
-
-    for idx, r in enumerate(results):
-        seg_text = _text_for_matching(_get_graphemes(r))
-        prev_accumulated = accumulated
-        accumulated += len(seg_text)
-        if accumulated >= prefix_len:
-            straddle_idx = idx
-            prefix_chars_in_seg = prefix_len - prev_accumulated
-            seg_chars = len(seg_text)
-            break
-        samples_before_straddle += len(_get_audio(r))
-
-    # All segments were prefix — fall back to proportional
-    if straddle_idx == -1 or (straddle_idx == len(results) - 1 and prefix_chars_in_seg >= len(_text_for_matching(_get_graphemes(results[straddle_idx])))):
-        prefix_words = len(context_prefix.split())
-        total_words = sum(len(_get_graphemes(r).split()) for r in results)
-        full_audio = np.concatenate([_get_audio(r) for r in results])
-        if total_words > 0 and prefix_words < total_words:
-            trim_samples = int(len(full_audio) * prefix_words / total_words)
-            trimmed = full_audio[trim_samples:]
-        else:
-            trim_samples = 0
-            trimmed = full_audio
-        fade_samples = min(int(sample_rate * fade_ms / 1000), len(trimmed))
-        if fade_samples > 0:
-            trimmed = trimmed.copy()
-            trimmed[:fade_samples] *= np.linspace(0, 1, fade_samples, dtype=np.float32)
-        return trimmed, trim_samples
-
-    # Split the straddling segment proportionally
-    parts: list[np.ndarray] = []
-    straddle_trim = 0
-
-    if seg_chars > 0 and prefix_chars_in_seg < seg_chars:
-        straddle_audio = _get_audio(results[straddle_idx])
-        content_fraction = 1.0 - (prefix_chars_in_seg / seg_chars)
-        straddle_trim = int(len(straddle_audio) * (1.0 - content_fraction))
-        content_audio = straddle_audio[straddle_trim:].copy()
-        if len(content_audio) > 0:
-            fade_samples = min(int(sample_rate * fade_ms / 1000), len(content_audio))
-            if fade_samples > 0:
-                content_audio[:fade_samples] *= np.linspace(0, 1, fade_samples, dtype=np.float32)
-            parts.append(content_audio)
-    else:
-        straddle_trim = len(_get_audio(results[straddle_idx]))
-
-    for r in results[straddle_idx + 1:]:
-        parts.append(_get_audio(r))
-
-    total_trim = samples_before_straddle + straddle_trim
-
-    if not parts:
-        return np.zeros(0, dtype=np.float32), total_trim
-
-    real_audio = np.concatenate(parts)
-
-    if prefix_chars_in_seg >= seg_chars:
-        fade_samples = min(int(sample_rate * fade_ms / 1000), len(real_audio))
-        if fade_samples > 0:
-            real_audio = real_audio.copy()
-            real_audio[:fade_samples] *= np.linspace(0, 1, fade_samples, dtype=np.float32)
-
-    return real_audio, total_trim
-
-
-def _text_for_matching(text: str) -> str:
-    """Normalize text for prefix matching — lowercase, collapse whitespace, strip punctuation."""
-    import re
-    return re.sub(r"[^a-z0-9]", "", text.lower())
-
-
-def _extract_words(
-    results: list,
-    trim_offset: float,
-) -> list[WordTimestamp]:
-    """Extract word timestamps from Kokoro Result objects, adjusting for prefix trim.
-
-    Filters out tokens with no timestamps (punctuation, whitespace) and tokens
-    that fall within the trimmed prefix region.
+    Filters out tokens with no timestamps (punctuation, whitespace).
     """
     words: list[WordTimestamp] = []
     for r in results:
@@ -233,13 +131,10 @@ def _extract_words(
             text = getattr(tok, "text", "")
             if start_ts is None or end_ts is None or not text.strip():
                 continue
-            # Skip tokens that fall within the trimmed prefix
-            if start_ts < trim_offset - 0.01:
-                continue
             words.append(WordTimestamp(
                 word=text.strip(),
-                start=round(start_ts - trim_offset, 4),
-                end=round(end_ts - trim_offset, 4),
+                start=round(start_ts, 4),
+                end=round(end_ts, 4),
             ))
     return words
 
@@ -250,34 +145,14 @@ def _synthesize_single_chunk(
     voice: str,
     sample_rate: int,
 ) -> tuple[np.ndarray, list[WordTimestamp]]:
-    """Synthesize a single chunk. Returns (audio, word_timestamps).
-
-    Retries without context prefix on failure.
-    """
-    if chunk_info.context_prefix:
-        synth_text = chunk_info.context_prefix + " " + chunk_info.text
-        try:
-            results = list(pipeline(synth_text, voice=voice))
-            if not results:
-                raise RuntimeError("No audio returned")
-            chunk_audio, trim_samples = _split_segments_at_prefix(
-                results, chunk_info.context_prefix, sample_rate
-            )
-            trim_offset = trim_samples / sample_rate
-            words = _extract_words(results, trim_offset)
-            chunk_audio = _normalize(chunk_audio)
-            return _apply_boundary_fades(chunk_audio, sample_rate), words
-        except Exception:
-            logger.info("Retrying chunk without context prefix: %.40s...", chunk_info.text)
-
-    # No prefix, or prefix attempt failed — synthesize plain text
+    """Synthesize a single chunk. Returns (audio, word_timestamps)."""
     results = list(pipeline(chunk_info.text, voice=voice))
     if not results:
         raise RuntimeError("No audio returned")
     chunk_audio = np.concatenate([np.asarray(
         r.audio if hasattr(r, "audio") else r[2], dtype=np.float32
     ) for r in results])
-    words = _extract_words(results, 0.0)
+    words = _extract_words(results)
     chunk_audio = _normalize(chunk_audio)
     return _apply_boundary_fades(chunk_audio, sample_rate), words
 

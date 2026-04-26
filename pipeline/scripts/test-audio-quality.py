@@ -26,14 +26,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from openshelf.config import (
     CHUNK_MAX_WORDS,
-    CONTEXT_OVERLAP_SENTENCES,
     SILENCE_MID_PARAGRAPH_MS,
     SILENCE_PARAGRAPH_BREAK_MS,
     TTS_SAMPLE_RATE,
     WER_THRESHOLD,
     WER_AVG_THRESHOLD,
 )
-from openshelf.pipeline.text_chunker import chunk_text, extract_trailing_sentences
+from openshelf.pipeline.text_chunker import chunk_text
 from openshelf.pipeline.transcriber import compute_wer, transcribe_audio
 from openshelf.pipeline.tts import ChunkInfo, load_pipeline, synthesize_chapter
 from openshelf.pipeline.word_aligner import align_chapter, validate_alignment
@@ -76,13 +75,12 @@ TEST_CHAPTERS = [
 
 
 def build_chunk_infos(paragraphs):
-    """Chunk paragraphs and wrap into ChunkInfo with context overlap."""
+    """Chunk paragraphs and wrap into ChunkInfo."""
     chunks = chunk_text(paragraphs)
     infos = []
     for i, c in enumerate(chunks):
         ends_para = (i == len(chunks) - 1) or (c.para_end != chunks[i + 1].para_start)
-        prefix = extract_trailing_sentences(chunks[i - 1].text, CONTEXT_OVERLAP_SENTENCES) if i > 0 else ""
-        infos.append(ChunkInfo(text=c.text, ends_paragraph=ends_para, context_prefix=prefix))
+        infos.append(ChunkInfo(text=c.text, ends_paragraph=ends_para))
     return chunks, infos
 
 
@@ -200,21 +198,7 @@ def run_validation(pipeline, chapters, device, output_dir):
             else:
                 print("  [INFO] Only mid-paragraph gaps found")
 
-        # --- Validation 5: No context overlap leakage ---
-        # The total audio should not be significantly longer than expected
-        # (if context audio leaked in, duration would be inflated)
-        if any(ci.context_prefix for ci in chunk_infos):
-            prefix_word_count = sum(len(ci.context_prefix.split()) for ci in chunk_infos if ci.context_prefix)
-            # If overlap leaked, duration would be inflated by ~prefix_word_count/2.5 seconds
-            leak_threshold = prefix_word_count / 2.5 * 0.5  # allow 50% tolerance
-            actual_excess = result.duration_seconds - expected_duration
-            leak_ok = actual_excess < leak_threshold + expected_duration * 0.5
-            status = "PASS" if leak_ok else "FAIL"
-            print(f"  [{status}] Context overlap leakage check (excess: {actual_excess:.1f}s, threshold: {leak_threshold:.1f}s)")
-            if not leak_ok:
-                all_passed = False
-
-        # --- Validation 6: Roundtrip WER (transcription fidelity) ---
+        # --- Validation 5: Roundtrip WER (transcription fidelity) ---
         try:
             chunk_wers = []
             for i, (text, start_s) in enumerate(zip(chunk_texts, starts)):

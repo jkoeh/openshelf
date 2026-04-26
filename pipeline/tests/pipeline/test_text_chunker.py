@@ -7,7 +7,7 @@ import unittest
 # Allow running without pip install
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from openshelf.pipeline.text_chunker import Chunk, chunk_text, extract_trailing_sentences
+from openshelf.pipeline.text_chunker import Chunk, chunk_text
 from openshelf.config import CHUNK_MAX_WORDS
 
 
@@ -323,38 +323,6 @@ class TestChunkTextElementIds(unittest.TestCase):
     def test_element_ids_length_mismatch_raises(self):
         with self.assertRaises(ValueError):
             chunk_text([_words(50), _words(50)], element_ids=["ch1-el0000"])
-
-
-class TestExtractTrailingSentences(unittest.TestCase):
-
-    def test_extracts_last_two(self):
-        text = "First sentence. Second sentence. Third sentence."
-        result = extract_trailing_sentences(text, n=2)
-        self.assertEqual(result, "Second sentence. Third sentence.")
-
-    def test_single_sentence_returns_full_text(self):
-        text = "Only one sentence."
-        result = extract_trailing_sentences(text, n=2)
-        self.assertEqual(result, text)
-
-    def test_two_sentences_returns_full_text(self):
-        text = "First sentence. Second sentence."
-        result = extract_trailing_sentences(text, n=2)
-        self.assertEqual(result, text)
-
-    def test_handles_abbreviations(self):
-        text = "Dr. Smith went home. He rested. She left."
-        result = extract_trailing_sentences(text, n=2)
-        self.assertEqual(result, "He rested. She left.")
-
-    def test_n_equals_one(self):
-        text = "First. Second. Third."
-        result = extract_trailing_sentences(text, n=1)
-        self.assertEqual(result, "Third.")
-
-    def test_empty_text(self):
-        result = extract_trailing_sentences("", n=2)
-        self.assertEqual(result, "")
 
 
 if __name__ == "__main__":

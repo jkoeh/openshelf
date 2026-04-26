@@ -21,11 +21,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from ebooklib import epub as _epub_lib
 
-from openshelf.config import R2_BUCKET, R2_DEFAULT_RENDITION, CONTEXT_OVERLAP_SENTENCES
+from openshelf.config import R2_BUCKET, R2_DEFAULT_RENDITION
 from openshelf.pipeline.epub_annotator import annotate_epub
 from openshelf.pipeline.epub_parser import extract_cover_image, parse_epub
 from openshelf.pipeline.manifest import ChapterMeta, generate_manifest
-from openshelf.pipeline.text_chunker import chunk_text, extract_trailing_sentences
+from openshelf.pipeline.text_chunker import chunk_text
 from openshelf.pipeline.tts import ChunkInfo, WordTimestamp, load_pipeline, synthesize_chapter
 from openshelf.pipeline.encoder import audio_duration, encode_to_aac
 from openshelf.scrapers.http import sanitize
@@ -149,15 +149,11 @@ def main():
         ch_title = ch_data["title"]
         chunks = ch_data["chunks"]
 
-        # Build ChunkInfo list with paragraph boundary info and context prefixes
+        # Build ChunkInfo list with paragraph boundary info
         chunk_infos = []
         for ci, c in enumerate(chunks):
             ends_para = (ci == len(chunks) - 1) or (c.para_end != chunks[ci + 1].para_start)
-            if ci > 0:
-                prefix = extract_trailing_sentences(chunks[ci - 1].text, CONTEXT_OVERLAP_SENTENCES)
-            else:
-                prefix = ""
-            chunk_infos.append(ChunkInfo(text=c.text, ends_paragraph=ends_para, context_prefix=prefix))
+            chunk_infos.append(ChunkInfo(text=c.text, ends_paragraph=ends_para))
 
         opus_path = os.path.join(output_dir, f"chapter-{ch_num:02d}.m4a")
 

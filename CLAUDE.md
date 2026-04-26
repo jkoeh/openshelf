@@ -13,7 +13,7 @@ flowchart LR
     subgraph Pipeline[Pipeline — Python]
         direction TB
         P1[EPUB] --> P2[parse_epub<br/>chapters + ContentElements]
-        P2 --> P3[text_chunker<br/>ChunkInfo with context_prefix]
+        P2 --> P3[text_chunker<br/>ChunkInfo per chunk]
         P3 --> P4[tts.synthesize_chapter<br/>Kokoro KPipeline]
         P4 -->|WAV + chunk_words<br/>+ chunk_audio_starts| P5[encode_to_aac<br/>m4a]
         P4 --> P6[chapter_data.json<br/>chunks + words]

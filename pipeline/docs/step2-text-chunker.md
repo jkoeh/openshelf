@@ -47,9 +47,6 @@ def chunk_text(
     max_words: int = CHUNK_MAX_WORDS,       # 200
     element_ids: list[str] | None = None,   # parallel to paragraphs
 ) -> list[Chunk]
-
-def extract_trailing_sentences(text: str, n: int = 2) -> str
-    # Returns last n sentences of text (used for context overlap in TTS)
 ```
 
 ## Behavior
@@ -81,14 +78,7 @@ When `element_ids` is provided (parallel list to `paragraphs`), each chunk recor
 - Word order is preserved
 - No chunk internally contains text from non-adjacent paragraphs
 
-## Context Overlap Support
-
-`extract_trailing_sentences(text, n=2)` returns the last `n` sentences from a chunk's text. This is used by the TTS step to prepend context from the previous chunk, giving Kokoro prosodic continuity across chunk boundaries. If the text has `n` or fewer sentences, the full text is returned.
-
-Reuses the same abbreviation-aware `_split_sentences()` used by the chunking algorithm.
-
 ## Dependencies
 
 - `config.CHUNK_MAX_WORDS` (200)
-- `config.CONTEXT_OVERLAP_SENTENCES` (2) — used by callers, not directly by this module
 - Standard library only (re)

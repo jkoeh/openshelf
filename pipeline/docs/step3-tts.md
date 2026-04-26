@@ -5,18 +5,14 @@
 
 ## Purpose
 
-Generate audio for a chapter's text chunks using Kokoro TTS. Produces a WAV file with variable silence gaps between chunks, applies crossfading at chunk boundaries, and optionally uses context overlap from the previous chunk for prosodic continuity. Records the audio timestamp where each chunk begins **and** extracts per-word start/end timestamps directly from Kokoro's token output — no separate alignment pass is needed for sync.
+Generate audio for a chapter's text chunks using Kokoro TTS. Produces a WAV file with variable silence gaps between chunks and applies crossfading at chunk boundaries. Records the audio timestamp where each chunk begins **and** extracts per-word start/end timestamps directly from Kokoro's token output — no separate alignment pass is needed for sync.
 
 ```mermaid
 graph TD
     A[chunks: list of ChunkInfo] --> B[Load Kokoro Pipeline]
     B --> C{For each chunk}
-    C --> D{Has context_prefix?}
-    D -->|Yes| E[Synthesize prefix + text]
-    E --> F[Trim prefix audio via segment graphemes]
-    D -->|No| G[Synthesize text only]
-    F --> H[Normalize + boundary fades]
-    G --> H
+    C --> G[Synthesize chunk text]
+    G --> H[Normalize + boundary fades]
     H --> I{Success?}
     I -->|Yes| J[Insert variable silence gap]
     J --> K[Record chunk_audio_start]
@@ -37,7 +33,6 @@ graph TD
 class ChunkInfo:
     text: str
     ends_paragraph: bool = True    # whether this chunk ends a paragraph
-    context_prefix: str = ""       # trailing sentences from previous chunk for prosody
 
 @dataclass
 class ChapterAudio:
@@ -98,25 +93,12 @@ Variable silence is inserted **between** chunks (not before the first). Gap dura
 
 Each chunk's audio gets a short fade-in at the start and fade-out at the end (`CROSSFADE_MS`, default 15ms / ~360 samples at 24kHz). This eliminates click artifacts at chunk boundaries. Audio length is unchanged — fades are applied in-place. Chunks shorter than `2 * fade_samples` are left untouched.
 
-### Context Overlap
-
-When `ChunkInfo.context_prefix` is set (typically the last 2 sentences of the previous chunk), the synthesis step:
-
-1. Synthesizes `context_prefix + " " + text` as a single string, giving Kokoro prosodic context for natural continuation
-2. Trims the prefix audio using Kokoro's segment grapheme boundaries — each `pipeline()` call yields a `Result` object with `.graphemes`, `.audio`, and `.tokens`, and we accumulate grapheme text until it covers the prefix, then keep only subsequent segments
-3. Falls back to proportional word-count trimming if all text lands in a single segment
-4. Applies a fade-in at the trim point to mask any splice artifact
-5. If a synthesis call fails or produces unusable output, the chunk is retried once **without** the prefix before being marked as failed
-
-This means `chunk_audio_starts` points to where the **real content** (post-trim) begins, not the prefix.
-
 ### Word Timestamps (`chunk_words`)
 
 Kokoro's `Result.tokens` is a list of `MToken` objects, each with `.text`, `.start_ts`, `.end_ts`. After synthesis, `_extract_words` walks the tokens for each chunk and:
 
 - Skips tokens with no timestamps (control / pause tokens)
-- Skips tokens whose `start_ts` falls inside the trimmed prefix (i.e. `start_ts < trim_offset - 0.01`)
-- Subtracts `trim_offset` so timestamps are relative to the start of the chunk's kept audio
+- Uses Kokoro's timestamps directly (chunk-relative)
 - Adds `chunk_audio_starts[i]` so timestamps are absolute within the chapter audio
 
 The result is a `list[list[WordTimestamp]]` aligned 1:1 with the input chunks. Failed chunks get an empty list. These get serialized into `chapter_data.json` (see Step 6 / convert-book.py).
@@ -148,10 +130,8 @@ Each chunk's audio is normalized to a peak amplitude of 0.89 (~-1dB) before conc
 - `_generate_silence(sample_rate, duration_ms)` — generates a zero-filled numpy array
 - `_normalize(audio, target_peak=0.89)` — peak normalization
 - `_apply_boundary_fades(audio, sample_rate, fade_ms)` — fade-in/fade-out at chunk edges
-- `_split_segments_at_prefix(results, context_prefix, sample_rate, fade_ms) -> (audio, trim_samples)` — trims prefix audio using segment graphemes; returns the kept audio and the number of samples that were dropped (used to derive `trim_offset` for word timestamps)
-- `_extract_words(results, trim_offset) -> list[WordTimestamp]` — walks Kokoro tokens, filters out prefix tokens and tokens without timestamps, returns chunk-relative timestamps
-- `_synthesize_single_chunk(pipeline, chunk_info, voice, sample_rate)` — runs a single chunk through TTS; on failure retries once without the context prefix
-- `_text_for_matching(text)` — normalizes text for prefix matching (lowercase, strip punctuation)
+- `_extract_words(results) -> list[WordTimestamp]` — walks Kokoro tokens, filters out tokens without timestamps, returns chunk-relative timestamps
+- `_synthesize_single_chunk(pipeline, chunk_info, voice, sample_rate)` — runs a single chunk through TTS
 
 ## Dependencies
 
