@@ -29,6 +29,8 @@ types.ts                    # Shared TypeScript types
 - expo-audio (audio playback)
 - NativeWind v4 (Tailwind for React Native)
 - react-native-mmkv (persistent storage)
+- react-native-nitro-modules (required by MMKV v4)
+- react-native-worklets (required by Reanimated v4)
 - Biome (linting/formatting)
 
 ## Commands
@@ -55,10 +57,11 @@ npm run check
 - Hooks in `hooks/` bridge lib logic to React components
 - API base URL via `EXPO_PUBLIC_API_BASE` env var (defaults to localhost:8787)
 - Styling via NativeWind `className` prop — no inline StyleSheet unless necessary
-- `useSyncEngine` reads `player.currentTime` directly inside a `requestAnimationFrame` loop and only setStates when the active word/chunk index changes — do **not** drive sync from `useAudioPlayerStatus` (which fires every ~50ms and triggers full re-renders). The hook accepts an optional `preloadedWords` arg; when the chapter response already carries inline words (the default since `chapter_data.json` was introduced), it skips the separate alignment fetch.
+- `useSyncEngine` computes active word/chunk inside a `requestAnimationFrame` loop and only setStates when the active word/chunk index changes. It should use status time as the primary playback clock (with `player.currentTime` fallback) for iOS reliability. The hook accepts an optional `preloadedWords` arg; when the chapter response already carries inline words (the default since `chapter_data.json` was introduced), it skips the separate alignment fetch.
 
 ## Do NOT
 
 - Import from `expo-av` — it is deprecated. Use `expo-audio` instead.
 - Use AsyncStorage — use `react-native-mmkv` instead.
+- Disable React Native New Architecture for this app (it must remain enabled for MMKV v4/Nitro + Reanimated v4).
 - Create webview wrappers — all UI must be native components.

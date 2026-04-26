@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import type { AudioPlayer } from "expo-audio";
-import { Platform } from "react-native";
 import { fetchChapterAlignment } from "../lib/api";
 import { findWordAtTime } from "../lib/sync-engine";
 import type { WordEntry } from "../types";
@@ -30,6 +29,7 @@ export function useSyncEngine(
   player: AudioPlayer | null,
   syncEnabled: boolean,
   preloadedWords?: WordEntry[],
+  playbackTime?: number,
 ): SyncState {
   const [words, setWords] = useState<WordEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -94,7 +94,7 @@ export function useSyncEngine(
 
     let raf: number;
     const tick = () => {
-      const t = player.currentTime;
+      const t = typeof playbackTime === "number" ? playbackTime : player.currentTime;
       const newWord = findWordAtTime(words, t);
       const newChunk = newWord >= 0 ? words[newWord].chunk_idx : -1;
       setActiveWordIndex((prev) => (prev === newWord ? prev : newWord));
@@ -103,7 +103,7 @@ export function useSyncEngine(
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [player, words, syncEnabled]);
+  }, [player, words, syncEnabled, playbackTime]);
 
   return { words, activeWordIndex, activeChunkIndex, loading };
 }

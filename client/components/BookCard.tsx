@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Link } from "expo-router";
-import { Image, Text, View } from "react-native";
+import { Image, Pressable, Text, View } from "react-native";
 import { useTheme } from "../hooks/useTheme";
 import { coverUrl } from "../lib/api";
 import { formatDuration, stringToHue } from "../lib/format";
@@ -51,7 +51,7 @@ export default function BookCard({ book }: { book: CatalogBook }) {
 
 	return (
 		<Link href={`/book/${book.author_slug}/${book.title_slug}`} asChild>
-			<View
+			<Pressable
 				style={{
 					flexDirection: "row",
 					alignItems: "center",
@@ -101,7 +101,7 @@ export default function BookCard({ book }: { book: CatalogBook }) {
 				</View>
 
 				<Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
-			</View>
+			</Pressable>
 		</Link>
 	);
 }

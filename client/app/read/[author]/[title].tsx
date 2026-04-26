@@ -67,6 +67,7 @@ export default function ReaderPage() {
     player,
     syncEnabled,
     chapterData?.words,
+    status.currentTime,
   );
 
   // Enable background audio and lock screen controls
@@ -88,7 +89,11 @@ export default function ReaderPage() {
       albumTitle: manifest.title,
     });
     return () => {
-      player.clearLockScreenControls();
+      try {
+        player.clearLockScreenControls();
+      } catch {
+        // Player may already be released by expo-audio during source switches/unmount.
+      }
     };
   }, [manifest, currentChapter, status.isLoaded, player]);
 
@@ -116,7 +121,7 @@ export default function ReaderPage() {
   // Set playback rate when player loads or rate changes
   useEffect(() => {
     if (player && status.isLoaded) {
-      player.playbackRate = rate;
+      player.setPlaybackRate(rate);
     }
   }, [player, status.isLoaded, rate]);
 
@@ -273,7 +278,7 @@ export default function ReaderPage() {
     setRate(newRate);
     savePlaybackRate(newRate);
     if (status.isLoaded) {
-      player.playbackRate = newRate;
+      player.setPlaybackRate(newRate);
     }
   }, [rate, player, status.isLoaded]);
 
