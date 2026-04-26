@@ -50,15 +50,6 @@ def chunk_text(
 
 def extract_trailing_sentences(text: str, n: int = 2) -> str
     # Returns last n sentences of text (used for context overlap in TTS)
-
-def serialize_chunks(
-    chapters: list[dict[str, Any]],  # [{"number", "title", "chunks": list[Chunk]}]
-    epub_sha256: str,
-) -> str  # JSON string
-
-def deserialize_chunks(json_str: str) -> dict[str, Any]
-
-def sha256_file(path: str) -> str
 ```
 
 ## Behavior
@@ -81,31 +72,7 @@ If a sentence exceeds `max_words`:
 
 ### Element ID Tracking
 
-When `element_ids` is provided (parallel list to `paragraphs`), each chunk records `el_start` and `el_end` — the element IDs of its first and last source paragraph. This enables the client to map `chunk_idx -> DOM element range`.
-
-### chunks.json Format (v3)
-
-```json
-{
-  "version": 3,
-  "source_epub_sha256": "abc123...",
-  "chapters": [
-    {
-      "number": 1,
-      "title": "Chapter Title",
-      "chunks": [
-        {
-          "text": "paragraph text...",
-          "para_start": 0,
-          "para_end": 2,
-          "el_start": "ch1-el0000",
-          "el_end": "ch1-el0002"
-        }
-      ]
-    }
-  ]
-}
-```
+When `element_ids` is provided (parallel list to `paragraphs`), each chunk records `el_start` and `el_end` — the element IDs of its first and last source paragraph. This is what lets the client map `chunk_idx → DOM element range` in the annotated EPUB. The chunk's `text` is the actual TTS payload; both are persisted into `chapter_data.json` per chapter (see step 6 / `convert-book.py`).
 
 ### Invariants
 
@@ -124,4 +91,4 @@ Reuses the same abbreviation-aware `_split_sentences()` used by the chunking alg
 
 - `config.CHUNK_MAX_WORDS` (200)
 - `config.CONTEXT_OVERLAP_SENTENCES` (2) — used by callers, not directly by this module
-- Standard library only (re, hashlib, json)
+- Standard library only (re)

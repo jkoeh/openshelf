@@ -29,7 +29,6 @@ export interface Manifest {
   author: string;
   source: string;
   rendition: string;
-  chunks_version: number;
   generated_at: string;
   total_duration_seconds: number;
   chapters: ManifestChapter[];

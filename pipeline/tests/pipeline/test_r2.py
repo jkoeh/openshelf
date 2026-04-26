@@ -9,7 +9,7 @@ from unittest.mock import patch, MagicMock, call
 # Allow running without pip install
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from openshelf.pipeline.r2 import make_client, key_exists, upload_rendition, upload_epub, upload_chunks, upload_word_alignment
+from openshelf.pipeline.r2 import make_client, key_exists, upload_rendition, upload_epub, upload_word_alignment
 from openshelf.config import R2_CACHE_CONTROL_IMMUTABLE, R2_CACHE_CONTROL_MANIFEST
 
 
@@ -293,50 +293,6 @@ class TestUploadEpub(unittest.TestCase):
         with tempfile.NamedTemporaryFile(suffix=".epub") as tmp:
             upload_epub(client, "openshelf", "kafka", "the-trial", tmp.name)
         mock_exists.assert_called_once_with(client, "openshelf", "books/kafka/the-trial/book.epub")
-
-
-class TestUploadChunks(unittest.TestCase):
-
-    @patch("openshelf.pipeline.r2.key_exists", return_value=False)
-    def test_uploads_chunks(self, mock_exists):
-        client = MagicMock()
-        with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
-            key = upload_chunks(client, "openshelf", "kafka", "the-trial", tmp.name)
-        self.assertEqual(key, "books/kafka/the-trial/chunks.json")
-        client.upload_file.assert_called_once()
-
-    @patch("openshelf.pipeline.r2.key_exists", return_value=True)
-    def test_skips_if_already_exists(self, mock_exists):
-        client = MagicMock()
-        with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
-            key = upload_chunks(client, "openshelf", "kafka", "the-trial", tmp.name)
-        self.assertIsNone(key)
-        client.upload_file.assert_not_called()
-
-    @patch("openshelf.pipeline.r2.key_exists", return_value=False)
-    def test_content_type(self, mock_exists):
-        client = MagicMock()
-        with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
-            upload_chunks(client, "openshelf", "kafka", "the-trial", tmp.name)
-        extra = client.upload_file.call_args[1]["ExtraArgs"]
-        self.assertEqual(extra["ContentType"], "application/json")
-
-    @patch("openshelf.pipeline.r2.key_exists", return_value=False)
-    def test_cache_control_immutable(self, mock_exists):
-        """Chunks are versioned internally, so the file itself is immutable."""
-        client = MagicMock()
-        with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
-            upload_chunks(client, "openshelf", "kafka", "the-trial", tmp.name)
-        extra = client.upload_file.call_args[1]["ExtraArgs"]
-        self.assertEqual(extra["CacheControl"], R2_CACHE_CONTROL_IMMUTABLE)
-
-    @patch("openshelf.pipeline.r2.key_exists", return_value=False)
-    def test_r2_key_format(self, mock_exists):
-        client = MagicMock()
-        with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
-            upload_chunks(client, "openshelf", "kafka", "the-trial", tmp.name)
-        uploaded_key = client.upload_file.call_args[0][2]
-        self.assertEqual(uploaded_key, "books/kafka/the-trial/chunks.json")
 
 
 class TestUploadWordAlignment(unittest.TestCase):

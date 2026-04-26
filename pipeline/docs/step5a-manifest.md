@@ -43,7 +43,6 @@ def generate_manifest(
     chapters: list[ChapterMeta],
     output_dir: str,
     rendition: str = "",            # "kokoro-af-heart"
-    chunks_version: int = 0,        # chunks.json version (currently 3)
 ) -> str  # returns path to manifest.json
 ```
 
@@ -65,7 +64,6 @@ Created with `os.makedirs(exist_ok=True)` if it doesn't exist.
   "author": "Fyodor Dostoevsky",
   "source": "gutenberg",
   "rendition": "kokoro-af-heart",
-  "chunks_version": 3,
   "generated_at": "2026-03-15T10:30:00+00:00",
   "total_duration_seconds": 77400.5,
   "chapters": [
@@ -87,7 +85,6 @@ Created with `os.makedirs(exist_ok=True)` if it doesn't exist.
 | `title`, `author` | EPUB DC metadata |
 | `source` | CLI `--source` flag |
 | `rendition` | CLI `--rendition` flag |
-| `chunks_version` | Read from `chunks.json` at generation time |
 | `generated_at` | UTC ISO-8601 timestamp |
 | `total_duration_seconds` | Sum of all chapter durations |
 | `chapters[].filename` | Constructed by caller (e.g. `chapter-01.m4a`) |

@@ -25,7 +25,6 @@ const ManifestSchema = z
 		author: z.string(),
 		source: z.string(),
 		rendition: z.string(),
-		chunks_version: z.number().int().optional(),
 		generated_at: z.string().optional(),
 		total_duration_seconds: z.number(),
 		chapters: z.array(ManifestChapterSchema),

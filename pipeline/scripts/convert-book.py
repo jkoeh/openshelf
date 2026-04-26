@@ -25,7 +25,7 @@ from openshelf.config import R2_BUCKET, R2_DEFAULT_RENDITION, CONTEXT_OVERLAP_SE
 from openshelf.pipeline.epub_annotator import annotate_epub
 from openshelf.pipeline.epub_parser import extract_cover_image, parse_epub
 from openshelf.pipeline.manifest import ChapterMeta, generate_manifest
-from openshelf.pipeline.text_chunker import chunk_text, extract_trailing_sentences, serialize_chunks, sha256_file
+from openshelf.pipeline.text_chunker import chunk_text, extract_trailing_sentences
 from openshelf.pipeline.tts import ChunkInfo, WordTimestamp, load_pipeline, synthesize_chapter
 from openshelf.pipeline.encoder import audio_duration, encode_to_aac
 from openshelf.scrapers.http import sanitize
@@ -128,17 +128,6 @@ def main():
         else:
             print("No cover image found in EPUB.")
 
-    # Write chunks.json at the book level (shared across renditions)
-    chunks_path = os.path.join(book_dir, "chunks.json")
-    if not os.path.exists(chunks_path):
-        epub_sha = sha256_file(args.epub)
-        chunks_json = serialize_chunks(chunked_chapters, epub_sha)
-        with open(chunks_path, "w", encoding="utf-8") as f:
-            f.write(chunks_json)
-        print(f"\nChunks written: {chunks_path}")
-    else:
-        print(f"\nChunks already exist: {chunks_path}")
-
     # Step 3+4: TTS → Opus
     os.makedirs(output_dir, exist_ok=True)
 
@@ -208,8 +197,6 @@ def main():
     print(f"Output: {os.path.abspath(output_dir)}/")
 
     # Step 5: Generate manifest
-    with open(chunks_path, encoding="utf-8") as f:
-        chunks_data = json.load(f)
     word_count_map = {ch.number: ch.word_count for ch in chapters}
     chapter_metas = [
         ChapterMeta(
@@ -229,7 +216,6 @@ def main():
         chapters=chapter_metas,
         output_dir=output_dir,
         rendition=args.rendition,
-        chunks_version=chunks_data.get("version", 1),
     )
     print(f"Manifest: {manifest_path}")
 
@@ -288,13 +274,12 @@ def main():
 
     # Step 6: Upload to R2
     if args.upload:
-        from openshelf.pipeline.r2 import make_client, upload_cover, upload_epub, upload_chunks, upload_rendition, upload_chapter_data
+        from openshelf.pipeline.r2 import make_client, upload_cover, upload_epub, upload_rendition, upload_chapter_data
         print("\nUploading to R2 ...")
         client = make_client()
         if cover_path:
             upload_cover(client, R2_BUCKET, author_slug, title_slug, cover_path, cover_content_type)
         upload_epub(client, R2_BUCKET, author_slug, title_slug, annotated_epub_path)
-        upload_chunks(client, R2_BUCKET, author_slug, title_slug, chunks_path)
         upload_rendition(client, R2_BUCKET, author_slug, title_slug, args.rendition, output_dir, manifest_path)
         upload_chapter_data(client, R2_BUCKET, author_slug, title_slug, args.rendition, chapter_data_path)
         print("Upload complete.")

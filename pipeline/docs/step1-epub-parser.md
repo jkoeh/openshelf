@@ -5,7 +5,7 @@
 
 ## Purpose
 
-Parse an EPUB file into a list of chapters, each containing structured content elements with stable IDs. These IDs are the foundation for text/audio synchronization — they become DOM anchors in the annotated EPUB and are referenced in `chunks.json`.
+Parse an EPUB file into a list of chapters, each containing structured content elements with stable IDs. These IDs are the foundation for text/audio synchronization — they become DOM anchors in the annotated EPUB and let downstream chunks reference specific paragraphs by ID.
 
 ```mermaid
 graph TD

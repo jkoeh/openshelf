@@ -11,61 +11,60 @@ graph LR
     B --> D[Chunk Text]
     D --> E[Kokoro TTS]
     E --> F[Encode AAC]
-    F --> G[Manifest]
-    F --> H[WhisperX Align]
+    E --> G[chapter_data.json<br/>chunks + words]
+    F --> H[Manifest]
     C --> I[Upload to R2]
-    D --> I
     G --> I
     H --> I
     F --> I
 ```
 
-An EPUB goes through a seven-step pipeline:
+An EPUB goes through this pipeline:
 
 1. **Parse** — extract chapters as structured content elements with stable IDs
 2. **Annotate** — inject those IDs back into the EPUB HTML for client-side addressing
 3. **Chunk** — split paragraphs into TTS-sized pieces (max 450 words), tracking which paragraphs and element IDs each chunk covers
-4. **Synthesize** — generate audio via Kokoro TTS, recording the exact timestamp where each chunk starts
+4. **Synthesize** — generate audio via Kokoro TTS, capturing per-word start/end timestamps directly from Kokoro's token output
 5. **Encode** — convert WAV to AAC at 48kbps (.m4a)
-6. **Manifest + Align** — write chapter metadata and run WhisperX forced alignment for word-level timestamps
+6. **Manifest + chapter_data** — write chapter metadata (durations) and `chapter_data.json` (chunk text + inline word timestamps)
 7. **Upload** — push everything to Cloudflare R2 with immutable cache headers
 
 Every step is idempotent. Re-running skips work that's already done.
 
 ## Text/Audio Sync
 
-The platform enables read-along highlighting and seamless switching between reading and listening. Three artifacts on R2 make this work:
+The platform enables read-along highlighting and seamless switching between reading and listening. Two artifacts on R2 make this work:
 
 | Artifact | Purpose |
 |---|---|
 | `book.epub` | Annotated EPUB — every content element has a stable `id` (e.g. `ch3-el0012`) |
-| `chunks.json` | Maps each TTS chunk to its source element IDs (`el_start`/`el_end`) and paragraph indices |
-| `word_alignment.json` | Word-level timestamps from WhisperX, each word tagged with its chunk index |
+| `chapter_data.json` | Per chapter: chunk text + Kokoro word timestamps (start/end) keyed by chunk index |
 
 **Audio -> Text** (highlight while listening):
-1. Current playback time -> find word in `word_alignment.json`
-2. Word's `chunk_idx` -> look up `el_start`/`el_end` in `chunks.json`
-3. Highlight elements by ID in the rendered EPUB
+1. Current playback time -> find word in `chapter_data.json` `words[]`
+2. Word's `chunk_idx` -> resolve to chunk text (and, in the EPUB, to the element IDs that chunk covers)
+3. Highlight the active word and chunk in the rendered text
 
-**Text -> Audio** (tap paragraph to seek):
-1. Tapped element ID -> find containing chunk in `chunks.json`
-2. Chunk index -> first word timestamp in `word_alignment.json`
-3. Seek audio player to that time
+**Text -> Audio** (tap word/paragraph to seek):
+1. Tapped word -> look up `start` time in `chapter_data.json`
+2. Seek audio player to that time
+
+WhisperX forced alignment is no longer in the default path; Kokoro provides timestamps natively. WhisperX is still available behind `convert-book.py --whisperx` and is used by the audio-quality test for roundtrip ASR/WER validation.
 
 ## R2 Storage Layout
 
 ```
 books/{author-slug}/{title-slug}/
-  book.epub                              # annotated EPUB with element IDs
-  chunks.json                            # chunk-to-element mapping (v3)
+  book.epub                                # annotated EPUB with element IDs
+  cover.{jpg|png}                          # cover image
   audio/{rendition}/
-    chapter-01.m4a                      # audio files
+    chapter-01.m4a                         # audio files
     chapter-02.m4a
-    manifest.json                        # chapter metadata, durations
-    word_alignment.json                  # word-level timestamps
+    manifest.json                          # chapter metadata, durations
+    chapter_data.json                      # per-chunk text + Kokoro word timestamps
 ```
 
-All audio/EPUB/chunk files use `Cache-Control: public, max-age=31536000, immutable`. Manifest uses 60-second cache for prompt updates on reprocessing.
+Audio, EPUB, cover, and chapter_data use `Cache-Control: public, max-age=31536000, immutable`. Manifest uses 60-second cache for prompt updates on reprocessing.
 
 ## Prerequisites
 
@@ -116,6 +115,9 @@ python3 scripts/convert-book.py path/to/book.epub --upload
 
 # Choose voice and device
 python3 scripts/convert-book.py path/to/book.epub --voice bf_emma --device cpu
+
+# Also run WhisperX (legacy / opt-in — for sanity-checking Kokoro timestamps)
+python3 scripts/convert-book.py path/to/book.epub --whisperx
 ```
 
 Output goes to `audio/{author-slug}/{title-slug}/{rendition}/`.
@@ -138,6 +140,7 @@ python3 scripts/upload-books.py path/to/book.epub
 | `--device` | auto | — | cuda / mps / cpu |
 | `--dry-run` | off | — | Parse only, no audio |
 | `--keep-wav` | off | — | Keep intermediate WAVs |
+| `--whisperx` | off | — | Also run WhisperX alignment (legacy) |
 | `--upload` | off | — | Upload to R2 |
 
 ## Run Tests

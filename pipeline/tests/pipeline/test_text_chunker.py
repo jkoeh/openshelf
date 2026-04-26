@@ -7,7 +7,7 @@ import unittest
 # Allow running without pip install
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from openshelf.pipeline.text_chunker import Chunk, chunk_text, extract_trailing_sentences, serialize_chunks, deserialize_chunks, sha256_file
+from openshelf.pipeline.text_chunker import Chunk, chunk_text, extract_trailing_sentences
 from openshelf.config import CHUNK_MAX_WORDS
 
 
@@ -295,67 +295,6 @@ class TestChunkTextParaIndices(unittest.TestCase):
             self.assertGreaterEqual(c.para_end, c.para_start)
 
 
-class TestSerializeChunks(unittest.TestCase):
-
-    def _sample_chapters(self):
-        return [
-            {
-                "number": 1,
-                "title": "The Arrest",
-                "chunks": [
-                    Chunk(text="chunk one.", para_start=0, para_end=0),
-                    Chunk(text="chunk two.", para_start=1, para_end=1),
-                ],
-            },
-            {
-                "number": 2,
-                "title": "First Hearing",
-                "chunks": [Chunk(text="chunk three.", para_start=0, para_end=0)],
-            },
-        ]
-
-    def test_version_is_3(self):
-        result = deserialize_chunks(serialize_chunks(self._sample_chapters(), "abc123"))
-        self.assertEqual(result["version"], 3)
-
-    def test_contains_epub_sha256(self):
-        result = deserialize_chunks(serialize_chunks(self._sample_chapters(), "deadbeef"))
-        self.assertEqual(result["source_epub_sha256"], "deadbeef")
-
-    def test_chunks_have_required_fields(self):
-        result = deserialize_chunks(serialize_chunks(self._sample_chapters(), "abc"))
-        chunk = result["chapters"][0]["chunks"][0]
-        self.assertIn("text", chunk)
-        self.assertIn("para_start", chunk)
-        self.assertIn("para_end", chunk)
-        self.assertIn("el_start", chunk)
-        self.assertIn("el_end", chunk)
-
-    def test_chunk_text_preserved(self):
-        result = deserialize_chunks(serialize_chunks(self._sample_chapters(), "abc"))
-        self.assertEqual(result["chapters"][0]["chunks"][0]["text"], "chunk one.")
-
-    def test_para_indices_preserved(self):
-        chapters = [{"number": 1, "title": "T", "chunks": [
-            Chunk(text="a", para_start=3, para_end=5),
-        ]}]
-        result = deserialize_chunks(serialize_chunks(chapters, "abc"))
-        self.assertEqual(result["chapters"][0]["chunks"][0]["para_start"], 3)
-        self.assertEqual(result["chapters"][0]["chunks"][0]["para_end"], 5)
-
-    def test_preserves_unicode(self):
-        chapters = [{"number": 1, "title": "Über", "chunks": [
-            Chunk(text="Ça va bien.", para_start=0, para_end=0),
-        ]}]
-        result = deserialize_chunks(serialize_chunks(chapters, "abc"))
-        self.assertEqual(result["chapters"][0]["title"], "Über")
-        self.assertEqual(result["chapters"][0]["chunks"][0]["text"], "Ça va bien.")
-
-    def test_empty_chapters(self):
-        result = deserialize_chunks(serialize_chunks([], "abc"))
-        self.assertEqual(result["chapters"], [])
-
-
 class TestChunkTextElementIds(unittest.TestCase):
 
     def test_element_ids_propagated_to_el_start_el_end(self):
@@ -384,15 +323,6 @@ class TestChunkTextElementIds(unittest.TestCase):
     def test_element_ids_length_mismatch_raises(self):
         with self.assertRaises(ValueError):
             chunk_text([_words(50), _words(50)], element_ids=["ch1-el0000"])
-
-    def test_element_ids_in_serialized_chunks(self):
-        paras = [_words(100)]
-        ids = ["ch1-el0000"]
-        chunks = chunk_text(paras, element_ids=ids)
-        chapters = [{"number": 1, "title": "T", "chunks": chunks}]
-        result = deserialize_chunks(serialize_chunks(chapters, "abc"))
-        self.assertEqual(result["chapters"][0]["chunks"][0]["el_start"], "ch1-el0000")
-        self.assertEqual(result["chapters"][0]["chunks"][0]["el_end"], "ch1-el0000")
 
 
 class TestExtractTrailingSentences(unittest.TestCase):
@@ -425,34 +355,6 @@ class TestExtractTrailingSentences(unittest.TestCase):
     def test_empty_text(self):
         result = extract_trailing_sentences("", n=2)
         self.assertEqual(result, "")
-
-
-class TestSha256File(unittest.TestCase):
-
-    def test_computes_hash(self):
-        import tempfile
-        with tempfile.NamedTemporaryFile(delete=False) as f:
-            f.write(b"hello world")
-            path = f.name
-        try:
-            result = sha256_file(path)
-            import hashlib
-            expected = hashlib.sha256(b"hello world").hexdigest()
-            self.assertEqual(result, expected)
-        finally:
-            os.unlink(path)
-
-    def test_empty_file(self):
-        import tempfile
-        with tempfile.NamedTemporaryFile(delete=False) as f:
-            path = f.name
-        try:
-            result = sha256_file(path)
-            import hashlib
-            expected = hashlib.sha256(b"").hexdigest()
-            self.assertEqual(result, expected)
-        finally:
-            os.unlink(path)
 
 
 if __name__ == "__main__":

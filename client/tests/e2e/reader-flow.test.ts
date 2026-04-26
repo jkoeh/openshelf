@@ -48,7 +48,6 @@ const manifestFixture: Manifest = {
   author: "Franz Kafka",
   source: "gutenberg",
   rendition: "kokoro-af-heart",
-  chunks_version: 1,
   generated_at: "2025-01-15T12:00:00Z",
   total_duration_seconds: 28800.0,
   chapters: [

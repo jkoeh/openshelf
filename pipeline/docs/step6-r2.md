@@ -15,7 +15,6 @@ graph TD
     B --> E[upload_rendition]
     B --> F[upload_chapter_data]
     B --> G[upload_word_alignment - opt-in]
-    B --> H[upload_chunks - legacy, unused by worker]
 
     C --> C1{book.epub exists on R2?}
     C1 -->|Yes| C2[Skip]
@@ -70,12 +69,6 @@ def upload_word_alignment(            # opt-in only (--whisperx)
     rendition: str,
     word_alignment_path: str,
 ) -> str | None
-
-def upload_chunks(                    # legacy; not consumed by worker
-    client, bucket: str,
-    author_slug: str, title_slug: str,
-    chunks_path: str,
-) -> str | None
 ```
 
 ## R2 Key Layout
@@ -84,7 +77,6 @@ def upload_chunks(                    # legacy; not consumed by worker
 books/{author_slug}/{title_slug}/
   book.epub                                    # annotated EPUB
   cover.{jpg|png}                              # cover image
-  chunks.json                                  # legacy, no longer read by worker
   audio/{rendition}/
     chapter-01.m4a                             # audio files
     chapter-02.m4a
@@ -126,7 +118,7 @@ The worker's `/chapters/:n` endpoint reads this file directly: it returns `chunk
 
 **Rendition upload** uses a single-gate pattern: only `manifest.json` existence is checked (one HEAD request). If it exists, the entire rendition is skipped. This works because manifest is always uploaded **last** — its presence guarantees all Opus files are already on R2. A partial previous run's files are safely overwritten on retry (PUT is idempotent).
 
-**Other uploads** (EPUB, cover, chapter_data, chunks, word_alignment) each check their own key existence independently.
+**Other uploads** (EPUB, cover, chapter_data, word_alignment) each check their own key existence independently.
 
 This avoids O(N) HEAD requests per book. For a 20-chapter book, it's a handful of HEAD requests total instead of 24.
 
@@ -134,7 +126,7 @@ This avoids O(N) HEAD requests per book. For a 20-chapter book, it's a handful o
 
 | File type | Cache-Control | Rationale |
 |---|---|---|
-| m4a, EPUB, cover, chunks, chapter_data, alignment | `public, max-age=31536000, immutable` | Content never changes once written |
+| m4a, EPUB, cover, chapter_data, alignment | `public, max-age=31536000, immutable` | Content never changes once written |
 | manifest.json | `public, max-age=60` | Allows updates to propagate on reprocessing |
 
 ### Content Types

@@ -231,32 +231,3 @@ def upload_chapter_data(
     return key
 
 
-def upload_chunks(
-    client,
-    bucket: str,
-    author_slug: str,
-    title_slug: str,
-    chunks_path: str,
-) -> str | None:
-    """Upload chunks.json to R2. Returns the key, or None if already exists.
-
-    Key pattern: books/{author}/{title}/chunks.json
-    Idempotent: skips upload if the key already exists.
-    """
-    key = f"{_book_prefix(author_slug, title_slug)}/chunks.json"
-
-    if key_exists(client, bucket, key):
-        logger.info("Chunks already uploaded, skipping: %s", key)
-        return None
-
-    client.upload_file(
-        chunks_path,
-        bucket,
-        key,
-        ExtraArgs={
-            "ContentType": "application/json",
-            "CacheControl": R2_CACHE_CONTROL_IMMUTABLE,
-        },
-    )
-    logger.info("Uploaded: %s", key)
-    return key

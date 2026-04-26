@@ -147,13 +147,8 @@ class TestGenerateManifestContent(unittest.TestCase):
              patch("openshelf.pipeline.manifest.json.dump",
                    side_effect=lambda data, *a, **kw: captured.update(data)):
             generate_manifest("Kafka", "The Trial", "gutenberg", _chapters(),
-                              "/tmp/out", rendition="kokoro-af-heart", chunks_version=1)
+                              "/tmp/out", rendition="kokoro-af-heart")
         self.assertEqual(captured["rendition"], "kokoro-af-heart")
-        self.assertEqual(captured["chunks_version"], 1)
-
-    def test_manifest_has_chunks_version(self):
-        manifest = self._run()
-        self.assertIn("chunks_version", manifest)
 
 
 if __name__ == "__main__":

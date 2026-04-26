@@ -25,7 +25,6 @@ def generate_manifest(
     chapters: list[ChapterMeta],
     output_dir: str,
     rendition: str = "",
-    chunks_version: int = 0,
 ) -> str:
     """Write manifest.json for a processed book. Returns path to the manifest file."""
     os.makedirs(output_dir, exist_ok=True)
@@ -40,7 +39,6 @@ def generate_manifest(
         "author": author,
         "source": source,
         "rendition": rendition,
-        "chunks_version": chunks_version,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "total_duration_seconds": sum(ch.duration_seconds for ch in chapters),
         "chapters": [

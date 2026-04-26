@@ -2,7 +2,8 @@
 """Upload already-generated audiobook files to Cloudflare R2.
 
 Generates manifest.json from existing Opus files (via ffprobe) if not already present,
-then uploads epub, chunks.json, and rendition (Opus files + manifest) to R2.
+then uploads epub, chapter_data.json, and rendition (m4a files + manifest) to R2.
+Chapter titles and word counts are sourced from chapter_data.json.
 
 Usage:
     python3 scripts/upload-books.py <epub-path>
@@ -23,7 +24,7 @@ from ebooklib import epub as _epub_lib
 from openshelf.config import R2_BUCKET, R2_DEFAULT_RENDITION
 from openshelf.pipeline.encoder import audio_duration
 from openshelf.pipeline.manifest import ChapterMeta, generate_manifest
-from openshelf.pipeline.r2 import make_client, upload_epub, upload_chunks, upload_rendition, upload_word_alignment
+from openshelf.pipeline.r2 import make_client, upload_epub, upload_rendition, upload_chapter_data, upload_word_alignment
 from openshelf.scrapers.http import sanitize
 
 
@@ -46,14 +47,15 @@ def main():
     author_slug = sanitize(epub_parts[-2]) if len(epub_parts) >= 2 else "unknown"
     book_dir = os.path.join(args.output, author_slug, title_slug)
     rendition_dir = os.path.join(book_dir, args.rendition)
-    chunks_path = os.path.join(book_dir, "chunks.json")
+    chapter_data_path = os.path.join(rendition_dir, "chapter_data.json")
 
     if not os.path.isdir(rendition_dir):
         print(f"Error: rendition directory not found: {rendition_dir}")
         sys.exit(1)
 
-    if not os.path.isfile(chunks_path):
-        print(f"Error: chunks.json not found: {chunks_path}")
+    if not os.path.isfile(chapter_data_path):
+        print(f"Error: chapter_data.json not found: {chapter_data_path}")
+        print("Run convert-book.py first to generate it.")
         sys.exit(1)
 
     # Read display metadata from EPUB
@@ -66,19 +68,15 @@ def main():
     print(f"Book:     {book_author} — {book_title}")
     print(f"Rendition: {rendition_dir}")
 
-    # Load chunks.json for chapter titles and word counts
-    with open(chunks_path, encoding="utf-8") as f:
-        chunks_data = json.load(f)
-    title_map = {ch["number"]: ch["title"] for ch in chunks_data.get("chapters", [])}
+    # Load chapter_data.json for chapter titles and word counts
+    with open(chapter_data_path, encoding="utf-8") as f:
+        chapter_data = json.load(f)
+    title_map = {ch["number"]: ch["title"] for ch in chapter_data.get("chapters", [])}
     word_count_map = {
-        ch["number"]: sum(
-            len((chunk["text"] if isinstance(chunk, dict) else chunk).split())
-            for chunk in ch["chunks"]
-        )
-        for ch in chunks_data.get("chapters", [])
+        ch["number"]: ch.get("word_count", 0) for ch in chapter_data.get("chapters", [])
     }
 
-    # Find all Opus files and get durations via ffprobe
+    # Find all m4a files and get durations via ffprobe
     audio_files = sorted(f for f in os.listdir(rendition_dir) if f.endswith(".m4a"))
     if not audio_files:
         print(f"Error: no M4A files found in {rendition_dir}")
@@ -113,7 +111,6 @@ def main():
         chapters=chapter_metas,
         output_dir=rendition_dir,
         rendition=args.rendition,
-        chunks_version=chunks_data.get("version", 1),
     )
     print(f"Manifest: {manifest_path}")
 
@@ -121,15 +118,15 @@ def main():
     print("\nUploading to R2 ...")
     client = make_client()
     upload_epub(client, R2_BUCKET, author_slug, title_slug, args.epub)
-    upload_chunks(client, R2_BUCKET, author_slug, title_slug, chunks_path)
     upload_rendition(client, R2_BUCKET, author_slug, title_slug, args.rendition, rendition_dir, manifest_path)
+    upload_chapter_data(client, R2_BUCKET, author_slug, title_slug, args.rendition, chapter_data_path)
 
     alignment_path = os.path.join(rendition_dir, "word_alignment.json")
     if os.path.isfile(alignment_path):
         upload_word_alignment(client, R2_BUCKET, author_slug, title_slug, args.rendition, alignment_path)
         print("Word alignment uploaded.")
     else:
-        print("Warning: word_alignment.json not found — run convert-book.py to generate alignment.")
+        print("Note: word_alignment.json not present (only generated with convert-book.py --whisperx).")
 
     print("Upload complete.")
     print(f"R2 prefix: books/{author_slug}/{title_slug}/")

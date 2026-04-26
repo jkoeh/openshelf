@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 from dataclasses import dataclass
-from typing import Any
 
 from openshelf.config import CHUNK_MAX_WORDS
 
@@ -188,51 +185,3 @@ def chunk_text(
         ))
 
     return chunks
-
-
-def serialize_chunks(
-    chapters: list[dict[str, Any]],
-    epub_sha256: str,
-) -> str:
-    """Serialize chunked chapters to JSON for storage.
-
-    Args:
-        chapters: list of {"number": int, "title": str, "chunks": list[Chunk]}
-        epub_sha256: SHA-256 hex digest of the source EPUB file
-    """
-    serialized_chapters = []
-    for ch in chapters:
-        serialized_chapters.append({
-            "number": ch["number"],
-            "title": ch["title"],
-            "chunks": [
-                {
-                    "text": c.text,
-                    "para_start": c.para_start,
-                    "para_end": c.para_end,
-                    "el_start": c.el_start,
-                    "el_end": c.el_end,
-                }
-                for c in ch["chunks"]
-            ],
-        })
-    data = {
-        "version": 3,
-        "source_epub_sha256": epub_sha256,
-        "chapters": serialized_chapters,
-    }
-    return json.dumps(data, indent=2, ensure_ascii=False)
-
-
-def deserialize_chunks(json_str: str) -> dict[str, Any]:
-    """Deserialize chunks JSON. Returns the full dict with version, sha256, and chapters."""
-    return json.loads(json_str)
-
-
-def sha256_file(path: str) -> str:
-    """Compute SHA-256 hex digest of a file."""
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for block in iter(lambda: f.read(65536), b""):
-            h.update(block)
-    return h.hexdigest()
