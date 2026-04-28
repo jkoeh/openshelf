@@ -31,7 +31,70 @@ class Chapter:
 _SKIP_PATTERNS = ("nav", "toc", "cover")
 _MIN_WORD_COUNT = 50
 _CONTENT_TAGS = ("p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "li", "figcaption")
+_HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 _SKIP_EPUB_TYPES = frozenset({"footnote", "endnote", "toc", "pagebreak"})
+
+_ROMAN_VALUES = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
+
+
+def _roman_to_arabic(roman: str) -> int | None:
+    """Convert a Roman numeral string to an int, or None if invalid."""
+    if not roman:
+        return None
+    total = 0
+    prev = 0
+    for ch in roman.upper()[::-1]:
+        v = _ROMAN_VALUES.get(ch)
+        if v is None:
+            return None
+        if v < prev:
+            total -= v
+        else:
+            total += v
+            prev = v
+    return total if total > 0 else None
+
+
+def normalize_heading_for_tts(text: str) -> str:
+    """Rewrite numeric/roman headings so Kokoro reads them as words, not letters.
+
+    "II" -> "Chapter 2.", "3" -> "Chapter 3.", "III. The Storm" -> "Chapter 3. The Storm.",
+    "Chapter II" -> "Chapter 2.". Plain titles are returned unchanged.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return text
+
+    # "Chapter <roman/arabic>" (with optional trailing punctuation)
+    m = re.match(r"^Chapter\s+([IVXLCDM]+|\d+)\.?$", stripped, re.IGNORECASE)
+    if m:
+        token = m.group(1)
+        n = int(token) if token.isdigit() else _roman_to_arabic(token)
+        if n:
+            return f"Chapter {n}."
+
+    # Strip a single trailing period for the bare-numeral check
+    bare = stripped.rstrip(".")
+
+    # Pure Roman numeral
+    if re.fullmatch(r"[IVXLCDM]+", bare, re.IGNORECASE):
+        n = _roman_to_arabic(bare)
+        if n:
+            return f"Chapter {n}."
+
+    # Pure Arabic numeral
+    if re.fullmatch(r"\d+", bare):
+        return f"Chapter {bare}."
+
+    # "<roman/arabic><sep><rest>"  — e.g. "III. The Storm" or "3 The Storm"
+    m = re.match(r"^([IVXLCDM]+|\d+)[.\s]+(.+)$", stripped)
+    if m:
+        token, rest = m.group(1), m.group(2).strip().rstrip(".")
+        n = int(token) if token.isdigit() else _roman_to_arabic(token)
+        if n and rest:
+            return f"Chapter {n}. {rest}."
+
+    return text
 
 
 def _should_skip(filename: str) -> bool:
@@ -73,6 +136,9 @@ def _extract_content_elements(soup: BeautifulSoup, chapter_num: int) -> list[Con
         text = re.sub(r"\s+", " ", tag.get_text()).strip()
         if not text:
             continue
+
+        if tag.name in _HEADING_TAGS:
+            text = normalize_heading_for_tts(text)
 
         element_id = f"ch{chapter_num}-el{idx:04d}"
         tag["id"] = element_id

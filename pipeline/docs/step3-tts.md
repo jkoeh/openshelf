@@ -78,15 +78,15 @@ def synthesize_chapter(
 
 ### Timing Model
 
-Variable silence is inserted **between** chunks (not before the first). Gap duration depends on whether the previous chunk ended a paragraph:
+A short lead-in silence (`LEAD_IN_SILENCE_MS`, 50ms) is prepended to every chapter to absorb the AAC encoder's priming samples and Kokoro's first-token onset transient. Variable silence is then inserted **between** chunks:
 
 ```
-[chunk0_audio][paragraph_gap][chunk1_audio][mid_para_gap][chunk2_audio]
+[lead_in_silence][chunk0_audio][paragraph_gap][chunk1_audio][mid_para_gap][chunk2_audio]
 ```
 
+- Lead-in: `LEAD_IN_SILENCE_MS` (50ms) — chunk 0 starts at this offset, not at frame 0
 - Paragraph break: `SILENCE_PARAGRAPH_BREAK_MS` (700ms)
 - Mid-paragraph: `SILENCE_MID_PARAGRAPH_MS` (200ms)
-- Chunk 0 starts at frame 0
 - `audio_start_s = frames_so_far / sample_rate`
 
 ### Boundary Fades (Crossfading)

@@ -29,7 +29,11 @@ from openshelf.config import (
     SILENCE_PARAGRAPH_BREAK_MS,
     SILENCE_MID_PARAGRAPH_MS,
     CROSSFADE_MS,
+    LEAD_IN_SILENCE_MS,
 )
+
+
+_LEAD_IN_SAMPLES = int(TTS_SAMPLE_RATE * LEAD_IN_SILENCE_MS / 1000)
 
 
 def _fake_audio(n_samples: int, peak: float = 0.5) -> np.ndarray:
@@ -124,7 +128,7 @@ class TestSynthesizeChapter(unittest.TestCase):
         para_silence = int(TTS_SAMPLE_RATE * SILENCE_PARAGRAPH_BREAK_MS / 1000)
         fade_samples = int(TTS_SAMPLE_RATE * CROSSFADE_MS / 1000)
         # Each chunk is 1000 samples; fades don't change length
-        expected_len = 3 * 1000 + 2 * para_silence
+        expected_len = _LEAD_IN_SAMPLES + 3 * 1000 + 2 * para_silence
         self.assertEqual(len(written_audio), expected_len)
 
     @patch("openshelf.pipeline.tts.sf.write")
@@ -143,7 +147,7 @@ class TestSynthesizeChapter(unittest.TestCase):
 
         written_audio = mock_sf_write.call_args[0][1]
         mid_silence = int(TTS_SAMPLE_RATE * SILENCE_MID_PARAGRAPH_MS / 1000)
-        expected_len = 2 * 1000 + mid_silence
+        expected_len = _LEAD_IN_SAMPLES + 2 * 1000 + mid_silence
         self.assertEqual(len(written_audio), expected_len)
 
     @patch("openshelf.pipeline.tts.sf.write")
@@ -164,13 +168,13 @@ class TestSynthesizeChapter(unittest.TestCase):
         mid_silence = int(TTS_SAMPLE_RATE * SILENCE_MID_PARAGRAPH_MS / 1000)
         para_silence = int(TTS_SAMPLE_RATE * SILENCE_PARAGRAPH_BREAK_MS / 1000)
 
-        # Chunk 0 starts at 0
-        self.assertAlmostEqual(result.chunk_audio_starts[0], 0.0)
+        # Chunk 0 starts after the lead-in silence
+        self.assertAlmostEqual(result.chunk_audio_starts[0], _LEAD_IN_SAMPLES / TTS_SAMPLE_RATE)
         # Chunk 1 starts after chunk 0 audio + mid-paragraph silence
-        expected_1 = (1000 + mid_silence) / TTS_SAMPLE_RATE
+        expected_1 = (_LEAD_IN_SAMPLES + 1000 + mid_silence) / TTS_SAMPLE_RATE
         self.assertAlmostEqual(result.chunk_audio_starts[1], expected_1)
         # Chunk 2 starts after chunk 1 audio + paragraph break silence
-        expected_2 = (1000 + mid_silence + 1000 + para_silence) / TTS_SAMPLE_RATE
+        expected_2 = (_LEAD_IN_SAMPLES + 1000 + mid_silence + 1000 + para_silence) / TTS_SAMPLE_RATE
         self.assertAlmostEqual(result.chunk_audio_starts[2], expected_2)
 
     @patch("openshelf.pipeline.tts.sf.write")
@@ -270,13 +274,13 @@ class TestSynthesizeChapterErrors(unittest.TestCase):
 class TestSynthesizeChapterAudioStarts(unittest.TestCase):
 
     @patch("openshelf.pipeline.tts.sf.write")
-    def test_single_chunk_starts_at_zero(self, mock_sf_write):
+    def test_single_chunk_starts_after_lead_in(self, mock_sf_write):
         pipeline = MagicMock()
         pipeline.return_value = iter([("g", "p", _fake_audio(1000))])
 
         result = synthesize_chapter(pipeline, _make_chunks(["chunk"]), "/tmp/out.wav")
 
-        self.assertEqual(result.chunk_audio_starts, [0.0])
+        self.assertEqual(result.chunk_audio_starts, [_LEAD_IN_SAMPLES / TTS_SAMPLE_RATE])
 
     @patch("openshelf.pipeline.tts.sf.write")
     def test_two_chunks_correct_offsets(self, mock_sf_write):
@@ -289,8 +293,8 @@ class TestSynthesizeChapterAudioStarts(unittest.TestCase):
         pipeline = MagicMock(side_effect=make_iter)
         result = synthesize_chapter(pipeline, _make_chunks(["A.", "B."]), "/tmp/out.wav")
 
-        self.assertAlmostEqual(result.chunk_audio_starts[0], 0.0)
-        expected_start1 = (chunk_samples + para_silence) / TTS_SAMPLE_RATE
+        self.assertAlmostEqual(result.chunk_audio_starts[0], _LEAD_IN_SAMPLES / TTS_SAMPLE_RATE)
+        expected_start1 = (_LEAD_IN_SAMPLES + chunk_samples + para_silence) / TTS_SAMPLE_RATE
         self.assertAlmostEqual(result.chunk_audio_starts[1], expected_start1)
 
     @patch("openshelf.pipeline.tts.sf.write")
@@ -318,7 +322,7 @@ class TestSynthesizeChapterAudioStarts(unittest.TestCase):
         )
 
         self.assertEqual(result.chunk_audio_starts[0], -1.0)
-        self.assertEqual(result.chunk_audio_starts[1], 0.0)
+        self.assertAlmostEqual(result.chunk_audio_starts[1], _LEAD_IN_SAMPLES / TTS_SAMPLE_RATE)
 
     @patch("openshelf.pipeline.tts.sf.write")
     def test_offsets_accumulate_correctly_three_chunks(self, mock_sf_write):
@@ -334,14 +338,14 @@ class TestSynthesizeChapterAudioStarts(unittest.TestCase):
         pipeline = MagicMock(side_effect=make_iter)
         result = synthesize_chapter(pipeline, _make_chunks(["A.", "B.", "C."]), "/tmp/out.wav")
 
-        self.assertAlmostEqual(result.chunk_audio_starts[0], 0.0)
+        self.assertAlmostEqual(result.chunk_audio_starts[0], _LEAD_IN_SAMPLES / TTS_SAMPLE_RATE)
         self.assertAlmostEqual(
             result.chunk_audio_starts[1],
-            (samples_per_chunk[0] + para_silence) / TTS_SAMPLE_RATE,
+            (_LEAD_IN_SAMPLES + samples_per_chunk[0] + para_silence) / TTS_SAMPLE_RATE,
         )
         self.assertAlmostEqual(
             result.chunk_audio_starts[2],
-            (samples_per_chunk[0] + para_silence + samples_per_chunk[1] + para_silence) / TTS_SAMPLE_RATE,
+            (_LEAD_IN_SAMPLES + samples_per_chunk[0] + para_silence + samples_per_chunk[1] + para_silence) / TTS_SAMPLE_RATE,
         )
 
 
@@ -544,6 +548,28 @@ class TestSynthesizeChapterWords(unittest.TestCase):
         )
         self.assertEqual(result.chunk_words[0], [])
         self.assertEqual(len(result.chunk_words[1]), 1)
+
+
+class TestLeadInSilence(unittest.TestCase):
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_chapter_audio_begins_with_silence(self, mock_sf_write):
+        """The first samples of the chapter are silent (lead-in pad)."""
+        # Use a chunk whose audio peak is at sample 500 so fades don't zero everything.
+        audio = np.zeros(1000, dtype=np.float32)
+        audio[500] = 0.5
+        pipeline = MagicMock()
+        pipeline.return_value = iter([("g", "p", audio)])
+
+        synthesize_chapter(pipeline, _make_chunks(["chunk"]), "/tmp/out.wav")
+
+        written = mock_sf_write.call_args[0][1]
+        # The first LEAD_IN_SAMPLES samples should be exact silence.
+        self.assertEqual(_LEAD_IN_SAMPLES, int(TTS_SAMPLE_RATE * LEAD_IN_SILENCE_MS / 1000))
+        np.testing.assert_array_equal(
+            written[:_LEAD_IN_SAMPLES],
+            np.zeros(_LEAD_IN_SAMPLES, dtype=np.float32),
+        )
 
 
 if __name__ == "__main__":

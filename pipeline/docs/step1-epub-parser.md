@@ -82,7 +82,22 @@ An element is `spoken=False` if it or any ancestor has an `epub:type` attribute 
 
 ### Title Extraction
 
-First `h1` found in the document, falling back to `h2`, then `h3`, then `"Chapter N"`.
+First `h1` found in the document, falling back to `h2`, then `h3`, then `"Chapter N"`. Headings are also stored as the first spoken element of the chapter, so the TTS reads them as the chapter opens.
+
+### Heading Normalization for TTS
+
+Heading element `text` is rewritten before being passed downstream so Kokoro reads numerals naturally instead of letter-by-letter. The HTML stored in `ContentElement.html` is **not** changed — display still shows the original.
+
+Patterns rewritten (case-insensitive on Roman numerals):
+
+- `"I"`, `"II"`, `"IV"`, … → `"Chapter 1."`, `"Chapter 2."`, `"Chapter 4."`
+- `"1"`, `"12"`, … → `"Chapter 1."`, `"Chapter 12."`
+- `"III. The Storm"` / `"3. The Storm"` → `"Chapter 3. The Storm."`
+- `"Chapter II"` → `"Chapter 2."`
+
+Other headings (e.g. `"The Storm"`) are left untouched.
+
+This also fixes a secondary issue: a single-letter heading like `"I"` synthesized in isolation produced an audible onset transient at chapter start.
 
 ### Fallback Text Extraction
 

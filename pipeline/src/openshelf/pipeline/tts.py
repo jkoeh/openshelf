@@ -16,6 +16,7 @@ from openshelf.config import (
     SILENCE_PARAGRAPH_BREAK_MS,
     SILENCE_MID_PARAGRAPH_MS,
     CROSSFADE_MS,
+    LEAD_IN_SILENCE_MS,
 )
 
 logger = logging.getLogger(__name__)
@@ -167,17 +168,21 @@ def synthesize_chapter(
     if not chunks:
         raise ValueError("chunks list is empty")
 
-    audio_segments: list[np.ndarray] = []
+    # Lead-in silence absorbs the AAC encoder priming samples and Kokoro's
+    # first-token onset transient so the file doesn't start with a click.
+    lead_in = _generate_silence(sample_rate, LEAD_IN_SILENCE_MS)
+    audio_segments: list[np.ndarray] = [lead_in]
     skipped = 0
-    frames_so_far = 0
+    frames_so_far = len(lead_in)
     chunk_audio_starts: list[float] = []
     chunk_words: list[list[WordTimestamp]] = []
+    prior_chunk_emitted = False
 
     for i, chunk_info in enumerate(chunks):
         try:
             chunk_audio, words = _synthesize_single_chunk(pipeline, chunk_info, voice, sample_rate)
 
-            if audio_segments:
+            if prior_chunk_emitted:
                 # Variable silence: longer at paragraph breaks, shorter mid-paragraph
                 if chunks[i - 1].ends_paragraph:
                     gap_ms = SILENCE_PARAGRAPH_BREAK_MS
@@ -203,13 +208,14 @@ def synthesize_chapter(
 
             audio_segments.append(chunk_audio)
             frames_so_far += len(chunk_audio)
+            prior_chunk_emitted = True
         except Exception:
             logger.warning("Chunk %d failed, skipping: %.40s...", i, chunk_info.text, exc_info=True)
             chunk_audio_starts.append(-1.0)
             chunk_words.append([])
             skipped += 1
 
-    if not audio_segments:
+    if not prior_chunk_emitted:
         raise RuntimeError("All chunks failed TTS synthesis")
 
     full_audio = np.concatenate(audio_segments)

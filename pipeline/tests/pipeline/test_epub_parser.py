@@ -8,7 +8,12 @@ from unittest.mock import patch, MagicMock
 # Allow running without pip install
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from openshelf.pipeline.epub_parser import parse_epub, Chapter, ContentElement
+from openshelf.pipeline.epub_parser import (
+    parse_epub,
+    Chapter,
+    ContentElement,
+    normalize_heading_for_tts,
+)
 
 
 # --- Test helpers ---
@@ -425,6 +430,73 @@ class TestParseEpubContentElements(unittest.TestCase):
         ch = parse_epub("f.epub")[0]
         spoken_texts = [el.text for el in ch.elements if el.spoken]
         self.assertEqual(spoken_texts, ch.paragraphs)
+
+
+class TestNormalizeHeadingForTts(unittest.TestCase):
+
+    def test_pure_roman_numeral(self):
+        self.assertEqual(normalize_heading_for_tts("I"), "Chapter 1.")
+        self.assertEqual(normalize_heading_for_tts("II"), "Chapter 2.")
+        self.assertEqual(normalize_heading_for_tts("IV"), "Chapter 4.")
+        self.assertEqual(normalize_heading_for_tts("XII"), "Chapter 12.")
+
+    def test_roman_with_trailing_period(self):
+        self.assertEqual(normalize_heading_for_tts("III."), "Chapter 3.")
+
+    def test_pure_arabic_numeral(self):
+        self.assertEqual(normalize_heading_for_tts("1"), "Chapter 1.")
+        self.assertEqual(normalize_heading_for_tts("12"), "Chapter 12.")
+        self.assertEqual(normalize_heading_for_tts("1."), "Chapter 1.")
+
+    def test_chapter_prefix_with_roman(self):
+        self.assertEqual(normalize_heading_for_tts("Chapter II"), "Chapter 2.")
+        self.assertEqual(normalize_heading_for_tts("Chapter II."), "Chapter 2.")
+
+    def test_chapter_prefix_with_arabic(self):
+        self.assertEqual(normalize_heading_for_tts("Chapter 3"), "Chapter 3.")
+
+    def test_roman_with_subtitle(self):
+        self.assertEqual(
+            normalize_heading_for_tts("III. The Storm"),
+            "Chapter 3. The Storm.",
+        )
+        self.assertEqual(
+            normalize_heading_for_tts("IV  The Storm"),
+            "Chapter 4. The Storm.",
+        )
+
+    def test_arabic_with_subtitle(self):
+        self.assertEqual(
+            normalize_heading_for_tts("3. The Storm"),
+            "Chapter 3. The Storm.",
+        )
+
+    def test_plain_title_unchanged(self):
+        self.assertEqual(normalize_heading_for_tts("The Storm"), "The Storm")
+        self.assertEqual(normalize_heading_for_tts("Prologue"), "Prologue")
+
+    def test_empty(self):
+        self.assertEqual(normalize_heading_for_tts(""), "")
+
+    def test_invalid_roman_left_alone(self):
+        # "MM" is valid roman (2000), but plain capitalized words should stay.
+        self.assertEqual(normalize_heading_for_tts("Mary"), "Mary")
+
+
+class TestParseEpubHeadingNormalization(unittest.TestCase):
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_roman_heading_text_normalized(self, mock_read_epub):
+        html = "<html><body><h2>II</h2><p>" + " ".join(f"w{i}" for i in range(60)) + "</p></body></html>"
+        mock_read_epub.return_value = _make_book([_make_item("ch1.xhtml", html)])
+        ch = parse_epub("f.epub")[0]
+        # First spoken element is the heading; its text is normalized for TTS.
+        self.assertEqual(ch.elements[0].text, "Chapter 2.")
+        # Display HTML is unchanged.
+        self.assertIn("<h2", ch.elements[0].html)
+        self.assertIn(">II<", ch.elements[0].html)
+        # Chapter.title (used in manifest) is the original heading text.
+        self.assertEqual(ch.title, "II")
 
 
 if __name__ == "__main__":
