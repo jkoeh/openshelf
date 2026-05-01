@@ -422,11 +422,18 @@ class TestApplyBoundaryFades(unittest.TestCase):
 
 
 class _FakeToken:
-    """Mock Kokoro MToken for testing."""
-    def __init__(self, text, start_ts, end_ts):
+    """Mock Kokoro MToken for testing.
+
+    The `whitespace` attribute holds the whitespace *following* this token —
+    a non-empty value marks the end of a word. Defaults to a single space so
+    each token represents its own word in tests that don't care about the
+    sub-word grouping behavior.
+    """
+    def __init__(self, text, start_ts, end_ts, whitespace=" "):
         self.text = text
         self.start_ts = start_ts
         self.end_ts = end_ts
+        self.whitespace = whitespace
 
 
 class _FakeResult:
@@ -491,6 +498,40 @@ class TestExtractWords(unittest.TestCase):
         ]
         words = _extract_words(results)
         self.assertEqual(len(words), 2)
+
+    def test_groups_sub_word_tokens_by_whitespace(self):
+        """A contraction split across multiple MTokens collapses into one word."""
+        # "don't go" — misaki splits "don't" into ["don", "'", "t"], with
+        # whitespace only on the final "t" token.
+        results = [
+            _FakeResult("don't go.", "p", _fake_audio(2000), [
+                _FakeToken("don", 0.00, 0.10, whitespace=""),
+                _FakeToken("'",   0.10, 0.12, whitespace=""),
+                _FakeToken("t",   0.12, 0.20, whitespace=" "),
+                _FakeToken("go",  0.20, 0.40, whitespace=""),
+                _FakeToken(".",   0.40, 0.42, whitespace=" "),
+            ]),
+        ]
+        words = _extract_words(results)
+        self.assertEqual(len(words), 2)
+        self.assertEqual(words[0].word, "don't")
+        self.assertAlmostEqual(words[0].start, 0.0)
+        self.assertAlmostEqual(words[0].end, 0.20)
+        self.assertEqual(words[1].word, "go.")
+        self.assertAlmostEqual(words[1].start, 0.20)
+        self.assertAlmostEqual(words[1].end, 0.42)
+
+    def test_punctuation_token_with_no_timestamps_still_flushes(self):
+        """A boundary-marking token without timestamps must not break grouping."""
+        results = [
+            _FakeResult("Hi, world", "p", _fake_audio(2000), [
+                _FakeToken("Hi", 0.0, 0.2, whitespace=""),
+                _FakeToken(",", None, None, whitespace=" "),
+                _FakeToken("world", 0.3, 0.6, whitespace=""),
+            ]),
+        ]
+        words = _extract_words(results)
+        self.assertEqual([w.word for w in words], ["Hi", "world"])
 
 
 class TestSynthesizeChapterWords(unittest.TestCase):

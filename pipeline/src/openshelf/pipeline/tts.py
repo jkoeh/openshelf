@@ -119,24 +119,44 @@ def _apply_boundary_fades(
 def _extract_words(results: list) -> list[WordTimestamp]:
     """Extract word timestamps from Kokoro Result objects (chunk-relative).
 
-    Filters out tokens with no timestamps (punctuation, whitespace).
+    Misaki MTokens are sub-word units (a contraction like "don't" can split
+    into several tokens). The token's `whitespace` attribute holds the
+    whitespace that follows it, so a non-empty `whitespace` marks a word
+    boundary. We accumulate consecutive tokens into a single word, taking
+    `start_ts` from the first token in the run and `end_ts` from the last.
     """
     words: list[WordTimestamp] = []
+
+    def _flush(buf: list) -> None:
+        if not buf:
+            return
+        text = "".join(getattr(t, "text", "") for t in buf).strip()
+        if not text:
+            return
+        words.append(WordTimestamp(
+            word=text,
+            start=round(buf[0].start_ts, 4),
+            end=round(buf[-1].end_ts, 4),
+        ))
+
     for r in results:
         tokens = getattr(r, "tokens", None)
         if not tokens:
             continue
+        buf: list = []
         for tok in tokens:
+            text = getattr(tok, "text", "")
             start_ts = getattr(tok, "start_ts", None)
             end_ts = getattr(tok, "end_ts", None)
-            text = getattr(tok, "text", "")
-            if start_ts is None or end_ts is None or not text.strip():
-                continue
-            words.append(WordTimestamp(
-                word=text.strip(),
-                start=round(start_ts, 4),
-                end=round(end_ts, 4),
-            ))
+            whitespace = getattr(tok, "whitespace", "")
+
+            if text and not text.isspace() and start_ts is not None and end_ts is not None:
+                buf.append(tok)
+
+            if whitespace:
+                _flush(buf)
+                buf = []
+        _flush(buf)
     return words
 
 

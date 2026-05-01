@@ -95,11 +95,15 @@ Each chunk's audio gets a short fade-in at the start and fade-out at the end (`C
 
 ### Word Timestamps (`chunk_words`)
 
-Kokoro's `Result.tokens` is a list of `MToken` objects, each with `.text`, `.start_ts`, `.end_ts`. After synthesis, `_extract_words` walks the tokens for each chunk and:
+Kokoro's `Result.tokens` is a list of `MToken` objects with `.text`, `.start_ts`, `.end_ts`, and `.whitespace`. **MTokens are sub-word units** — a contraction like `"don't"` is emitted as `["don", "'", "t"]`, a hyphenated word as multiple pieces, etc. The `whitespace` field holds the whitespace that *follows* the token, so a non-empty `whitespace` marks a word boundary.
 
-- Skips tokens with no timestamps (control / pause tokens)
-- Uses Kokoro's timestamps directly (chunk-relative)
-- Adds `chunk_audio_starts[i]` so timestamps are absolute within the chapter audio
+`_extract_words` therefore groups consecutive MTokens into a single word:
+
+- Append every token whose `text` is non-whitespace and has both `start_ts` and `end_ts` to a buffer.
+- When a token's `whitespace` is non-empty, flush the buffer as one `WordTimestamp`: text is the joined token texts, `start = buf[0].start_ts`, `end = buf[-1].end_ts`.
+- A boundary-marking token without timestamps (e.g. punctuation Misaki couldn't time) is dropped from the buffer but still flushes the prior run.
+
+Timestamps are chunk-relative coming out of `_extract_words`. `synthesize_chapter` then adds `chunk_audio_starts[i]` so timestamps are absolute within the chapter audio.
 
 The result is a `list[list[WordTimestamp]]` aligned 1:1 with the input chunks. Failed chunks get an empty list. These get serialized into `chapter_data.json` (see Step 6 / convert-book.py).
 
