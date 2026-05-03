@@ -46,13 +46,24 @@ def upload_rendition(
     author_slug: str, title_slug: str,
     rendition: str,
     audio_dir: str, manifest_path: str,
+    force: bool = False,
 ) -> list[str]
     # Returns list of uploaded R2 keys, or [] if already complete
+
+def upload_cover(
+    client, bucket: str,
+    author_slug: str, title_slug: str,
+    cover_path: str,
+    content_type: str = "image/jpeg",
+    force: bool = False,
+) -> str | None
+    # Returns key or None if already exists
 
 def upload_epub(
     client, bucket: str,
     author_slug: str, title_slug: str,
     epub_path: str,
+    force: bool = False,
 ) -> str | None
     # Returns key or None if already exists
 
@@ -61,6 +72,7 @@ def upload_chapter_data(
     author_slug: str, title_slug: str,
     rendition: str,
     chapter_data_path: str,
+    force: bool = False,
 ) -> str | None
 
 def upload_word_alignment(            # opt-in only (--whisperx)
@@ -68,8 +80,11 @@ def upload_word_alignment(            # opt-in only (--whisperx)
     author_slug: str, title_slug: str,
     rendition: str,
     word_alignment_path: str,
+    force: bool = False,
 ) -> str | None
 ```
+
+Every uploader takes `force: bool = False`. When `True`, the `key_exists` HEAD check is skipped and the object is overwritten. `convert-book.py --force` (used by `reprocess-book.py`) wires this through so a regenerated book replaces all of its R2 keys atomically per uploader.
 
 ## R2 Key Layout
 
