@@ -103,6 +103,8 @@ Kokoro's `Result.tokens` is a list of `MToken` objects with `.text`, `.start_ts`
 - When a token's `whitespace` is non-empty, flush the buffer as one `WordTimestamp`: text is the joined token texts, `start = buf[0].start_ts`, `end = buf[-1].end_ts`.
 - A boundary-marking token without timestamps (e.g. punctuation Misaki couldn't time) is dropped from the buffer but still flushes the prior run.
 
+A single `pipeline(text)` call can also yield multiple `Result` objects (Kokoro segments long inputs internally). Token `start_ts/end_ts` values are reported **relative to each Result's own audio**, not the concatenated output. `_extract_words` accumulates a running `offset` equal to the summed durations of prior Results (`len(r.audio) / sample_rate`) and adds it to every token timestamp before flushing — without this, every word past the first Result boundary lands at the wrong audio position and the client's binary search returns garbage.
+
 Timestamps are chunk-relative coming out of `_extract_words`. `synthesize_chapter` then adds `chunk_audio_starts[i]` so timestamps are absolute within the chapter audio.
 
 The result is a `list[list[WordTimestamp]]` aligned 1:1 with the input chunks. Failed chunks get an empty list. These get serialized into `chapter_data.json` (see Step 6 / convert-book.py).

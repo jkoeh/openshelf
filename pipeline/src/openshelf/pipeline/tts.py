@@ -116,7 +116,7 @@ def _apply_boundary_fades(
     return audio
 
 
-def _extract_words(results: list) -> list[WordTimestamp]:
+def _extract_words(results: list, sample_rate: int = TTS_SAMPLE_RATE) -> list[WordTimestamp]:
     """Extract word timestamps from Kokoro Result objects (chunk-relative).
 
     Misaki MTokens are sub-word units (a contraction like "don't" can split
@@ -124,10 +124,16 @@ def _extract_words(results: list) -> list[WordTimestamp]:
     whitespace that follows it, so a non-empty `whitespace` marks a word
     boundary. We accumulate consecutive tokens into a single word, taking
     `start_ts` from the first token in the run and `end_ts` from the last.
+
+    A single `pipeline(text)` call can yield multiple `Result` objects when
+    Kokoro segments the input internally. Token timestamps are reported
+    relative to *each Result's own audio*, so we accumulate audio durations
+    across Results and add the running offset to every token timestamp.
     """
     words: list[WordTimestamp] = []
+    offset = 0.0  # seconds of audio from prior Results in this synth call
 
-    def _flush(buf: list) -> None:
+    def _flush(buf: list, off: float) -> None:
         if not buf:
             return
         text = "".join(getattr(t, "text", "") for t in buf).strip()
@@ -135,14 +141,12 @@ def _extract_words(results: list) -> list[WordTimestamp]:
             return
         words.append(WordTimestamp(
             word=text,
-            start=round(buf[0].start_ts, 4),
-            end=round(buf[-1].end_ts, 4),
+            start=round(buf[0].start_ts + off, 4),
+            end=round(buf[-1].end_ts + off, 4),
         ))
 
     for r in results:
-        tokens = getattr(r, "tokens", None)
-        if not tokens:
-            continue
+        tokens = getattr(r, "tokens", None) or []
         buf: list = []
         for tok in tokens:
             text = getattr(tok, "text", "")
@@ -154,9 +158,17 @@ def _extract_words(results: list) -> list[WordTimestamp]:
                 buf.append(tok)
 
             if whitespace:
-                _flush(buf)
+                _flush(buf, offset)
                 buf = []
-        _flush(buf)
+        _flush(buf, offset)
+
+        # Advance the running offset by this Result's audio duration so the
+        # next Result's tokens land on the correct global timeline.
+        audio_attr = r.audio if hasattr(r, "audio") else (r[2] if len(r) > 2 else None)
+        if audio_attr is not None:
+            arr = np.asarray(audio_attr, dtype=np.float32)
+            offset += len(arr) / sample_rate
+
     return words
 
 

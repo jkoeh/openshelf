@@ -487,17 +487,29 @@ class TestExtractWords(unittest.TestCase):
         words = _extract_words(results)
         self.assertEqual(words, [])
 
-    def test_multiple_results(self):
+    def test_multiple_results_offsets_accumulate(self):
+        """Tokens in later Results are offset by the running audio duration."""
+        # Each Result has 24000 samples = 1.0s of audio at TTS_SAMPLE_RATE.
+        n = TTS_SAMPLE_RATE
         results = [
-            _FakeResult("First.", "p", _fake_audio(1000), [
-                _FakeToken("First.", 0.0, 0.3),
+            _FakeResult("First.", "p", _fake_audio(n), [
+                _FakeToken("First", 0.0, 0.3, whitespace=""),
+                _FakeToken(".",     0.3, 0.4, whitespace=" "),
             ]),
-            _FakeResult("Second.", "p", _fake_audio(1000), [
-                _FakeToken("Second.", 0.3, 0.6),
+            _FakeResult("Second.", "p", _fake_audio(n), [
+                # Per-Result reference frame: starts again from 0.0
+                _FakeToken("Second", 0.0, 0.3, whitespace=""),
+                _FakeToken(".",      0.3, 0.4, whitespace=" "),
             ]),
         ]
         words = _extract_words(results)
-        self.assertEqual(len(words), 2)
+        self.assertEqual([w.word for w in words], ["First.", "Second."])
+        # First word: no offset
+        self.assertAlmostEqual(words[0].start, 0.0)
+        self.assertAlmostEqual(words[0].end, 0.4)
+        # Second word: offset by Result 0's 1.0s of audio
+        self.assertAlmostEqual(words[1].start, 1.0)
+        self.assertAlmostEqual(words[1].end, 1.4)
 
     def test_groups_sub_word_tokens_by_whitespace(self):
         """A contraction split across multiple MTokens collapses into one word."""
