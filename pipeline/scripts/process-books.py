@@ -82,6 +82,8 @@ def convert_book(epub_path, source_name, args):
         cmd.append("--upload")
     if args.dry_run:
         cmd.append("--dry-run")
+    if args.force:
+        cmd.append("--force")
 
     return subprocess.run(cmd).returncode
 
@@ -98,6 +100,11 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Download + parse only, no audio")
     parser.add_argument("--keep-wav", action="store_true", help="Keep WAV files after encoding")
     parser.add_argument("--upload", action="store_true", help="Upload to R2 after conversion")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite local artifacts and R2 keys (regenerates audio + chapter_data)",
+    )
     parser.add_argument("--delay", type=float, default=2, help="Seconds between HTTP requests (default: 2)")
     parser.add_argument("--download-dir", default="download/books", help="Download directory (default: download/books)")
     args = parser.parse_args()

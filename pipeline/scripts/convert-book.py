@@ -43,6 +43,11 @@ def main():
     parser.add_argument("--keep-wav", action="store_true", help="Keep WAV files after encoding")
     parser.add_argument("--whisperx", action="store_true", help="Also run WhisperX alignment (legacy)")
     parser.add_argument("--upload", action="store_true", help="Upload to Cloudflare R2 after conversion")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite local artifacts and R2 keys (regenerates audio, chapter_data, manifest)",
+    )
     args = parser.parse_args()
 
     if not os.path.isfile(args.epub):
@@ -98,7 +103,7 @@ def main():
     # Write annotated EPUB (with stable element IDs injected for client sync)
     os.makedirs(book_dir, exist_ok=True)
     annotated_epub_path = os.path.join(book_dir, "book-annotated.epub")
-    if not os.path.exists(annotated_epub_path):
+    if args.force or not os.path.exists(annotated_epub_path):
         annotated_bytes = annotate_epub(args.epub, chapters)
         with open(annotated_epub_path, "wb") as f:
             f.write(annotated_bytes)
@@ -157,13 +162,16 @@ def main():
 
         opus_path = os.path.join(output_dir, f"chapter-{ch_num:02d}.m4a")
 
-        if os.path.exists(opus_path):
+        if not args.force and os.path.exists(opus_path):
             duration = audio_duration(opus_path)
             chapter_durations[ch_num] = duration
             chapter_chunk_starts[ch_num] = [-1.0] * len(chunks)
             chapter_chunk_words[ch_num] = [[] for _ in chunks]
             print(f"  [{ch_num:>2}/{len(chapters)}] {ch_title} — [SKIP] exists")
             continue
+
+        if args.force and os.path.exists(opus_path):
+            os.remove(opus_path)
 
         wav_path = os.path.join(output_dir, f"chapter-{ch_num:02d}.wav")
 
@@ -218,7 +226,7 @@ def main():
     # Step 5b: Write chapter_data.json (merged chunks + word timestamps from Kokoro)
     import dataclasses
     chapter_data_path = os.path.join(output_dir, "chapter_data.json")
-    if not os.path.exists(chapter_data_path):
+    if args.force or not os.path.exists(chapter_data_path):
         chapter_data = {
             "version": 1,
             "rendition": args.rendition,
@@ -252,7 +260,7 @@ def main():
     word_alignment_path = os.path.join(output_dir, "word_alignment.json")
     if args.whisperx:
         from openshelf.pipeline.word_aligner import align_chapter, write_word_alignment
-        if not os.path.exists(word_alignment_path):
+        if args.force or not os.path.exists(word_alignment_path):
             print("\nRunning WhisperX word alignment ...")
             word_chapters = []
             for ch_data in chunked_chapters:
@@ -274,10 +282,10 @@ def main():
         print("\nUploading to R2 ...")
         client = make_client()
         if cover_path:
-            upload_cover(client, R2_BUCKET, author_slug, title_slug, cover_path, cover_content_type)
-        upload_epub(client, R2_BUCKET, author_slug, title_slug, annotated_epub_path)
-        upload_rendition(client, R2_BUCKET, author_slug, title_slug, args.rendition, output_dir, manifest_path)
-        upload_chapter_data(client, R2_BUCKET, author_slug, title_slug, args.rendition, chapter_data_path)
+            upload_cover(client, R2_BUCKET, author_slug, title_slug, cover_path, cover_content_type, force=args.force)
+        upload_epub(client, R2_BUCKET, author_slug, title_slug, annotated_epub_path, force=args.force)
+        upload_rendition(client, R2_BUCKET, author_slug, title_slug, args.rendition, output_dir, manifest_path, force=args.force)
+        upload_chapter_data(client, R2_BUCKET, author_slug, title_slug, args.rendition, chapter_data_path, force=args.force)
         print("Upload complete.")
         print(f"R2 prefix: books/{author_slug}/{title_slug}/")
 

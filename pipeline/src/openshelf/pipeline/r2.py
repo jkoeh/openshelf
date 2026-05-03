@@ -54,17 +54,19 @@ def upload_rendition(
     rendition: str,
     audio_dir: str,
     manifest_path: str,
+    force: bool = False,
 ) -> list[str]:
     """Upload all audio files and manifest.json for a rendition to R2. Returns uploaded keys.
 
     Key pattern: books/{author}/{title}/audio/{rendition}/chapter-NN.m4a
     Idempotency: manifest.json is always uploaded last. Its presence on R2 signals
     that the rendition is complete. One HEAD request at the top — not one per file.
+    `force=True` overwrites the rendition even if the manifest is already present.
     """
     prefix = f"{_book_prefix(author_slug, title_slug)}/audio/{rendition}"
     manifest_key = f"{prefix}/manifest.json"
 
-    if key_exists(client, bucket, manifest_key):
+    if not force and key_exists(client, bucket, manifest_key):
         logger.info("Rendition already uploaded, skipping: %s", manifest_key)
         return []
 
@@ -108,16 +110,17 @@ def upload_cover(
     title_slug: str,
     cover_path: str,
     content_type: str = "image/jpeg",
+    force: bool = False,
 ) -> str | None:
     """Upload cover image to R2. Returns the key, or None if already exists.
 
     Key pattern: books/{author}/{title}/cover.jpg
-    Idempotent: skips upload if the key already exists.
+    Idempotent: skips upload if the key already exists; pass `force=True` to overwrite.
     """
     ext = ".jpg" if "jpeg" in content_type or "jpg" in content_type else ".png"
     key = f"{_book_prefix(author_slug, title_slug)}/cover{ext}"
 
-    if key_exists(client, bucket, key):
+    if not force and key_exists(client, bucket, key):
         logger.info("Cover already uploaded, skipping: %s", key)
         return None
 
@@ -140,15 +143,16 @@ def upload_epub(
     author_slug: str,
     title_slug: str,
     epub_path: str,
+    force: bool = False,
 ) -> str | None:
     """Upload an EPUB file to R2. Returns the key, or None if already exists.
 
     Key pattern: books/{author}/{title}/book.epub
-    Idempotent: skips upload if the key already exists.
+    Idempotent: skips upload if the key already exists; pass `force=True` to overwrite.
     """
     key = f"{_book_prefix(author_slug, title_slug)}/book.epub"
 
-    if key_exists(client, bucket, key):
+    if not force and key_exists(client, bucket, key):
         logger.info("EPUB already uploaded, skipping: %s", key)
         return None
 
@@ -172,16 +176,17 @@ def upload_word_alignment(
     title_slug: str,
     rendition: str,
     word_alignment_path: str,
+    force: bool = False,
 ) -> str | None:
     """Upload word_alignment.json to R2. Returns the key, or None if already exists.
 
     Key pattern: books/{author}/{title}/audio/{rendition}/word_alignment.json
-    Idempotent: skips upload if the key already exists.
+    Idempotent: skips upload if the key already exists; pass `force=True` to overwrite.
     """
     prefix = f"{_book_prefix(author_slug, title_slug)}/audio/{rendition}"
     key = f"{prefix}/word_alignment.json"
 
-    if key_exists(client, bucket, key):
+    if not force and key_exists(client, bucket, key):
         logger.info("Word alignment already uploaded, skipping: %s", key)
         return None
 
@@ -205,16 +210,17 @@ def upload_chapter_data(
     title_slug: str,
     rendition: str,
     chapter_data_path: str,
+    force: bool = False,
 ) -> str | None:
     """Upload chapter_data.json to R2. Returns the key, or None if already exists.
 
     Key pattern: books/{author}/{title}/audio/{rendition}/chapter_data.json
-    Idempotent: skips upload if the key already exists.
+    Idempotent: skips upload if the key already exists; pass `force=True` to overwrite.
     """
     prefix = f"{_book_prefix(author_slug, title_slug)}/audio/{rendition}"
     key = f"{prefix}/chapter_data.json"
 
-    if key_exists(client, bucket, key):
+    if not force and key_exists(client, bucket, key):
         logger.info("Chapter data already uploaded, skipping: %s", key)
         return None
 

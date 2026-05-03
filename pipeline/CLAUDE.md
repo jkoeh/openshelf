@@ -27,7 +27,7 @@ src/openshelf/
 
 scripts/
   process-books.py          # End-to-end: search, download, convert, (optionally) upload
-  e2e-book.py               # Convenience wrapper: author + title -> process-books --upload
+  reprocess-book.py         # Reprocess a downloaded book end-to-end with --force (overwrites local + R2). Does NOT redownload.
   download-books.py         # CLI for book scraping only
   convert-book.py           # CLI for EPUB -> audio conversion + alignment
   upload-books.py           # CLI for uploading pre-generated audio to R2
@@ -60,7 +60,7 @@ uv pip install -r pipeline/requirements.txt
 python3 pipeline/scripts/process-books.py --author "Kafka"
 python3 pipeline/scripts/process-books.py --author "Shakespeare" --book "Romeo"
 python3 pipeline/scripts/process-books.py --author "Kafka" --upload
-python3 pipeline/scripts/e2e-book.py Kafka Metamorphosis  # shorthand: always uploads
+python3 pipeline/scripts/reprocess-book.py Kafka Metamorphosis  # uses local EPUB, force-overwrites local + R2
 python3 pipeline/scripts/process-books.py --author "Kafka" --dry-run  # download + parse only, no audio
 python3 pipeline/scripts/process-books.py --epub path/to/book.epub --upload  # local file, skip download
 
