@@ -29,8 +29,8 @@ src/
     health.ts           # GET /api/v1/health
     catalog.ts          # GET /api/v1/catalog
     book.ts             # GET /api/v1/books/:author/:title
-    chapters.ts         # GET /api/v1/books/:author/:title/chapters/:number — text + inline word timestamps
-    audio.ts            # GET /api/v1/books/:author/:title/audio/:chapter — m4a stream, supports Range
+    chapters.ts         # GET /api/v1/books/:author/:title/chapters/:number?rendition=&build= — text + inline word timestamps (immutable)
+    audio.ts            # GET /api/v1/books/:author/:title/audio/:chapter?rendition=&build= — m4a stream, supports Range (immutable)
     cover.ts            # GET /api/v1/books/:author/:title/cover
     epub.ts             # GET /api/v1/books/:author/:title/epub
     alignment.ts        # GET /api/v1/books/:author/:title/alignment[/:chapter] — legacy, --whisperx only
@@ -91,7 +91,28 @@ npm run seed
 - Inside `app.openapi(...)` handlers, return errors with inline `c.json({ error: { code, message } }, status)` so the response is type-checked against `ErrorSchema`. The helpers in `utils/response.ts` are reserved for the global `onError`/`notFound` (which run outside any `createRoute`).
 - Path/query schemas live in `schemas/params.ts` if shared across routes; route-local response shapes live in the route file.
 - Tests use `@cloudflare/vitest-pool-workers` with fixture data in `fixtures/`. They use `app.request(...)` and are unaffected by the OpenAPI migration.
-- `chapters.ts` reads `audio/{rendition}/chapter_data.json` (single source of truth for chunk text + word timestamps). It flattens per-chunk word arrays and adds `chunk_idx` per word in the response.
+- `chapters.ts` reads `audio/{rendition}/builds/{build}/chapter_data.json` (single source of truth for chunk text + word timestamps). It flattens per-chunk word arrays and adds `chunk_idx` per word in the response.
+
+## Cache policy
+
+The cache header on a route is determined by **whether the URL is content-versioned**, not by the resource type:
+
+| URL form | Cache-Control | Rationale |
+|---|---|---|
+| `/books/:a/:t` (book manifest) | `public, max-age=60, stale-while-revalidate=86400` | Mutable pointer; the only place a new build's existence can be discovered |
+| `/books/:a/:t/cover`, `/epub` | `public, max-age=31536000, immutable` | Bytes never change for a book |
+| `/books/:a/:t/chapters/:n?rendition=&build=` | `public, max-age=31536000, immutable` | Build pin in URL ⇒ bytes never change |
+| `/books/:a/:t/audio/:c?rendition=&build=` | `public, max-age=31536000, immutable` | Same as above |
+| `/catalog` | `public, max-age=60, stale-while-revalidate=86400` | Mutable index of books |
+
+**Invariant:** if the response is sensitive to a build hash, that hash MUST be in the URL (query or path). Never serve different bytes from the same URL with `immutable`. The book manifest is the sole exception — it is the discovery layer that points at immutable build URLs and therefore must be short-cached.
+
+## Rendition vs build
+
+- **Rendition** (`kokoro-af-heart`) is user-facing — chosen by the user, exposed in the catalog and book manifest.
+- **Build** (`2a4f9c1`) is internal — a 7-char content hash from the pipeline. Surfaced only via the book manifest's per-rendition `current_build`.
+
+The client treats rendition as a setting and build as transparent: it reads the book manifest, looks up `current_build` for the user's chosen rendition, pins that hash for the duration of the chapter session, and includes it in chapter and audio URLs as `?build=...`. New builds are picked up on the next chapter or app restart.
 
 ## Adding or modifying a route
 

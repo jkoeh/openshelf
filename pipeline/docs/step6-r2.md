@@ -5,29 +5,29 @@
 
 ## Purpose
 
-Upload all pipeline artifacts to Cloudflare R2 (S3-compatible object storage). Each upload function is independently idempotent via HEAD checks. The rendition upload uses a single-gate idempotency pattern — only the manifest existence is checked, not each individual file.
+Upload all pipeline artifacts to Cloudflare R2 (S3-compatible object storage) under a build-versioned key layout. Per-build artifacts (audio, chapter_data, rendition-manifest) live under `audio/{rendition}/builds/{build}/...` and are immutable once written. The per-book `manifest.json` is the single mutable pointer that names the `current_build` per rendition and is always overwritten on upload.
 
 ```mermaid
 graph TD
-    A[Pipeline outputs] --> B[make_client]
+    A[Pipeline outputs + build_id] --> B[make_client]
     B --> C[upload_epub]
     B --> D[upload_cover]
-    B --> E[upload_rendition]
+    B --> E[upload_rendition_build]
     B --> F[upload_chapter_data]
-    B --> G[upload_word_alignment - opt-in]
+    B --> G[upload_rendition_manifest]
+    B --> H[upload_book_manifest]
 
-    C --> C1{book.epub exists on R2?}
+    C --> C1{book.epub on R2?}
     C1 -->|Yes| C2[Skip]
     C1 -->|No| C3[PUT book.epub]
 
-    E --> E1{manifest.json exists on R2?}
-    E1 -->|Yes| E2[Skip entire rendition]
+    E --> E1{rendition-manifest.json for build on R2?}
+    E1 -->|Yes| E2[Skip entire build]
     E1 -->|No| E3[PUT all m4a files]
-    E3 --> E4[PUT manifest.json last]
+    E3 --> E4[PUT chapter_data.json]
+    E4 --> E5[PUT rendition-manifest.json last]
 
-    F --> F1{chapter_data.json exists on R2?}
-    F1 -->|Yes| F2[Skip]
-    F1 -->|No| F3[PUT chapter_data.json]
+    H --> H1[Always overwrite book manifest]
 ```
 
 ## Interface
@@ -41,14 +41,25 @@ def make_client() -> boto3.client
 def key_exists(client, bucket: str, key: str) -> bool
     # HEAD request; True if exists, False on 404, re-raises other errors
 
-def upload_rendition(
+def upload_rendition_build(
     client, bucket: str,
     author_slug: str, title_slug: str,
-    rendition: str,
-    audio_dir: str, manifest_path: str,
+    rendition: str, build_id: str,
+    audio_dir: str,
+    chapter_data_path: str,
+    rendition_manifest_path: str,
     force: bool = False,
 ) -> list[str]
-    # Returns list of uploaded R2 keys, or [] if already complete
+    # Writes all per-build artifacts under audio/{rendition}/builds/{build}/.
+    # Single-gate idempotency: rendition-manifest.json existence signals the
+    # build is complete. Returns uploaded keys (or [] if already complete).
+
+def upload_book_manifest(
+    client, bucket: str,
+    author_slug: str, title_slug: str,
+    manifest_path: str,
+) -> str
+    # Always overwrites. This is the single mutable pointer.
 
 def upload_cover(
     client, bucket: str,
@@ -57,7 +68,6 @@ def upload_cover(
     content_type: str = "image/jpeg",
     force: bool = False,
 ) -> str | None
-    # Returns key or None if already exists
 
 def upload_epub(
     client, bucket: str,
@@ -65,57 +75,52 @@ def upload_epub(
     epub_path: str,
     force: bool = False,
 ) -> str | None
-    # Returns key or None if already exists
-
-def upload_chapter_data(
-    client, bucket: str,
-    author_slug: str, title_slug: str,
-    rendition: str,
-    chapter_data_path: str,
-    force: bool = False,
-) -> str | None
-
-def upload_word_alignment(            # opt-in only (--whisperx)
-    client, bucket: str,
-    author_slug: str, title_slug: str,
-    rendition: str,
-    word_alignment_path: str,
-    force: bool = False,
-) -> str | None
 ```
 
-Every uploader takes `force: bool = False`. When `True`, the `key_exists` HEAD check is skipped and the object is overwritten. `convert-book.py --force` (used by `reprocess-book.py`) wires this through so a regenerated book replaces all of its R2 keys atomically per uploader.
+`force=True` on the per-artifact uploaders skips the HEAD existence check and overwrites — used by `reprocess-book.py`. The book manifest does not take `force` because it is unconditionally overwritten on every run.
 
 ## R2 Key Layout
 
 ```
 books/{author_slug}/{title_slug}/
-  book.epub                                    # annotated EPUB
-  cover.{jpg|png}                              # cover image
-  audio/{rendition}/
-    chapter-01.m4a                             # audio files
-    chapter-02.m4a
-    manifest.json                              # chapter metadata
-    chapter_data.json                          # per-chunk text + Kokoro word timestamps
-    word_alignment.json                        # only present if --whisperx was used
+  book.epub                                              # immutable
+  cover.{jpg|png}                                        # immutable
+  manifest.json                                          # MUTABLE — the only mutable per-book object
+  audio/
+    {rendition}/                                         # e.g. kokoro-af-heart
+      builds/
+        {build_id}/                                      # 7-char content hash
+          chapter-01.m4a                                 # immutable
+          chapter-02.m4a
+          chapter_data.json                              # immutable
+          rendition-manifest.json                        # immutable; written last
 ```
 
-### `chapter_data.json` shape
+Every key under a `builds/{build_id}/` prefix is part of a coherent atomic snapshot: the audio bytes, the chapter_data word timestamps, and the rendition-manifest's chapter durations all describe the same build. A client that pins to a build hash for a chapter session is guaranteed not to see a mid-listen mismatch.
+
+### Key constructors
+
+All key construction goes through `pipeline/src/openshelf/pipeline/r2_keys.py` — never assemble paths inline. Mirrored on the worker side in `worker/src/utils/r2-keys.ts`; tests on both sides assert the same string outputs so the two languages can never drift.
+
+## chapter_data.json shape
+
+Unchanged from prior shape — only the path it lives at has changed.
 
 ```json
 {
   "version": 1,
   "rendition": "kokoro-af-heart",
+  "build": "2a4f9c1",
   "chapters": [
     {
       "number": 1,
-      "title": "Chapter 1",
+      "title": "I",
       "word_count": 1234,
       "chunks": [
         {
           "text": "Someone must have been telling lies about Josef K.",
           "words": [
-            {"word": "Someone", "start": 0.0, "end": 0.31},
+            {"word": "Someone", "start": 0.0,  "end": 0.31},
             {"word": "must",    "start": 0.31, "end": 0.48}
           ]
         }
@@ -125,24 +130,38 @@ books/{author_slug}/{title_slug}/
 }
 ```
 
-The worker's `/chapters/:n` endpoint reads this file directly: it returns `chunks` as flat strings, plus a flattened `words` array with `chunk_idx` injected per word.
+The `build` field is added so the file is self-identifying — a client that has the bytes can sanity-check it matches the build it pinned to.
 
 ## Behavior
 
 ### Idempotency Strategy
 
-**Rendition upload** uses a single-gate pattern: only `manifest.json` existence is checked (one HEAD request). If it exists, the entire rendition is skipped. This works because manifest is always uploaded **last** — its presence guarantees all Opus files are already on R2. A partial previous run's files are safely overwritten on retry (PUT is idempotent).
+**Per-build upload** uses a single-gate pattern: only `rendition-manifest.json` existence is checked. If it exists, the entire build is skipped. The manifest is uploaded **last**, so its presence guarantees every other byte in the build prefix is already on R2.
 
-**Other uploads** (EPUB, cover, chapter_data, word_alignment) each check their own key existence independently.
+**Other per-book uploads** (EPUB, cover) check their own key existence independently.
 
-This avoids O(N) HEAD requests per book. For a 20-chapter book, it's a handful of HEAD requests total instead of 24.
+**Book manifest** is always overwritten — no existence check.
+
+A `--force` reprocess that produces the same `build_id` (no pipeline change since last run) is effectively a no-op upload aside from rewriting the book manifest. A reprocess that bumps the build re-uploads everything under the new build prefix and rewrites the book manifest to point there.
 
 ### Cache Headers
 
-| File type | Cache-Control | Rationale |
+| Object | Cache-Control | Why |
 |---|---|---|
-| m4a, EPUB, cover, chapter_data, alignment | `public, max-age=31536000, immutable` | Content never changes once written |
-| manifest.json | `public, max-age=60` | Allows updates to propagate on reprocessing |
+| `manifest.json` (book-level) | `public, max-age=60, stale-while-revalidate=86400` | Mutable pointer; clients converge on new builds within ~60s |
+| Everything else | `public, max-age=31536000, immutable` | URL itself is build-pinned; bytes never change for that URL |
+
+The cache headers stored on R2 objects are **defaults** — the worker overrides them per-route based on the same policy. R2 metadata only matters for direct R2-public-bucket access, which OpenShelf does not use.
+
+### Garbage Collection
+
+`available_builds` in the book manifest is truncated to the most recent N (default 2) on every reprocess. Older build hashes still have bytes on R2 — those are reaped by a separate `gc-old-builds.py` script that:
+
+1. Lists all `audio/{rendition}/builds/*` prefixes for a book.
+2. Reads the book manifest to learn which build IDs are retained.
+3. Deletes all keys under prefixes whose build ID is not in the retained set.
+
+This is not run in-line with the upload to keep reprocesses fast and to give an instant rollback window in case a freshly-shipped build is broken.
 
 ### Content Types
 
@@ -154,7 +173,7 @@ This avoids O(N) HEAD requests per book. For a 20-chapter book, it's a handful o
 
 ### ContentDisposition
 
-Opus files include `ContentDisposition: inline` so browsers stream instead of downloading.
+m4a files include `ContentDisposition: inline` so browsers stream instead of downloading.
 
 ### Client Configuration
 

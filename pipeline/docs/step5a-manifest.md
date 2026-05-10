@@ -1,27 +1,28 @@
-# Step 5a: Manifest
+# Step 5a: Book Manifest
 
 **Module:** `src/openshelf/pipeline/manifest.py`
 **Test:** `tests/pipeline/test_manifest.py`
 
 ## Purpose
 
-Generate a `manifest.json` file containing book and chapter metadata. This is the entry point for client apps — it tells them what chapters exist, their filenames, durations, and word counts.
+The book-level `manifest.json` is the **only mutable per-book artifact on R2**. It is a tiny pointer file that lists the renditions available for a book and names the `current_build` per rendition.
+
+Every other per-book artifact (audio, chapter_data, rendition-manifest, EPUB, cover) is immutable and lives under a build-versioned R2 prefix. Clients hit this manifest first, read the `current_build` for the rendition the user picked, then construct immutable URLs for the actual content.
 
 ```mermaid
 graph TD
-    A[list of ChapterMeta] --> B{manifest.json exists?}
-    B -->|Yes| C[Return path, skip]
-    B -->|No| D[Build manifest dict]
-    D --> E[Add metadata: author, title, source, rendition]
-    E --> F[Add generated_at timestamp]
-    F --> G[Sum total_duration_seconds]
-    G --> H[json.dump to file]
-    H --> I[Return manifest path]
+    A[ChapterMeta list + build_id] --> B[generate_rendition_entry]
+    B --> C{prior manifest.json on R2?}
+    C -->|No| D[generate_book_manifest]
+    C -->|Yes| E[merge_book_manifest]
+    D --> F[Write manifest.json]
+    E --> F
+    F --> G[Upload to R2 with force=True]
 ```
 
 ## Interface
 
-### Dataclass
+### Dataclasses
 
 ```python
 @dataclass
@@ -31,66 +32,87 @@ class ChapterMeta:
     filename: str           # "chapter-01.m4a"
     duration_seconds: float
     word_count: int
+
+@dataclass
+class RenditionEntry:
+    voice: str              # "af_heart"
+    engine: str             # "kokoro"
+    display: str            # "Heart" — user-facing label
+    current_build: str      # 7-char hash (build_id)
+    available_builds: list[str]   # all builds still resident on R2, current first
 ```
 
-### Public Function
+### Public Functions
 
 ```python
-def generate_manifest(
+def generate_rendition_entry(
+    voice: str,
+    engine: str,
+    display: str,
+    build_id: str,
+) -> RenditionEntry
+
+def generate_book_manifest(
     author: str,
     title: str,
-    source: str,                    # "gutenberg" or "standard-ebooks"
-    chapters: list[ChapterMeta],
+    source: str,
+    renditions: dict[str, RenditionEntry],   # keyed by rendition slug
     output_dir: str,
-    rendition: str = "",            # "kokoro-af-heart"
 ) -> str  # returns path to manifest.json
+
+def merge_book_manifest(
+    prior_manifest: dict,
+    rendition: str,
+    new_entry: RenditionEntry,
+    retain: int = 2,                          # keep last N builds
+) -> dict
+    # Updates `current_build` to new_entry.current_build,
+    # prepends it to `available_builds`, deduplicates, trims to `retain`.
+    # Other renditions in the prior manifest are preserved untouched.
 ```
 
 ## Behavior
 
-### Idempotency
-
-If `manifest.json` already exists in `output_dir`, the function returns its path immediately without writing. This means a manifest is never overwritten — delete it to regenerate.
-
-### Output Directory
-
-Created with `os.makedirs(exist_ok=True)` if it doesn't exist.
-
-### manifest.json Format
+### `manifest.json` shape
 
 ```json
 {
-  "title": "Crime and Punishment",
-  "author": "Fyodor Dostoevsky",
+  "title": "The Metamorphosis",
+  "author": "Franz Kafka",
   "source": "gutenberg",
-  "rendition": "kokoro-af-heart",
-  "generated_at": "2026-03-15T10:30:00+00:00",
-  "total_duration_seconds": 77400.5,
-  "chapters": [
-    {
-      "number": 1,
-      "title": "Part I, Chapter I",
-      "filename": "chapter-01.m4a",
-      "duration_seconds": 1847.3,
-      "word_count": 3241
+  "renditions": {
+    "kokoro-af-heart": {
+      "voice": "af_heart",
+      "engine": "kokoro",
+      "display": "Heart",
+      "current_build": "2a4f9c1",
+      "available_builds": ["2a4f9c1", "7e8b4d2"]
     }
-  ]
+  }
 }
 ```
 
-### Fields
+- The keys of `renditions` are the rendition slugs used in R2 paths and HTTP query params.
+- `available_builds` is ordered most-recent-first and includes `current_build` at index 0.
+- `display` is purely a UI string.
 
-| Field | Source |
-|---|---|
-| `title`, `author` | EPUB DC metadata |
-| `source` | CLI `--source` flag |
-| `rendition` | CLI `--rendition` flag |
-| `generated_at` | UTC ISO-8601 timestamp |
-| `total_duration_seconds` | Sum of all chapter durations |
-| `chapters[].filename` | Constructed by caller (e.g. `chapter-01.m4a`) |
-| `chapters[].duration_seconds` | From encoder or ffprobe |
-| `chapters[].word_count` | From epub_parser |
+### Mutability
+
+This file is **always overwritten** on upload (`upload_book_manifest(..., force=True)`). It is the only object in the per-book namespace that the worker treats as mutable. Its R2 key has `Cache-Control: public, max-age=60, stale-while-revalidate=86400`.
+
+### Merge semantics
+
+When reprocessing produces a new build for a rendition that already has prior builds on R2:
+
+1. Insert `new_entry.current_build` at the front of `available_builds`.
+2. Deduplicate — if the build hash matches the previous current build (no-op rerun), nothing changes.
+3. Truncate to the most recent `retain` builds. Older entries are dropped from the list **but their R2 objects are not deleted**; a separate GC step (see `step6-r2.md`) removes orphaned bytes.
+4. Other renditions in the prior manifest are preserved unchanged.
+
+### Where chapter durations and word counts go
+
+They no longer live in this file. Those move to the **per-build rendition manifest** (`step5c-rendition-manifest.md`), which is itself an immutable artifact under the build prefix. This file stays small and stable across reprocesses that don't change the rendition set.
 
 ## Dependencies
 
-- Standard library only (json, os, datetime)
+- Standard library only (json, os)

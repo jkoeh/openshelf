@@ -17,39 +17,45 @@ flowchart LR
         P3 --> P4[tts.synthesize_chapter<br/>Kokoro KPipeline]
         P4 -->|WAV + chunk_words<br/>+ chunk_audio_starts| P5[encode_to_aac<br/>m4a]
         P4 --> P6[chapter_data.json<br/>chunks + words]
-        P5 --> P7[manifest.json]
+        P5 --> P7[rendition-manifest.json<br/>per-build chapter list]
         P2 --> P8[annotated EPUB<br/>+ cover]
+        P9[compute_build_id<br/>7-char hash of pipeline + config + voice] --> P5
+        P9 --> P6
+        P9 --> P7
+        P7 --> P10[book manifest.json<br/>renditions[].current_build]
     end
 
     subgraph R2[Cloudflare R2]
         direction TB
         R_EPUB[book.epub]
         R_COVER[cover jpg/png]
-        R_M4A[audio/{rendition}/chapter-NN.m4a]
-        R_MAN[audio/{rendition}/manifest.json]
-        R_CD[audio/{rendition}/chapter_data.json]
+        R_BOOKMAN[manifest.json<br/>book-level pointer · MUTABLE]
+        R_RMAN[audio/{rendition}/builds/{build}/<br/>rendition-manifest.json]
+        R_M4A[audio/{rendition}/builds/{build}/<br/>chapter-NN.m4a]
+        R_CD[audio/{rendition}/builds/{build}/<br/>chapter_data.json]
         R_CAT[catalog.json]
     end
 
     P5 --> R_M4A
     P6 --> R_CD
-    P7 --> R_MAN
+    P7 --> R_RMAN
+    P10 --> R_BOOKMAN
     P8 --> R_EPUB
     P8 --> R_COVER
 
     subgraph Worker[Worker — Cloudflare/Hono + zod-openapi]
         direction TB
         W_CAT[GET /catalog]
-        W_BOOK[GET /books/:a/:t<br/>→ manifest]
-        W_CH[GET /books/:a/:t/chapters/:n<br/>→ text + flat words[chunk_idx]]
-        W_AUDIO[GET /books/:a/:t/audio/:n<br/>→ m4a stream / range]
+        W_BOOK[GET /books/:a/:t<br/>→ book manifest with current_build per rendition]
+        W_CH[GET /books/:a/:t/chapters/:n<br/>?rendition · ?build<br/>→ text + flat words[chunk_idx]]
+        W_AUDIO[GET /books/:a/:t/audio/:n<br/>?rendition · ?build<br/>→ m4a stream / range]
         W_COVER[GET /books/:a/:t/cover]
         W_EPUB[GET /books/:a/:t/epub]
         W_SPEC[GET /openapi.json + /docs<br/>auto-generated from Zod schemas]
     end
 
     R_CAT --> W_CAT
-    R_MAN --> W_BOOK
+    R_BOOKMAN --> W_BOOK
     R_CD  --> W_CH
     R_M4A --> W_AUDIO
     R_COVER --> W_COVER
@@ -58,9 +64,9 @@ flowchart LR
     subgraph Client[Client — Expo]
         direction TB
         C1[Catalog page<br/>fetchCatalog]
-        C2[Book detail<br/>fetchBook → manifest]
-        C3[Reader page<br/>fetchChapter → text + words]
-        C3 --> C4[expo-audio player<br/>streams m4a]
+        C2[Book detail<br/>fetchBook → manifest with renditions]
+        C3[Reader page<br/>pin build at chapter load<br/>fetchChapter rendition build → text + words]
+        C3 --> C4[expo-audio player<br/>streams m4a rendition build]
         C3 --> C5[useSyncEngine<br/>rAF reads player.currentTime]
         C5 -->|findWordAtTime| C6[active word / chunk]
         C6 --> C7[ReadingPane highlights word]
@@ -80,6 +86,17 @@ Notes:
 - The `chapter_data.json` produced in step P6 is the single source for both chunk text and word timestamps the client needs — there is no separate alignment fetch on the happy path.
 - The client does not poll status for sync; `useSyncEngine` reads `player.currentTime` directly inside `requestAnimationFrame` and only re-renders when the active word index changes.
 - Tap-to-seek in the reader looks up `words[i].start` and calls `player.seekTo`.
+
+### Rendition vs build invariant
+
+OpenShelf separates two orthogonal concepts that used to be conflated:
+
+- **Rendition** is a user-facing artistic identity (a Kokoro voice + engine). Examples: `kokoro-af-heart`, `kokoro-bf-emma`. Stable across pipeline changes. The user picks a rendition.
+- **Build** is an internal pipeline-output identity. A 7-char content hash derived from pipeline-affecting config + `PIPELINE_VERSION`. Bumps every time output bytes change. The user never sees it.
+
+Storage and HTTP URLs include **both**: `audio/{rendition}/builds/{build}/...` on R2; `?rendition=...&build=...` on every immutable HTTP route. The book-level `manifest.json` is the single mutable pointer that names the `current_build` per rendition. This makes audio + chapter_data + rendition-manifest a coherent atomic snapshot per (rendition, build), so a client can never mix bytes from different builds mid-session.
+
+This is the contract that lets every per-build URL set `Cache-Control: immutable` honestly. Only the book manifest carries a short cache.
 
 ## Monorepo Structure
 
