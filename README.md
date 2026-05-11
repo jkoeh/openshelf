@@ -49,7 +49,7 @@ The platform enables read-along highlighting and seamless switching between read
 1. Tapped word -> look up `start` time in `chapter_data.json`
 2. Seek audio player to that time
 
-WhisperX forced alignment is no longer in the default path; Kokoro provides timestamps natively. WhisperX is still available behind `convert-book.py --whisperx` and is used by the audio-quality test for roundtrip ASR/WER validation.
+WhisperX forced alignment is no longer published as a public artifact. Kokoro provides timestamps natively in `chapter_data.json`. WhisperX remains in-tree as internal QA tooling used by `test-audio-quality.py` for roundtrip ASR/WER validation.
 
 ## R2 Storage Layout
 
@@ -115,9 +115,6 @@ python3 scripts/convert-book.py path/to/book.epub --upload
 
 # Choose voice and device
 python3 scripts/convert-book.py path/to/book.epub --voice bf_emma --device cpu
-
-# Also run WhisperX (legacy / opt-in — for sanity-checking Kokoro timestamps)
-python3 scripts/convert-book.py path/to/book.epub --whisperx
 ```
 
 Output goes to `audio/{author-slug}/{title-slug}/{rendition}/`.
@@ -140,7 +137,6 @@ python3 scripts/upload-books.py path/to/book.epub
 | `--device` | auto | — | cuda / mps / cpu |
 | `--dry-run` | off | — | Parse only, no audio |
 | `--keep-wav` | off | — | Keep intermediate WAVs |
-| `--whisperx` | off | — | Also run WhisperX alignment (legacy) |
 | `--upload` | off | — | Upload to R2 |
 
 ## Run Tests

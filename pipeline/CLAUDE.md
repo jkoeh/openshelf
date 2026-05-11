@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Python pipeline that downloads EPUB books, converts them to AI-narrated audio (Kokoro TTS), captures word-level timestamps directly from Kokoro's token output, and uploads everything to Cloudflare R2. WhisperX forced alignment is supported as an optional/legacy path (`convert-book.py --whisperx`) and is also used by the audio-quality test for roundtrip transcription.
+Python pipeline that downloads EPUB books, converts them to AI-narrated audio (Kokoro TTS), captures word-level timestamps directly from Kokoro's token output, and uploads everything to Cloudflare R2. WhisperX is no longer part of the public artifact set — it remains in-tree as internal QA tooling used by `test-audio-quality.py` for roundtrip ASR/WER validation.
 
 ## Structure
 
@@ -20,8 +20,8 @@ src/openshelf/
     tts.py                  # Step 3:  chunks -> WAV + per-chunk word timestamps via Kokoro
     encoder.py              # Step 4:  WAV -> AAC (.m4a) via ffmpeg
     manifest.py             # Step 5a/c: book + per-build rendition manifests
-    word_aligner.py         # Step 5b: WhisperX forced alignment (opt-in via --whisperx)
-    transcriber.py          # WhisperX ASR + WER (used by test-audio-quality)
+    word_aligner.py         # WhisperX forced alignment — internal QA only, used by test-audio-quality
+    transcriber.py          # WhisperX ASR + WER — internal QA only, used by test-audio-quality
     build.py                # compute_build_id() — 7-char hash for (rendition, voice, config)
     r2_keys.py              # Pure-string R2 key constructors (mirrored in worker/src/utils/r2-keys.ts)
     r2.py                   # Step 6:  upload to Cloudflare R2 under build-versioned keys
@@ -31,7 +31,7 @@ scripts/
   process-books.py          # End-to-end: search, download, convert, (optionally) upload
   reprocess-book.py         # Reprocess a downloaded book end-to-end with --force (overwrites local + R2). Does NOT redownload.
   download-books.py         # CLI for book scraping only
-  convert-book.py           # CLI for EPUB -> audio conversion + alignment
+  convert-book.py           # CLI for EPUB -> audio conversion
   upload-books.py           # CLI for uploading pre-generated audio to R2
   build-catalog.py          # Rebuild catalog.json on R2 from all uploaded manifests
   test-audio-quality.py     # Integration test: validates audio output quality and alignment

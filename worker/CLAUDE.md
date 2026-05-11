@@ -33,7 +33,6 @@ src/
     audio.ts            # GET /api/v1/books/:author/:title/audio/:chapter?rendition=&build= — m4a stream, supports Range (immutable)
     cover.ts            # GET /api/v1/books/:author/:title/cover
     epub.ts             # GET /api/v1/books/:author/:title/epub
-    alignment.ts        # GET /api/v1/books/:author/:title/alignment[/:chapter] — legacy, --whisperx only
   utils/
     openapi-app.ts      # createOpenAPIApp() — OpenAPIHono factory with shared defaultHook for 400s
     r2-keys.ts          # R2 key builders

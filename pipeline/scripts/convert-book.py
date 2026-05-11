@@ -41,7 +41,6 @@ def main():
     parser.add_argument("--device", default=None, help="Device: cuda, mps, cpu (default: auto)")
     parser.add_argument("--dry-run", action="store_true", help="Parse and chunk only, no audio")
     parser.add_argument("--keep-wav", action="store_true", help="Keep WAV files after encoding")
-    parser.add_argument("--whisperx", action="store_true", help="Also run WhisperX alignment (legacy)")
     parser.add_argument("--upload", action="store_true", help="Upload to Cloudflare R2 after conversion")
     parser.add_argument(
         "--force",
@@ -255,26 +254,6 @@ def main():
         print(f"\nChapter data: {chapter_data_path}")
     else:
         print(f"\nChapter data already exists: {chapter_data_path}")
-
-    # Step 5c: Optional WhisperX alignment (legacy, for validation)
-    word_alignment_path = os.path.join(output_dir, "word_alignment.json")
-    if args.whisperx:
-        from openshelf.pipeline.word_aligner import align_chapter, write_word_alignment
-        if args.force or not os.path.exists(word_alignment_path):
-            print("\nRunning WhisperX word alignment ...")
-            word_chapters = []
-            for ch_data in chunked_chapters:
-                ch_num = ch_data["number"]
-                opus_path = os.path.join(output_dir, f"chapter-{ch_num:02d}.m4a")
-                chunk_texts = [c.text for c in ch_data["chunks"]]
-                words = align_chapter(
-                    opus_path, chunk_texts, chapter_chunk_starts[ch_num], device=device
-                )
-                word_chapters.append({"number": ch_num, "words": words})
-            write_word_alignment(word_chapters, args.rendition, word_alignment_path)
-            print(f"Word alignment: {word_alignment_path}")
-        else:
-            print(f"Word alignment already exists: {word_alignment_path}")
 
     # Step 6: Upload to R2
     if args.upload:
