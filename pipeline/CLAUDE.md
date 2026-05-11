@@ -19,10 +19,11 @@ src/openshelf/
     text_chunker.py         # Step 2:  paragraphs -> TTS-sized Chunks
     tts.py                  # Step 3:  chunks -> WAV + per-chunk word timestamps via Kokoro
     encoder.py              # Step 4:  WAV -> AAC (.m4a) via ffmpeg
-    manifest.py             # Step 5a: chapter metadata JSON
+    manifest.py             # Step 5a/c: book + per-build rendition manifests
     word_aligner.py         # Step 5b: WhisperX forced alignment (opt-in via --whisperx)
     transcriber.py          # WhisperX ASR + WER (used by test-audio-quality)
-    r2.py                   # Step 6:  upload to Cloudflare R2
+    build.py                # compute_build_id() — 7-char hash for (rendition, voice, config)
+    r2.py                   # Step 6:  upload to Cloudflare R2 under build-versioned keys
     runner.py               # orchestrator (stub)
 
 scripts/

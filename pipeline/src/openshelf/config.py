@@ -22,6 +22,11 @@ USER_AGENT = "BookScraper/1.0 (educational project)"
 GUTENDEX_API = "https://gutendex.com/books"
 SE_BASE = "https://standardebooks.org"
 
+# Pipeline version — bumped manually when code changes affect TTS output bytes
+# but config constants below are unchanged. Combined with config + voice + rendition
+# into the build_id hash. See pipeline/docs/step6-r2.md.
+PIPELINE_VERSION = "1"
+
 # TTS
 TTS_VOICE = "af_heart"
 TTS_LANGUAGE = "a"  # Kokoro lang_code: a=American English, b=British English
