@@ -1,4 +1,18 @@
-"""Step 6: Upload audio files, chunks, EPUBs, and manifests to Cloudflare R2."""
+"""R2 uploaders for the build-versioned layout.
+
+See pipeline/docs/step6-r2.md for the layout. Every key construction is
+delegated to `r2_keys`; this module only owns upload behaviour — headers,
+the single-gate idempotency check, and the per-uploader force semantics.
+
+Key invariants enforced here:
+
+- Per-build artifacts (audio, chapter_data, rendition-manifest) all live
+  under the same `audio/{rendition}/builds/{build}/` prefix and are written
+  in a single call to `upload_rendition_build`. The rendition-manifest is
+  always uploaded last so its presence on R2 signals the build is complete.
+- The book manifest is the only mutable per-book artifact; it is always
+  overwritten and takes no `force` parameter.
+"""
 
 from __future__ import annotations
 
@@ -13,11 +27,16 @@ from openshelf.config import (
     R2_ACCOUNT_ID,
     R2_CACHE_CONTROL_IMMUTABLE,
     R2_CACHE_CONTROL_MANIFEST,
-    R2_PREFIX_BOOKS,
     R2_SECRET_KEY,
 )
+from openshelf.pipeline import r2_keys
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Client + helpers
+# ---------------------------------------------------------------------------
 
 
 def make_client():
@@ -31,12 +50,8 @@ def make_client():
     )
 
 
-def _book_prefix(author_slug: str, title_slug: str) -> str:
-    return f"{R2_PREFIX_BOOKS}/{author_slug}/{title_slug}"
-
-
 def key_exists(client, bucket: str, key: str) -> bool:
-    """Return True if the key already exists in the bucket, False on 404."""
+    """Return True if the key exists in the bucket, False on 404."""
     try:
         client.head_object(Bucket=bucket, Key=key)
         return True
@@ -46,35 +61,45 @@ def key_exists(client, bucket: str, key: str) -> bool:
         raise
 
 
-def upload_rendition(
+# ---------------------------------------------------------------------------
+# Per-build upload (audio + chapter_data + rendition-manifest)
+# ---------------------------------------------------------------------------
+
+
+def upload_rendition_build(
     client,
     bucket: str,
     author_slug: str,
     title_slug: str,
     rendition: str,
+    build_id: str,
     audio_dir: str,
-    manifest_path: str,
+    chapter_data_path: str,
+    rendition_manifest_path: str,
     force: bool = False,
 ) -> list[str]:
-    """Upload all audio files and manifest.json for a rendition to R2. Returns uploaded keys.
+    """Upload every per-build artifact for one (rendition, build).
 
-    Key pattern: books/{author}/{title}/audio/{rendition}/chapter-NN.m4a
-    Idempotency: manifest.json is always uploaded last. Its presence on R2 signals
-    that the rendition is complete. One HEAD request at the top — not one per file.
-    `force=True` overwrites the rendition even if the manifest is already present.
+    Order: all m4a files, then chapter_data.json, then rendition-manifest.json
+    last. The rendition-manifest is the single-gate idempotency signal: if
+    it already exists on R2, the whole build is skipped (one HEAD request,
+    not O(N) per file). `force=True` skips the check and re-uploads.
+
+    Returns the list of R2 keys written (empty list when skipped).
     """
-    prefix = f"{_book_prefix(author_slug, title_slug)}/audio/{rendition}"
-    manifest_key = f"{prefix}/manifest.json"
+    manifest_key = r2_keys.rendition_manifest_key(author_slug, title_slug, rendition, build_id)
 
     if not force and key_exists(client, bucket, manifest_key):
-        logger.info("Rendition already uploaded, skipping: %s", manifest_key)
+        logger.info("Build already uploaded, skipping: %s", manifest_key)
         return []
 
     uploaded: list[str] = []
 
-    audio_files = sorted(f for f in os.listdir(audio_dir) if f.endswith(".m4a"))
-    for filename in audio_files:
-        key = f"{prefix}/{filename}"
+    # 1. Audio files, sorted to ensure stable ordering across runs.
+    for filename in sorted(f for f in os.listdir(audio_dir) if f.endswith(".m4a")):
+        # filename format: chapter-NN.m4a
+        chapter_number = int(filename.removeprefix("chapter-").removesuffix(".m4a"))
+        key = r2_keys.audio_key(author_slug, title_slug, rendition, build_id, chapter_number)
         client.upload_file(
             os.path.join(audio_dir, filename),
             bucket,
@@ -88,19 +113,70 @@ def upload_rendition(
         logger.info("Uploaded: %s", key)
         uploaded.append(key)
 
+    # 2. chapter_data.json.
+    cd_key = r2_keys.chapter_data_key(author_slug, title_slug, rendition, build_id)
     client.upload_file(
-        manifest_path,
+        chapter_data_path,
+        bucket,
+        cd_key,
+        ExtraArgs={
+            "ContentType": "application/json",
+            "CacheControl": R2_CACHE_CONTROL_IMMUTABLE,
+        },
+    )
+    logger.info("Uploaded: %s", cd_key)
+    uploaded.append(cd_key)
+
+    # 3. rendition-manifest.json LAST — completion signal.
+    client.upload_file(
+        rendition_manifest_path,
         bucket,
         manifest_key,
         ExtraArgs={
             "ContentType": "application/json",
-            "CacheControl": R2_CACHE_CONTROL_MANIFEST,
+            "CacheControl": R2_CACHE_CONTROL_IMMUTABLE,
         },
     )
     logger.info("Uploaded: %s", manifest_key)
     uploaded.append(manifest_key)
 
     return uploaded
+
+
+# ---------------------------------------------------------------------------
+# Book manifest (the only mutable per-book artifact — always overwrite)
+# ---------------------------------------------------------------------------
+
+
+def upload_book_manifest(
+    client,
+    bucket: str,
+    author_slug: str,
+    title_slug: str,
+    manifest_path: str,
+) -> str:
+    """Upload the book-level manifest.json. Always overwrites; no `force` flag.
+
+    This is the single mutable pointer named by every short-cached client
+    fetch. Returns the R2 key.
+    """
+    key = r2_keys.book_manifest_key(author_slug, title_slug)
+    client.upload_file(
+        manifest_path,
+        bucket,
+        key,
+        ExtraArgs={
+            "ContentType": "application/json",
+            "CacheControl": R2_CACHE_CONTROL_MANIFEST,
+        },
+    )
+    logger.info("Uploaded book manifest: %s", key)
+    return key
+
+
+# ---------------------------------------------------------------------------
+# Root-level immutable artifacts (cover, epub)
+# ---------------------------------------------------------------------------
 
 
 def upload_cover(
@@ -112,13 +188,8 @@ def upload_cover(
     content_type: str = "image/jpeg",
     force: bool = False,
 ) -> str | None:
-    """Upload cover image to R2. Returns the key, or None if already exists.
-
-    Key pattern: books/{author}/{title}/cover.jpg
-    Idempotent: skips upload if the key already exists; pass `force=True` to overwrite.
-    """
-    ext = ".jpg" if "jpeg" in content_type or "jpg" in content_type else ".png"
-    key = f"{_book_prefix(author_slug, title_slug)}/cover{ext}"
+    """Upload the cover image. Skips if the key already exists unless `force=True`."""
+    key = r2_keys.cover_key(author_slug, title_slug, content_type=content_type)
 
     if not force and key_exists(client, bucket, key):
         logger.info("Cover already uploaded, skipping: %s", key)
@@ -145,12 +216,8 @@ def upload_epub(
     epub_path: str,
     force: bool = False,
 ) -> str | None:
-    """Upload an EPUB file to R2. Returns the key, or None if already exists.
-
-    Key pattern: books/{author}/{title}/book.epub
-    Idempotent: skips upload if the key already exists; pass `force=True` to overwrite.
-    """
-    key = f"{_book_prefix(author_slug, title_slug)}/book.epub"
+    """Upload the annotated EPUB. Skips if the key already exists unless `force=True`."""
+    key = r2_keys.book_epub_key(author_slug, title_slug)
 
     if not force and key_exists(client, bucket, key):
         logger.info("EPUB already uploaded, skipping: %s", key)
@@ -167,73 +234,3 @@ def upload_epub(
     )
     logger.info("Uploaded: %s", key)
     return key
-
-
-def upload_word_alignment(
-    client,
-    bucket: str,
-    author_slug: str,
-    title_slug: str,
-    rendition: str,
-    word_alignment_path: str,
-    force: bool = False,
-) -> str | None:
-    """Upload word_alignment.json to R2. Returns the key, or None if already exists.
-
-    Key pattern: books/{author}/{title}/audio/{rendition}/word_alignment.json
-    Idempotent: skips upload if the key already exists; pass `force=True` to overwrite.
-    """
-    prefix = f"{_book_prefix(author_slug, title_slug)}/audio/{rendition}"
-    key = f"{prefix}/word_alignment.json"
-
-    if not force and key_exists(client, bucket, key):
-        logger.info("Word alignment already uploaded, skipping: %s", key)
-        return None
-
-    client.upload_file(
-        word_alignment_path,
-        bucket,
-        key,
-        ExtraArgs={
-            "ContentType": "application/json",
-            "CacheControl": R2_CACHE_CONTROL_IMMUTABLE,
-        },
-    )
-    logger.info("Uploaded: %s", key)
-    return key
-
-
-def upload_chapter_data(
-    client,
-    bucket: str,
-    author_slug: str,
-    title_slug: str,
-    rendition: str,
-    chapter_data_path: str,
-    force: bool = False,
-) -> str | None:
-    """Upload chapter_data.json to R2. Returns the key, or None if already exists.
-
-    Key pattern: books/{author}/{title}/audio/{rendition}/chapter_data.json
-    Idempotent: skips upload if the key already exists; pass `force=True` to overwrite.
-    """
-    prefix = f"{_book_prefix(author_slug, title_slug)}/audio/{rendition}"
-    key = f"{prefix}/chapter_data.json"
-
-    if not force and key_exists(client, bucket, key):
-        logger.info("Chapter data already uploaded, skipping: %s", key)
-        return None
-
-    client.upload_file(
-        chapter_data_path,
-        bucket,
-        key,
-        ExtraArgs={
-            "ContentType": "application/json",
-            "CacheControl": R2_CACHE_CONTROL_IMMUTABLE,
-        },
-    )
-    logger.info("Uploaded: %s", key)
-    return key
-
-
