@@ -23,6 +23,7 @@ src/openshelf/
     word_aligner.py         # Step 5b: WhisperX forced alignment (opt-in via --whisperx)
     transcriber.py          # WhisperX ASR + WER (used by test-audio-quality)
     build.py                # compute_build_id() — 7-char hash for (rendition, voice, config)
+    r2_keys.py              # Pure-string R2 key constructors (mirrored in worker/src/utils/r2-keys.ts)
     r2.py                   # Step 6:  upload to Cloudflare R2 under build-versioned keys
     runner.py               # orchestrator (stub)
 
