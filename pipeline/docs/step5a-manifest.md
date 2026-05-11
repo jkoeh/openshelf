@@ -51,6 +51,7 @@ def generate_rendition_entry(
     display: str,
     build_id: str,
 ) -> RenditionEntry
+    # Construct a fresh entry with available_builds=[build_id].
 
 def generate_book_manifest(
     author: str,
@@ -59,6 +60,9 @@ def generate_book_manifest(
     renditions: dict[str, RenditionEntry],   # keyed by rendition slug
     output_dir: str,
 ) -> str  # returns path to manifest.json
+    # Writes a from-scratch manifest. Use when no prior exists; otherwise merge first
+    # and serialize the merged dict yourself (this function takes RenditionEntry,
+    # merge_book_manifest returns a dict).
 
 def merge_book_manifest(
     prior_manifest: dict,
@@ -66,9 +70,9 @@ def merge_book_manifest(
     new_entry: RenditionEntry,
     retain: int = 2,                          # keep last N builds
 ) -> dict
-    # Updates `current_build` to new_entry.current_build,
-    # prepends it to `available_builds`, deduplicates, trims to `retain`.
-    # Other renditions in the prior manifest are preserved untouched.
+    # Pure. Updates `current_build` to new_entry.current_build, prepends it to
+    # `available_builds`, deduplicates, trims to `retain`. Other renditions in
+    # the prior manifest are preserved untouched. Caller's prior dict is not mutated.
 ```
 
 ## Behavior
