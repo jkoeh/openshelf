@@ -93,6 +93,34 @@ npm run seed
 - Tests use `@cloudflare/vitest-pool-workers` with fixture data in `fixtures/`. They use `app.request(...)` and are unaffected by the OpenAPI migration.
 - `chapters.ts` reads `audio/{rendition}/builds/{build}/chapter_data.json` (single source of truth for chunk text + word timestamps). It flattens per-chunk word arrays and adds `chunk_idx` per word in the response.
 
+## `GET /books/:author/:title` response shape
+
+The book route returns a merge of two R2 reads: the small mutable `manifest.json` at the book root, and the per-build `rendition-manifest.json` for each rendition's `current_build`. The client sees a single response with everything needed for the book-detail page:
+
+```json
+{
+  "title": "The Metamorphosis",
+  "author": "Franz Kafka",
+  "source": "gutenberg",
+  "renditions": {
+    "kokoro-af-heart": {
+      "voice": "af_heart",
+      "engine": "kokoro",
+      "display": "Heart",
+      "current_build": "2a4f9c1",
+      "available_builds": ["2a4f9c1", "7e8b4d2"],
+      "total_duration_seconds": 1847.3,
+      "chapters": [
+        {"number": 1, "title": "I", "filename": "chapter-01.m4a",
+         "duration_seconds": 1847.3, "word_count": 3241}
+      ]
+    }
+  }
+}
+```
+
+`total_duration_seconds` and `chapters` are sourced from the rendition-manifest of `current_build`. The on-R2 book manifest does not store them — keeping it tiny and stable across reprocesses. The merged response is short-cached as a whole (the book manifest portion is the mutable part); a freshly published build propagates within the manifest cache window.
+
 ## Cache policy
 
 The cache header on a route is determined by **whether the URL is content-versioned**, not by the resource type:

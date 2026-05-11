@@ -56,6 +56,7 @@ flowchart LR
 
     R_CAT --> W_CAT
     R_BOOKMAN --> W_BOOK
+    R_RMAN -.merged into /books response.-> W_BOOK
     R_CD  --> W_CH
     R_M4A --> W_AUDIO
     R_COVER --> W_COVER

@@ -7,7 +7,7 @@
 
 The book-level `manifest.json` is the **only mutable per-book artifact on R2**. It is a tiny pointer file that lists the renditions available for a book and names the `current_build` per rendition.
 
-Every other per-book artifact (audio, chapter_data, rendition-manifest, EPUB, cover) is immutable and lives under a build-versioned R2 prefix. Clients hit this manifest first, read the `current_build` for the rendition the user picked, then construct immutable URLs for the actual content.
+The per-build artifacts (audio, chapter_data, rendition-manifest) are immutable and live under a build-versioned R2 prefix (`audio/{rendition}/builds/{build}/`). The EPUB and cover are also immutable but live at the book root (`book.epub`, `cover.{ext}`) because they do not vary by rendition or build. Clients hit the book manifest first, read the `current_build` for the rendition the user picked, then construct immutable URLs for the actual content.
 
 ```mermaid
 graph TD
@@ -112,6 +112,12 @@ When reprocessing produces a new build for a rendition that already has prior bu
 ### Where chapter durations and word counts go
 
 They no longer live in this file. Those move to the **per-build rendition manifest** (`step5c-rendition-manifest.md`), which is itself an immutable artifact under the build prefix. This file stays small and stable across reprocesses that don't change the rendition set.
+
+### How clients see chapter lists
+
+The on-R2 book manifest never carries a chapter list. The **worker** is responsible for stitching the chapter list onto the `GET /books/:a/:t` response: for each rendition, it reads that rendition's `current_build`'s `rendition-manifest.json` from R2 and inlines the `chapters` array into the per-rendition entry it returns. The merged response is what the client sees; the on-R2 file stays small.
+
+This keeps the only mutable per-book file on R2 tiny (one short-cached read per book-detail load) while letting the worker serve a single, rich response from one HTTP call. See `worker/CLAUDE.md` for the response shape.
 
 ## Dependencies
 
