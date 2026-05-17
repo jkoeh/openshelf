@@ -38,7 +38,7 @@ class RenditionEntry:
     voice: str              # "af_heart"
     engine: str             # "kokoro"
     display: str            # "Heart" — user-facing label
-    current_build: str      # 7-char hash (build_id)
+    current_build: str      # 16-hex build_id (random, fresh per pipeline run)
     available_builds: list[str]   # all builds still resident on R2, current first
 ```
 

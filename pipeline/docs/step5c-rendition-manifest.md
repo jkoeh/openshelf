@@ -60,7 +60,7 @@ def generate_rendition_manifest(
 
 | Field | Source |
 |---|---|
-| `build` | `compute_build_id()` output |
+| `build` | `new_build_id()` output (16-hex random) |
 | `rendition`, `voice`, `engine` | CLI / config |
 | `pipeline_version` | `config.PIPELINE_VERSION` |
 | `total_duration_seconds` | Sum of chapter durations |
@@ -69,13 +69,11 @@ def generate_rendition_manifest(
 | `chapters[].duration_seconds` | From encoder / ffprobe |
 | `chapters[].word_count` | From `epub_parser` |
 
-There is intentionally no `generated_at` field. The file is required to be **byte-stable for a fixed build**: every field is derived from inputs that already feed into `compute_build_id`. Two pipeline runs with the same `(rendition, voice, config, PIPELINE_VERSION)` produce byte-identical `rendition-manifest.json` content for the same build hash. This is what makes a `--force` rerun safe under immutable cache headers — the URL points at the same content even if the upload itself was redone.
-
-When a build is generated (wall-clock time) is mutable metadata; if it ever needs to be tracked, it belongs on the book manifest (mutable), not here.
+There is intentionally no `generated_at` field. Wall-clock metadata belongs on the mutable book manifest, not on a per-build immutable artifact. Each pipeline run assigns a fresh random `build_id` — so any two runs produce different files under different keys, and the byte-stability question for a *given* build never comes up: nothing else ever writes to the same key.
 
 ### Idempotency
 
-Like every per-build artifact, this file is written once into a build-versioned R2 path. If the upload already exists for `(rendition, build)`, the upload is skipped. A `--force` rerun re-uploads but produces byte-identical content for an unchanged build (guaranteed by the byte-stability rule above and by the fact that any input change would have changed the build hash).
+Like every per-build artifact, this file is written once into a build-versioned R2 path. Because each pipeline run mints a new `build_id`, the upload is gated solely on resuming a partial same-run upload (manifest-last single-gate). A `--force` reprocess produces a fresh build with a fresh ID and uploads under a new prefix.
 
 ### Worker usage
 

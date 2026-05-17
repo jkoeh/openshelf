@@ -137,7 +137,7 @@ The cache header on a route is determined by **whether the URL is content-versio
 ## Rendition vs build
 
 - **Rendition** (`kokoro-af-heart`) is user-facing — chosen by the user, exposed in the catalog and book manifest.
-- **Build** (`2a4f9c1`) is internal — a 7-char content hash from the pipeline. Surfaced only via the book manifest's per-rendition `current_build`.
+- **Build** (`2a4f9c1b3d8e7f60`) is internal — a 16-hex string the pipeline assigns once per run (no content addressing). Surfaced only via the book manifest's per-rendition `current_build`.
 
 The client treats rendition as a setting and build as transparent: it reads the book manifest, looks up `current_build` for the user's chosen rendition, pins that hash for the duration of the chapter session, and includes it in chapter and audio URLs as `?build=...`. New builds are picked up on the next chapter or app restart.
 

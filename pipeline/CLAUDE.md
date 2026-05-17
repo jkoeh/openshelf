@@ -22,7 +22,7 @@ src/openshelf/
     manifest.py             # Step 5a/c: book + per-build rendition manifests
     word_aligner.py         # WhisperX forced alignment — internal QA only, used by test-audio-quality
     transcriber.py          # WhisperX ASR + WER — internal QA only, used by test-audio-quality
-    build.py                # compute_build_id() — 7-char hash for (rendition, voice, config)
+    build.py                # new_build_id() — fresh random 16-hex per pipeline run
     r2_keys.py              # Pure-string R2 key constructors (mirrored in worker/src/utils/r2-keys.ts)
     r2.py                   # Step 6:  upload to Cloudflare R2 under build-versioned keys
     runner.py               # orchestrator (stub)

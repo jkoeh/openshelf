@@ -19,7 +19,7 @@ flowchart LR
         P4 --> P6[chapter_data.json<br/>chunks + words]
         P5 --> P7[rendition-manifest.json<br/>per-build chapter list]
         P2 --> P8[annotated EPUB<br/>+ cover]
-        P9[compute_build_id<br/>7-char hash of pipeline + config + voice] --> P5
+        P9[new_build_id<br/>fresh random 16-hex per run] --> P5
         P9 --> P6
         P9 --> P7
         P7 --> P10[book manifest.json<br/>renditions[].current_build]
@@ -93,7 +93,7 @@ Notes:
 OpenShelf separates two orthogonal concepts that used to be conflated:
 
 - **Rendition** is a user-facing artistic identity (a Kokoro voice + engine). Examples: `kokoro-af-heart`, `kokoro-bf-emma`. Stable across pipeline changes. The user picks a rendition.
-- **Build** is an internal pipeline-output identity. A 7-char content hash derived from pipeline-affecting config + `PIPELINE_VERSION`. Bumps every time output bytes change. The user never sees it.
+- **Build** is an internal pipeline-output identity. A fresh random 16-hex string generated once per pipeline run. Every regeneration is a new build; we do not attempt to deduplicate by content hash. The user never sees it.
 
 Storage and HTTP URLs include **both**: `audio/{rendition}/builds/{build}/...` on R2; `?rendition=...&build=...` on every immutable HTTP route. The book-level `manifest.json` is the single mutable pointer that names the `current_build` per rendition. This makes audio + chapter_data + rendition-manifest a coherent atomic snapshot per (rendition, build), so a client can never mix bytes from different builds mid-session.
 

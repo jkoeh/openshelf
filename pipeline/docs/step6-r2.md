@@ -89,7 +89,7 @@ books/{author_slug}/{title_slug}/
   audio/
     {rendition}/                                         # e.g. kokoro-af-heart
       builds/
-        {build_id}/                                      # 7-char content hash
+        {build_id}/                                      # 16-hex random, fresh per pipeline run
           chapter-01.m4a                                 # immutable
           chapter-02.m4a
           chapter_data.json                              # immutable
@@ -142,7 +142,7 @@ The `build` field is added so the file is self-identifying — a client that has
 
 **Book manifest** is always overwritten — no existence check.
 
-A `--force` reprocess that produces the same `build_id` (no pipeline change since last run) is effectively a no-op upload aside from rewriting the book manifest. A reprocess that bumps the build re-uploads everything under the new build prefix and rewrites the book manifest to point there.
+Every pipeline run assigns a fresh random `build_id`, so a reprocess always uploads under a new build prefix and rewrites the book manifest to point there. The single-gate idempotency is for resuming a partially-failed *same-process* run (e.g. network blip mid-upload), not for cross-run deduplication.
 
 ### Cache Headers
 

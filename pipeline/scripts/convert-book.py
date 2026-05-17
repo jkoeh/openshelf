@@ -42,8 +42,8 @@ from openshelf.config import (
     R2_DEFAULT_RENDITION,
     TTS_VOICE,
 )
-from openshelf.pipeline.build import compute_build_id
-from openshelf.pipeline.encoder import audio_duration, encode_to_aac
+from openshelf.pipeline.build import new_build_id
+from openshelf.pipeline.encoder import encode_to_aac
 from openshelf.pipeline.epub_annotator import annotate_epub
 from openshelf.pipeline.epub_parser import extract_cover_image, parse_epub
 from openshelf.pipeline.manifest import (
@@ -147,7 +147,7 @@ def main() -> None:
         sys.exit(1)
 
     voice = args.voice or TTS_VOICE
-    build_id = compute_build_id(rendition=args.rendition, voice=voice)
+    build_id = new_build_id()
 
     # Step 1: Parse EPUB
     print(f"Parsing {args.epub} ...")
@@ -257,18 +257,14 @@ def main() -> None:
             chunk_infos.append(ChunkInfo(text=c.text, ends_paragraph=ends_para))
 
         m4a_path = os.path.join(build_dir, f"chapter-{ch_num:02d}.m4a")
-
-        if not args.force and os.path.exists(m4a_path):
-            chapter_durations[ch_num] = audio_duration(m4a_path)
-            chapter_chunk_starts[ch_num] = [-1.0] * len(chunks)
-            chapter_chunk_words[ch_num] = [[] for _ in chunks]
-            print(f"  [{ch_num:>2}/{len(chapters)}] {ch_title} — [SKIP] exists")
-            continue
-
-        if args.force and os.path.exists(m4a_path):
-            os.remove(m4a_path)
-
         wav_path = os.path.join(build_dir, f"chapter-{ch_num:02d}.wav")
+
+        # Each pipeline run gets a fresh random build_dir, so any existing
+        # m4a here is leftover from an aborted prior attempt against this same
+        # ID — regenerate unconditionally rather than risk pairing stale audio
+        # with freshly-generated chapter_data word timestamps.
+        if os.path.exists(m4a_path):
+            os.remove(m4a_path)
 
         print(f"  [{ch_num:>2}/{len(chapters)}] {ch_title} ({len(chunks)} chunks) ...", end=" ", flush=True)
 
@@ -310,30 +306,23 @@ def main() -> None:
     ]
 
     rendition_manifest_path = os.path.join(build_dir, "rendition-manifest.json")
-    if args.force or not os.path.exists(rendition_manifest_path):
-        generate_rendition_manifest(
-            rendition=args.rendition,
-            build_id=build_id,
-            voice=voice,
-            engine=ENGINE,
-            pipeline_version=PIPELINE_VERSION,
-            chapters=chapter_metas,
-            output_dir=build_dir,
-        )
-        print(f"Rendition manifest: {rendition_manifest_path}")
-    else:
-        print(f"Rendition manifest already exists: {rendition_manifest_path}")
+    generate_rendition_manifest(
+        rendition=args.rendition,
+        build_id=build_id,
+        voice=voice,
+        engine=ENGINE,
+        pipeline_version=PIPELINE_VERSION,
+        chapters=chapter_metas,
+        output_dir=build_dir,
+    )
+    print(f"Rendition manifest: {rendition_manifest_path}")
 
-    # Step 5b: chapter_data.json (per build)
     chapter_data_path = os.path.join(build_dir, "chapter_data.json")
-    if args.force or not os.path.exists(chapter_data_path):
-        payload = _build_chapter_data(
-            chunked_chapters, chapter_chunk_words, args.rendition, build_id,
-        )
-        _write_json(chapter_data_path, payload)
-        print(f"Chapter data: {chapter_data_path}")
-    else:
-        print(f"Chapter data already exists: {chapter_data_path}")
+    payload = _build_chapter_data(
+        chunked_chapters, chapter_chunk_words, args.rendition, build_id,
+    )
+    _write_json(chapter_data_path, payload)
+    print(f"Chapter data: {chapter_data_path}")
 
     # Book-level manifest (mutable pointer). Written from scratch here with only
     # this rendition; merged with the prior R2 manifest at upload time so other
