@@ -118,7 +118,14 @@
       "Bash(pip3 install:*)",
       "Bash(pip3 show:*)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(grep -E \"\\\\.\\(ts|json\\)$\")"
+      "Bash(grep -E \"\\\\.\\(ts|json\\)$\")",
+      "Bash(git push *)",
+      "Bash(chmod +x /Users/johannkoeh/Projects/openshelf/pipeline/scripts/reprocess-book.py)",
+      "Bash(git rm *)",
+      "Bash(command -v uv)",
+      "Bash(uv python *)",
+      "Bash(/Users/johannkoeh/.local/bin/uv run *)",
+      "Bash(git reset *)"
     ]
   }
 }
