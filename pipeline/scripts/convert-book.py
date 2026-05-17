@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert an EPUB book to Opus audiobook chapters.
+"""Convert an EPUB book to AAC audiobook chapters under a build-versioned layout.
 
 Usage:
     python3 scripts/convert-book.py <epub-path>
@@ -8,9 +8,24 @@ Usage:
     python3 scripts/convert-book.py <epub-path> --rendition kokoro-af-heart
     python3 scripts/convert-book.py <epub-path> --dry-run
     python3 scripts/convert-book.py <epub-path> --source standard-ebooks --upload
+
+The local output directory mirrors the R2 layout described in
+pipeline/docs/step6-r2.md:
+
+    {output}/{author}/{title}/
+      book-annotated.epub
+      cover.{jpg|png}
+      manifest.json                              ← book-level (mutable pointer)
+      audio/{rendition}/builds/{build}/
+        chapter-NN.m4a
+        chapter_data.json                        ← inline word timestamps
+        rendition-manifest.json                  ← chapter durations + word counts
 """
 
+from __future__ import annotations
+
 import argparse
+import dataclasses
 import json
 import os
 import sys
@@ -21,23 +36,101 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from ebooklib import epub as _epub_lib
 
-from openshelf.config import R2_BUCKET, R2_DEFAULT_RENDITION
+from openshelf.config import (
+    PIPELINE_VERSION,
+    R2_BUCKET,
+    R2_DEFAULT_RENDITION,
+    TTS_VOICE,
+)
+from openshelf.pipeline.build import compute_build_id
+from openshelf.pipeline.encoder import audio_duration, encode_to_aac
 from openshelf.pipeline.epub_annotator import annotate_epub
 from openshelf.pipeline.epub_parser import extract_cover_image, parse_epub
-from openshelf.pipeline.manifest import ChapterMeta, generate_manifest
+from openshelf.pipeline.manifest import (
+    ChapterMeta,
+    generate_book_manifest,
+    generate_rendition_entry,
+    generate_rendition_manifest,
+    merge_book_manifest,
+)
 from openshelf.pipeline.text_chunker import chunk_text
 from openshelf.pipeline.tts import ChunkInfo, WordTimestamp, load_pipeline, synthesize_chapter
-from openshelf.pipeline.encoder import audio_duration, encode_to_aac
 from openshelf.scrapers.http import sanitize
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Convert EPUB to Opus audiobook")
+CHAPTER_DATA_VERSION = 1
+ENGINE = "kokoro"
+
+
+def _display_name_for_voice(voice: str) -> str:
+    """Best-effort human label for a voice slug (e.g. af_heart -> Heart)."""
+    if "_" in voice:
+        return voice.split("_", 1)[1].replace("_", " ").title()
+    return voice.title()
+
+
+def _build_chapter_data(
+    chunked_chapters: list[dict],
+    chapter_chunk_words: dict[int, list[list[WordTimestamp]]],
+    rendition: str,
+    build_id: str,
+) -> dict:
+    """Assemble the chapter_data.json payload (chunks + flat words)."""
+    payload: dict = {
+        "version": CHAPTER_DATA_VERSION,
+        "rendition": rendition,
+        "build": build_id,
+        "chapters": [],
+    }
+    for ch_data in chunked_chapters:
+        ch_num = ch_data["number"]
+        chunks = ch_data["chunks"]
+        words_per_chunk = chapter_chunk_words.get(ch_num, [[] for _ in chunks])
+        entry = {
+            "number": ch_num,
+            "title": ch_data["title"],
+            "word_count": sum(len(c.text.split()) for c in chunks),
+            "chunks": [],
+        }
+        for ci, c in enumerate(chunks):
+            words = words_per_chunk[ci] if ci < len(words_per_chunk) else []
+            entry["chunks"].append({
+                "text": c.text,
+                "words": [dataclasses.asdict(w) for w in words],
+            })
+        payload["chapters"].append(entry)
+    return payload
+
+
+def _fetch_prior_book_manifest(client, bucket: str, author_slug: str, title_slug: str) -> dict:
+    """Return the prior book manifest on R2 (parsed), or {} if it does not exist."""
+    from botocore.exceptions import ClientError
+
+    from openshelf.pipeline import r2_keys
+
+    key = r2_keys.book_manifest_key(author_slug, title_slug)
+    try:
+        obj = client.get_object(Bucket=bucket, Key=key)
+    except ClientError as e:
+        if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
+            return {}
+        raise
+    return json.loads(obj["Body"].read().decode("utf-8"))
+
+
+def _write_json(path: str, payload: dict) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False, sort_keys=True)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Convert EPUB to AAC audiobook")
     parser.add_argument("epub", help="Path to EPUB file")
     parser.add_argument("--output", "-o", default="audio", help="Output directory (default: audio/)")
     parser.add_argument("--source", default="gutenberg", help="Book source (gutenberg, standard-ebooks)")
     parser.add_argument("--voice", default=None, help="Kokoro voice ID (default: af_heart)")
-    parser.add_argument("--rendition", default=R2_DEFAULT_RENDITION, help=f"Rendition name (default: {R2_DEFAULT_RENDITION})")
+    parser.add_argument("--rendition", default=R2_DEFAULT_RENDITION, help=f"Rendition slug (default: {R2_DEFAULT_RENDITION})")
     parser.add_argument("--device", default=None, help="Device: cuda, mps, cpu (default: auto)")
     parser.add_argument("--dry-run", action="store_true", help="Parse and chunk only, no audio")
     parser.add_argument("--keep-wav", action="store_true", help="Keep WAV files after encoding")
@@ -53,10 +146,12 @@ def main():
         print(f"Error: {args.epub} not found")
         sys.exit(1)
 
+    voice = args.voice or TTS_VOICE
+    build_id = compute_build_id(rendition=args.rendition, voice=voice)
+
     # Step 1: Parse EPUB
     print(f"Parsing {args.epub} ...")
     chapters = parse_epub(args.epub)
-
     if not chapters:
         print("No chapters found.")
         sys.exit(1)
@@ -85,21 +180,24 @@ def main():
     epub_parts = os.path.normpath(args.epub).split(os.sep)
     title_slug = sanitize(os.path.splitext(epub_parts[-1])[0])
     author_slug = sanitize(epub_parts[-2]) if len(epub_parts) >= 2 else "unknown"
+
     book_dir = os.path.join(args.output, author_slug, title_slug)
-    output_dir = os.path.join(book_dir, args.rendition)
+    build_dir = os.path.join(book_dir, "audio", args.rendition, "builds", build_id)
 
     book_title = _title_meta[0][0] if _title_meta else title_slug
     book_author = _author_meta[0][0] if _author_meta else author_slug
 
-    print(f"\nBook:     {book_author} — {book_title}")
-    print(f"R2 keys:  books/{author_slug}/{title_slug}/audio/{args.rendition}/chapter-*.m4a")
-    print(f"Local:    {os.path.abspath(output_dir)}/")
+    print(f"\nBook:        {book_author} — {book_title}")
+    print(f"Rendition:   {args.rendition}  (voice={voice})")
+    print(f"Build:       {build_id}  (pipeline_version={PIPELINE_VERSION})")
+    print(f"R2 prefix:   books/{author_slug}/{title_slug}/audio/{args.rendition}/builds/{build_id}/")
+    print(f"Local:       {os.path.abspath(build_dir)}/")
 
     if args.dry_run:
         print("\n[DRY RUN] No audio generated.")
         return
 
-    # Write annotated EPUB (with stable element IDs injected for client sync)
+    # Annotated EPUB (book-level, immutable, no rendition/build scope)
     os.makedirs(book_dir, exist_ok=True)
     annotated_epub_path = os.path.join(book_dir, "book-annotated.epub")
     if args.force or not os.path.exists(annotated_epub_path):
@@ -110,7 +208,7 @@ def main():
     else:
         print(f"\nAnnotated EPUB already exists: {annotated_epub_path}")
 
-    # Extract cover image
+    # Cover image (book-level)
     cover_path = None
     cover_content_type = "image/jpeg"
     for ext in ("jpg", "png"):
@@ -132,8 +230,8 @@ def main():
         else:
             print("No cover image found in EPUB.")
 
-    # Step 3+4: TTS → Opus
-    os.makedirs(output_dir, exist_ok=True)
+    # Step 3+4: TTS → m4a (per build)
+    os.makedirs(build_dir, exist_ok=True)
 
     from openshelf.pipeline.tts import get_device
     device = args.device or get_device()
@@ -153,26 +251,24 @@ def main():
         ch_title = ch_data["title"]
         chunks = ch_data["chunks"]
 
-        # Build ChunkInfo list with paragraph boundary info
         chunk_infos = []
         for ci, c in enumerate(chunks):
             ends_para = (ci == len(chunks) - 1) or (c.para_end != chunks[ci + 1].para_start)
             chunk_infos.append(ChunkInfo(text=c.text, ends_paragraph=ends_para))
 
-        opus_path = os.path.join(output_dir, f"chapter-{ch_num:02d}.m4a")
+        m4a_path = os.path.join(build_dir, f"chapter-{ch_num:02d}.m4a")
 
-        if not args.force and os.path.exists(opus_path):
-            duration = audio_duration(opus_path)
-            chapter_durations[ch_num] = duration
+        if not args.force and os.path.exists(m4a_path):
+            chapter_durations[ch_num] = audio_duration(m4a_path)
             chapter_chunk_starts[ch_num] = [-1.0] * len(chunks)
             chapter_chunk_words[ch_num] = [[] for _ in chunks]
             print(f"  [{ch_num:>2}/{len(chapters)}] {ch_title} — [SKIP] exists")
             continue
 
-        if args.force and os.path.exists(opus_path):
-            os.remove(opus_path)
+        if args.force and os.path.exists(m4a_path):
+            os.remove(m4a_path)
 
-        wav_path = os.path.join(output_dir, f"chapter-{ch_num:02d}.wav")
+        wav_path = os.path.join(build_dir, f"chapter-{ch_num:02d}.wav")
 
         print(f"  [{ch_num:>2}/{len(chapters)}] {ch_title} ({len(chunks)} chunks) ...", end=" ", flush=True)
 
@@ -181,7 +277,7 @@ def main():
             synth_kwargs["voice"] = args.voice
 
         result = synthesize_chapter(pipeline, chunk_infos, wav_path, **synth_kwargs)
-        duration = encode_to_aac(wav_path, opus_path, delete_wav=not args.keep_wav)
+        duration = encode_to_aac(wav_path, m4a_path, delete_wav=not args.keep_wav)
 
         chapter_durations[ch_num] = duration
         chapter_chunk_starts[ch_num] = result.chunk_audio_starts
@@ -197,9 +293,9 @@ def main():
     print(f"\nDone. {total_duration / 60:.1f} min of audio in {elapsed:.0f}s.")
     if total_skipped:
         print(f"Warning: {total_skipped} chunks failed TTS and were skipped.")
-    print(f"Output: {os.path.abspath(output_dir)}/")
+    print(f"Output: {os.path.abspath(build_dir)}/")
 
-    # Step 5: Generate manifest
+    # Step 5a (book) / 5c (rendition): build manifests
     word_count_map = {ch.number: ch.word_count for ch in chapters}
     chapter_metas = [
         ChapterMeta(
@@ -212,59 +308,89 @@ def main():
         for ch_data in chunked_chapters
         if ch_data["number"] in chapter_durations
     ]
-    manifest_path = generate_manifest(
+
+    rendition_manifest_path = os.path.join(build_dir, "rendition-manifest.json")
+    if args.force or not os.path.exists(rendition_manifest_path):
+        generate_rendition_manifest(
+            rendition=args.rendition,
+            build_id=build_id,
+            voice=voice,
+            engine=ENGINE,
+            pipeline_version=PIPELINE_VERSION,
+            chapters=chapter_metas,
+            output_dir=build_dir,
+        )
+        print(f"Rendition manifest: {rendition_manifest_path}")
+    else:
+        print(f"Rendition manifest already exists: {rendition_manifest_path}")
+
+    # Step 5b: chapter_data.json (per build)
+    chapter_data_path = os.path.join(build_dir, "chapter_data.json")
+    if args.force or not os.path.exists(chapter_data_path):
+        payload = _build_chapter_data(
+            chunked_chapters, chapter_chunk_words, args.rendition, build_id,
+        )
+        _write_json(chapter_data_path, payload)
+        print(f"Chapter data: {chapter_data_path}")
+    else:
+        print(f"Chapter data already exists: {chapter_data_path}")
+
+    # Book-level manifest (mutable pointer). Written from scratch here with only
+    # this rendition; merged with the prior R2 manifest at upload time so other
+    # renditions are preserved.
+    new_entry = generate_rendition_entry(
+        voice=voice,
+        engine=ENGINE,
+        display=_display_name_for_voice(voice),
+        build_id=build_id,
+    )
+    book_manifest_path = generate_book_manifest(
         author=book_author,
         title=book_title,
         source=args.source,
-        chapters=chapter_metas,
-        output_dir=output_dir,
-        rendition=args.rendition,
+        renditions={args.rendition: new_entry},
+        output_dir=book_dir,
     )
-    print(f"Manifest: {manifest_path}")
-
-    # Step 5b: Write chapter_data.json (merged chunks + word timestamps from Kokoro)
-    import dataclasses
-    chapter_data_path = os.path.join(output_dir, "chapter_data.json")
-    if args.force or not os.path.exists(chapter_data_path):
-        chapter_data = {
-            "version": 1,
-            "rendition": args.rendition,
-            "chapters": [],
-        }
-        for ch_data in chunked_chapters:
-            ch_num = ch_data["number"]
-            chunks = ch_data["chunks"]
-            words_per_chunk = chapter_chunk_words.get(ch_num, [[] for _ in chunks])
-            ch_entry = {
-                "number": ch_num,
-                "title": ch_data["title"],
-                "chunks": [],
-                "word_count": sum(len(c.text.split()) for c in chunks),
-            }
-            for ci, c in enumerate(chunks):
-                chunk_entry = {
-                    "text": c.text,
-                    "words": [dataclasses.asdict(w) for w in (words_per_chunk[ci] if ci < len(words_per_chunk) else [])],
-                }
-                ch_entry["chunks"].append(chunk_entry)
-            chapter_data["chapters"].append(ch_entry)
-
-        with open(chapter_data_path, "w", encoding="utf-8") as f:
-            json.dump(chapter_data, f, indent=2, ensure_ascii=False)
-        print(f"\nChapter data: {chapter_data_path}")
-    else:
-        print(f"\nChapter data already exists: {chapter_data_path}")
+    print(f"Book manifest (local): {book_manifest_path}")
 
     # Step 6: Upload to R2
     if args.upload:
-        from openshelf.pipeline.r2 import make_client, upload_cover, upload_epub, upload_rendition, upload_chapter_data
+        from openshelf.pipeline.r2 import (
+            make_client,
+            upload_book_manifest,
+            upload_cover,
+            upload_epub,
+            upload_rendition_build,
+        )
+
         print("\nUploading to R2 ...")
         client = make_client()
+
         if cover_path:
-            upload_cover(client, R2_BUCKET, author_slug, title_slug, cover_path, cover_content_type, force=args.force)
-        upload_epub(client, R2_BUCKET, author_slug, title_slug, annotated_epub_path, force=args.force)
-        upload_rendition(client, R2_BUCKET, author_slug, title_slug, args.rendition, output_dir, manifest_path, force=args.force)
-        upload_chapter_data(client, R2_BUCKET, author_slug, title_slug, args.rendition, chapter_data_path, force=args.force)
+            upload_cover(client, R2_BUCKET, author_slug, title_slug,
+                         cover_path, cover_content_type, force=args.force)
+        upload_epub(client, R2_BUCKET, author_slug, title_slug,
+                    annotated_epub_path, force=args.force)
+        upload_rendition_build(
+            client, R2_BUCKET, author_slug, title_slug,
+            args.rendition, build_id,
+            audio_dir=build_dir,
+            chapter_data_path=chapter_data_path,
+            rendition_manifest_path=rendition_manifest_path,
+            force=args.force,
+        )
+
+        # Merge with prior R2 manifest so other renditions survive.
+        prior = _fetch_prior_book_manifest(client, R2_BUCKET, author_slug, title_slug)
+        if prior:
+            merged = merge_book_manifest(prior, args.rendition, new_entry)
+            merged["title"] = book_title
+            merged["author"] = book_author
+            merged["source"] = args.source
+            _write_json(book_manifest_path, merged)
+
+        upload_book_manifest(client, R2_BUCKET, author_slug, title_slug, book_manifest_path)
+
         print("Upload complete.")
         print(f"R2 prefix: books/{author_slug}/{title_slug}/")
 
