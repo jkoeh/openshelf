@@ -57,7 +57,7 @@ npm run check
 - Hooks in `hooks/` bridge lib logic to React components
 - API base URL via `EXPO_PUBLIC_API_BASE` env var (defaults to localhost:8787)
 - Styling via NativeWind `className` prop — no inline StyleSheet unless necessary
-- `useSyncEngine` computes active word/chunk inside a `requestAnimationFrame` loop and only setStates when the active word/chunk index changes. It should use status time as the primary playback clock (with `player.currentTime` fallback) for iOS reliability. The hook accepts an optional `preloadedWords` arg; when the chapter response already carries inline words (the default since `chapter_data.json` was introduced), it skips the separate alignment fetch.
+- `useSyncEngine` computes active word/chunk inside a `requestAnimationFrame` loop and only setStates when the active word/chunk index changes. It should use status time as the primary playback clock (with `player.currentTime` fallback) for iOS reliability. The hook consumes the inline `words` array from the chapter response; there is no separate alignment fetch.
 
 ## Do NOT
 

@@ -14,6 +14,9 @@ export interface CatalogResponse {
   version: number;
   generated_at: string;
   books: CatalogBook[];
+  total: number;
+  page: number;
+  limit: number;
 }
 
 export interface ManifestChapter {
@@ -28,8 +31,15 @@ export interface Manifest {
   title: string;
   author: string;
   source: string;
-  rendition: string;
-  generated_at: string;
+  renditions: Record<string, ManifestRendition>;
+}
+
+export interface ManifestRendition {
+  voice: string;
+  engine: string;
+  display: string;
+  current_build: string;
+  available_builds: string[];
   total_duration_seconds: number;
   chapters: ManifestChapter[];
 }
@@ -48,15 +58,4 @@ export interface WordEntry {
   end: number;
   chunk_idx: number;
   element_id?: string;
-}
-
-export interface ChapterAlignment {
-  chapter: number;
-  words: WordEntry[];
-}
-
-export interface AlignmentResponse {
-  version: number;
-  rendition: string;
-  chapters: ChapterAlignment[];
 }

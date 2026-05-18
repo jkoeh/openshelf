@@ -26,10 +26,11 @@ An EPUB goes through this pipeline:
 3. **Chunk** — split paragraphs into TTS-sized pieces (max 450 words), tracking which paragraphs and element IDs each chunk covers
 4. **Synthesize** — generate audio via Kokoro TTS, capturing per-word start/end timestamps directly from Kokoro's token output
 5. **Encode** — convert WAV to AAC at 48kbps (.m4a)
-6. **Manifest + chapter_data** — write chapter metadata (durations) and `chapter_data.json` (chunk text + inline word timestamps)
+6. **Manifest + chapter_data** — write a book manifest pointer, a per-build rendition manifest, and `chapter_data.json` (chunk text + inline word timestamps)
 7. **Upload** — push everything to Cloudflare R2 with immutable cache headers
 
-Every step is idempotent. Re-running skips work that's already done.
+Each conversion run mints a fresh 16-hex build ID. Per-build files are immutable;
+the book manifest is the short-cached pointer to the current build.
 
 ## Text/Audio Sync
 
@@ -57,14 +58,16 @@ WhisperX forced alignment is no longer published as a public artifact. Kokoro pr
 books/{author-slug}/{title-slug}/
   book.epub                                # annotated EPUB with element IDs
   cover.{jpg|png}                          # cover image
+  manifest.json                            # book-level mutable pointer
   audio/{rendition}/
-    chapter-01.m4a                         # audio files
-    chapter-02.m4a
-    manifest.json                          # chapter metadata, durations
-    chapter_data.json                      # per-chunk text + Kokoro word timestamps
+    builds/{build}/
+      chapter-01.m4a                       # audio files
+      chapter-02.m4a
+      chapter_data.json                    # per-chunk text + Kokoro word timestamps
+      rendition-manifest.json              # chapter metadata, durations
 ```
 
-Audio, EPUB, cover, and chapter_data use `Cache-Control: public, max-age=31536000, immutable`. Manifest uses 60-second cache for prompt updates on reprocessing.
+Build-scoped audio, chapter_data, and rendition manifests use `Cache-Control: public, max-age=31536000, immutable`. The book manifest and catalog use a short cache so clients discover new builds promptly.
 
 ## Prerequisites
 
@@ -117,27 +120,21 @@ python3 scripts/convert-book.py path/to/book.epub --upload
 python3 scripts/convert-book.py path/to/book.epub --voice bf_emma --device cpu
 ```
 
-Output goes to `audio/{author-slug}/{title-slug}/{rendition}/`.
-
-### Upload Pre-Generated Audio
-
-```bash
-python3 scripts/upload-books.py path/to/book.epub
-```
+Output goes to `audio/{author-slug}/{title-slug}/audio/{rendition}/builds/{build}/`.
 
 ### CLI Options
 
-| Flag | convert-book | upload-books | Description |
-|---|---|---|---|
-| `epub` | required | required | Path to source EPUB |
-| `--output` | `audio/` | `audio/` | Output directory |
-| `--source` | `gutenberg` | `gutenberg` | Book source |
-| `--rendition` | `kokoro-af-heart` | `kokoro-af-heart` | Rendition name |
-| `--voice` | `af_heart` | — | Kokoro voice ID |
-| `--device` | auto | — | cuda / mps / cpu |
-| `--dry-run` | off | — | Parse only, no audio |
-| `--keep-wav` | off | — | Keep intermediate WAVs |
-| `--upload` | off | — | Upload to R2 |
+| Flag | convert-book | Description |
+|---|---|---|
+| `epub` | required | Path to source EPUB |
+| `--output` | `audio/` | Output directory |
+| `--source` | `gutenberg` | Book source |
+| `--rendition` | `kokoro-af-heart` | Rendition name |
+| `--voice` | `af_heart` | Kokoro voice ID |
+| `--device` | auto | cuda / mps / cpu |
+| `--dry-run` | off | Parse only, no audio |
+| `--keep-wav` | off | Keep intermediate WAVs |
+| `--upload` | off | Upload to R2 |
 
 ## Run Tests
 

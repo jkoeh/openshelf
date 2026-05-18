@@ -7,7 +7,6 @@ import {
 	fetchBook,
 	fetchCatalog,
 	fetchChapter,
-	fetchChapterAlignment,
 } from "../../lib/api";
 
 const mockFetch = vi.fn();
@@ -71,7 +70,8 @@ describe("fetchBook", () => {
 		const manifest = {
 			title: "The Trial",
 			author: "Franz Kafka",
-			chapters: [],
+			source: "gutenberg",
+			renditions: {},
 		};
 		mockFetch.mockResolvedValue(jsonResponse(manifest));
 
@@ -87,27 +87,19 @@ describe("fetchChapter", () => {
 		const chapter = { number: 1, title: "Chapter 1", chunks: ["Hello"], word_count: 1 };
 		mockFetch.mockResolvedValue(jsonResponse(chapter));
 
-		const result = await fetchChapter("franz-kafka", "the-trial", 1);
+		const result = await fetchChapter(
+			"franz-kafka",
+			"the-trial",
+			1,
+			"kokoro-af-heart",
+			"2a4f9c1b3d8e7f60",
+		);
 
 		expect(result.number).toBe(1);
 		expect(result.chunks).toEqual(["Hello"]);
 		expect(mockFetch.mock.calls[0][0]).toContain("/chapters/1");
-	});
-});
-
-describe("fetchChapterAlignment", () => {
-	it("fetches single chapter alignment", async () => {
-		const alignment = {
-			chapter: 1,
-			words: [{ word: "Hello", start: 0.0, end: 0.3, chunk_idx: 0, element_id: "p-1" }],
-		};
-		mockFetch.mockResolvedValue(jsonResponse(alignment));
-
-		const result = await fetchChapterAlignment("franz-kafka", "the-trial", 1);
-
-		expect(result.chapter).toBe(1);
-		expect(result.words).toHaveLength(1);
-		expect(mockFetch.mock.calls[0][0]).toContain("/alignment/1");
+		expect(mockFetch.mock.calls[0][0]).toContain("rendition=kokoro-af-heart");
+		expect(mockFetch.mock.calls[0][0]).toContain("build=2a4f9c1b3d8e7f60");
 	});
 });
 
@@ -148,12 +140,26 @@ describe("error handling", () => {
 
 describe("URL builders", () => {
 	it("audioUrl pads chapter number", () => {
-		const url = audioUrl("franz-kafka", "the-trial", 1);
+		const url = audioUrl(
+			"franz-kafka",
+			"the-trial",
+			1,
+			"kokoro-af-heart",
+			"2a4f9c1b3d8e7f60",
+		);
 		expect(url).toContain("/audio/01");
+		expect(url).toContain("rendition=kokoro-af-heart");
+		expect(url).toContain("build=2a4f9c1b3d8e7f60");
 	});
 
 	it("audioUrl handles double-digit chapters", () => {
-		const url = audioUrl("franz-kafka", "the-trial", 12);
+		const url = audioUrl(
+			"franz-kafka",
+			"the-trial",
+			12,
+			"kokoro-af-heart",
+			"2a4f9c1b3d8e7f60",
+		);
 		expect(url).toContain("/audio/12");
 	});
 

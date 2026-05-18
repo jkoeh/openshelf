@@ -7,6 +7,7 @@ import Header from "../../../components/Header";
 import { useTheme } from "../../../hooks/useTheme";
 import { coverUrl, epubUrl, fetchBook } from "../../../lib/api";
 import { formatDuration, stringToHue } from "../../../lib/format";
+import { selectRendition } from "../../../lib/renditions";
 import { getSavedProgress } from "../../../lib/storage";
 import type { Manifest } from "../../../types";
 
@@ -54,6 +55,28 @@ export default function BookDetailPage() {
 
 	const progress = getSavedProgress(author, title);
 	const hue = stringToHue(manifest.title);
+	const selected = selectRendition(manifest);
+
+	if (!selected) {
+		return (
+			<View style={{ flex: 1, backgroundColor: colors.background }}>
+				<Header title="Error" showBack />
+				<View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+					<Text style={{ color: colors.textSecondary, fontSize: 17 }}>
+						No playable rendition found
+					</Text>
+				</View>
+			</View>
+		);
+	}
+
+	const readUrl = (params: Record<string, string | number> = {}) => {
+		const search = new URLSearchParams({ rendition: selected.key });
+		for (const [key, value] of Object.entries(params)) {
+			search.set(key, String(value));
+		}
+		return `/read/${author}/${title}?${search}`;
+	};
 
 	return (
 		<View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -107,7 +130,8 @@ export default function BookDetailPage() {
 						{manifest.author}
 					</Text>
 					<Text style={{ color: colors.textSecondary, fontSize: 14 }}>
-						{formatDuration(manifest.total_duration_seconds)} · {manifest.chapters.length} chapters
+						{formatDuration(selected.rendition.total_duration_seconds)} ·{" "}
+						{selected.rendition.chapters.length} chapters
 					</Text>
 				</View>
 
@@ -117,7 +141,7 @@ export default function BookDetailPage() {
 						<Pressable
 							onPress={() =>
 								router.push(
-									`/read/${author}/${title}?chapter=${progress.chapter}&time=${progress.audioTime}`,
+									readUrl({ chapter: progress.chapter, time: progress.audioTime }),
 								)
 							}
 							style={{
@@ -137,7 +161,7 @@ export default function BookDetailPage() {
 						</Pressable>
 					) : null}
 					<Pressable
-						onPress={() => router.push(`/read/${author}/${title}?autoplay=1`)}
+						onPress={() => router.push(readUrl({ autoplay: 1 }))}
 						style={{
 							backgroundColor: progress ? colors.surface : colors.primary,
 							borderRadius: 12,
@@ -165,7 +189,7 @@ export default function BookDetailPage() {
 					</Pressable>
 					<View style={{ flexDirection: "row", gap: 10 }}>
 						<Pressable
-							onPress={() => router.push(`/read/${author}/${title}`)}
+							onPress={() => router.push(readUrl())}
 							style={{
 								flex: 1,
 								backgroundColor: colors.surface,
@@ -203,7 +227,12 @@ export default function BookDetailPage() {
 				</View>
 
 				{/* Chapters */}
-				<ChapterList chapters={manifest.chapters} author={author} title={title} />
+				<ChapterList
+					chapters={selected.rendition.chapters}
+					author={author}
+					title={title}
+					rendition={selected.key}
+				/>
 			</ScrollView>
 		</View>
 	);

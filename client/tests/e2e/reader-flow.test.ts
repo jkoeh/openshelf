@@ -9,7 +9,6 @@ import { findChunkAtTime, findWordAtTime } from "../../lib/sync-engine";
 import type {
   CatalogBook,
   CatalogResponse,
-  ChapterAlignment,
   ChapterResponse,
   Manifest,
   WordEntry,
@@ -19,6 +18,9 @@ import type {
 const catalogFixture: CatalogResponse = {
   version: 1,
   generated_at: "2025-01-15T12:00:00Z",
+  total: 2,
+  page: 1,
+  limit: 20,
   books: [
     {
       author: "Franz Kafka",
@@ -47,19 +49,28 @@ const manifestFixture: Manifest = {
   title: "The Trial",
   author: "Franz Kafka",
   source: "gutenberg",
-  rendition: "kokoro-af-heart",
-  generated_at: "2025-01-15T12:00:00Z",
-  total_duration_seconds: 28800.0,
-  chapters: [
-    {
-      number: 1,
-      title: "Chapter 1",
-      filename: "chapter-01.m4a",
-      duration_seconds: 2880.0,
-      word_count: 5200,
+  renditions: {
+    "kokoro-af-heart": {
+      voice: "af_heart",
+      engine: "kokoro",
+      display: "Heart",
+      current_build: "2a4f9c1b3d8e7f60",
+      available_builds: ["2a4f9c1b3d8e7f60"],
+      total_duration_seconds: 28800.0,
+      chapters: [
+        {
+          number: 1,
+          title: "Chapter 1",
+          filename: "chapter-01.m4a",
+          duration_seconds: 2880.0,
+          word_count: 5200,
+        },
+      ],
     },
-  ],
+  },
 };
+
+const manifestChapters = manifestFixture.renditions["kokoro-af-heart"].chapters;
 
 const chapterFixture: ChapterResponse = {
   number: 1,
@@ -71,17 +82,14 @@ const chapterFixture: ChapterResponse = {
   word_count: 38,
 };
 
-const alignmentFixture: ChapterAlignment = {
-  chapter: 1,
-  words: [
-    { word: "Someone", start: 0.0, end: 0.35, chunk_idx: 0, element_id: "os-p-001" },
-    { word: "must", start: 0.36, end: 0.55, chunk_idx: 0, element_id: "os-p-001" },
-    { word: "have", start: 0.56, end: 0.72, chunk_idx: 0, element_id: "os-p-001" },
-    { word: "been", start: 0.73, end: 0.9, chunk_idx: 0, element_id: "os-p-001" },
-    { word: "telling", start: 0.91, end: 1.2, chunk_idx: 0, element_id: "os-p-001" },
-    { word: "lies", start: 1.21, end: 1.5, chunk_idx: 0, element_id: "os-p-001" },
-  ],
-};
+const wordsFixture: WordEntry[] = [
+  { word: "Someone", start: 0.0, end: 0.35, chunk_idx: 0, element_id: "os-p-001" },
+  { word: "must", start: 0.36, end: 0.55, chunk_idx: 0, element_id: "os-p-001" },
+  { word: "have", start: 0.56, end: 0.72, chunk_idx: 0, element_id: "os-p-001" },
+  { word: "been", start: 0.73, end: 0.9, chunk_idx: 0, element_id: "os-p-001" },
+  { word: "telling", start: 0.91, end: 1.2, chunk_idx: 0, element_id: "os-p-001" },
+  { word: "lies", start: 1.21, end: 1.5, chunk_idx: 0, element_id: "os-p-001" },
+];
 
 describe("E2E: catalog → book detail flow", () => {
   it("catalog books have slugs that form valid URL paths", () => {
@@ -94,20 +102,20 @@ describe("E2E: catalog → book detail flow", () => {
   });
 
   it("manifest chapter filenames use .m4a extension", () => {
-    for (const ch of manifestFixture.chapters) {
+    for (const ch of manifestChapters) {
       expect(ch.filename).toMatch(/\.m4a$/);
     }
   });
 
   it("manifest chapters are numbered sequentially from 1", () => {
-    manifestFixture.chapters.forEach((ch, i) => {
+    manifestChapters.forEach((ch, i) => {
       expect(ch.number).toBe(i + 1);
     });
   });
 });
 
 describe("E2E: chapter text + alignment sync", () => {
-  const { words } = alignmentFixture;
+  const words = wordsFixture;
   const { chunks } = chapterFixture;
 
   it("all alignment words reference valid chunk indices", () => {
@@ -173,7 +181,7 @@ describe("E2E: chapter text + alignment sync", () => {
 });
 
 describe("E2E: tap-to-seek flow", () => {
-  const { words } = alignmentFixture;
+  const words = wordsFixture;
 
   it("tapping a word provides a valid seekTo timestamp", () => {
     // Simulate: user taps word at globalIdx=3 ("been")
@@ -233,7 +241,7 @@ describe("E2E: audio URL construction", () => {
   });
 
   it("audio files use .m4a extension in manifest", () => {
-    for (const ch of manifestFixture.chapters) {
+    for (const ch of manifestChapters) {
       expect(ch.filename).toMatch(/chapter-\d{2}\.m4a$/);
     }
   });

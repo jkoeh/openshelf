@@ -29,11 +29,10 @@ src/openshelf/
 
 scripts/
   process-books.py          # End-to-end: search, download, convert, (optionally) upload
-  reprocess-book.py         # Reprocess a downloaded book end-to-end with --force (overwrites local + R2). Does NOT redownload.
+  reprocess-book.py         # Reprocess a downloaded book end-to-end under a fresh build. Does NOT redownload.
   download-books.py         # CLI for book scraping only
   convert-book.py           # CLI for EPUB -> audio conversion
-  upload-books.py           # CLI for uploading pre-generated audio to R2
-  build-catalog.py          # Rebuild catalog.json on R2 from all uploaded manifests
+  build-catalog.py          # Rebuild catalog.json on R2 from root book manifests
   test-audio-quality.py     # Integration test: validates audio output quality and alignment
 
 tests/
@@ -62,7 +61,7 @@ uv pip install -r pipeline/requirements.txt
 python3 pipeline/scripts/process-books.py --author "Kafka"
 python3 pipeline/scripts/process-books.py --author "Shakespeare" --book "Romeo"
 python3 pipeline/scripts/process-books.py --author "Kafka" --upload
-python3 pipeline/scripts/reprocess-book.py Kafka Metamorphosis  # uses local EPUB, force-overwrites local + R2
+python3 pipeline/scripts/reprocess-book.py Kafka Metamorphosis  # uses local EPUB, publishes a fresh build
 python3 pipeline/scripts/process-books.py --author "Kafka" --dry-run  # download + parse only, no audio
 python3 pipeline/scripts/process-books.py --epub path/to/book.epub --upload  # local file, skip download
 
@@ -88,7 +87,6 @@ python3 pipeline/scripts/build-catalog.py --dry-run  # preview without uploading
 python3 pipeline/scripts/download-books.py --dry-run --author "Kafka"
 python3 pipeline/scripts/convert-book.py <epub-path>
 python3 pipeline/scripts/convert-book.py <epub-path> --upload
-python3 pipeline/scripts/upload-books.py <epub-path>
 
 # Run tests
 python3 -m unittest discover -s pipeline/tests -v

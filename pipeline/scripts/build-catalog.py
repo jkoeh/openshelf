@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Build catalog.json from all manifests on R2 and upload it.
+"""Build catalog.json from root book manifests on R2 and upload it.
 
-Scans R2 for books/<author>/<title>/audio/<rendition>/manifest.json,
-aggregates them into a single catalog.json, and uploads it to the bucket root.
+Scans R2 for books/<author>/<title>/manifest.json, enriches each book from its
+selected rendition's current rendition-manifest.json, and uploads the catalog to
+the bucket root.
 
 Usage:
     python3 pipeline/scripts/build-catalog.py
     python3 pipeline/scripts/build-catalog.py --dry-run   # print catalog, don't upload
 """
+
+from __future__ import annotations
 
 import argparse
 import json
@@ -17,34 +20,66 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from openshelf.config import R2_BUCKET, R2_PREFIX_BOOKS
+from botocore.exceptions import ClientError
+
+from openshelf.config import R2_BUCKET, R2_DEFAULT_RENDITION, R2_PREFIX_BOOKS
+from openshelf.pipeline import r2_keys
 from openshelf.pipeline.r2 import make_client
 
 
 def list_manifests(client, bucket: str) -> list[str]:
-    """List all manifest.json keys under books/."""
+    """List root book manifest.json keys under books/."""
     keys = []
     paginator = client.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=bucket, Prefix=f"{R2_PREFIX_BOOKS}/"):
         for obj in page.get("Contents", []):
-            if obj["Key"].endswith("/manifest.json"):
+            key = obj["Key"]
+            if parse_manifest_key(key):
                 keys.append(obj["Key"])
     return keys
 
 
 def parse_manifest_key(key: str) -> dict | None:
-    """Extract author_slug, title_slug, rendition from a manifest key.
+    """Extract author_slug and title_slug from a root book manifest key.
 
-    Expected: books/<author>/<title>/audio/<rendition>/manifest.json
+    Expected: books/<author>/<title>/manifest.json
     """
     parts = key.split("/")
-    if len(parts) != 6:
+    if len(parts) != 4 or parts[0] != R2_PREFIX_BOOKS or parts[3] != "manifest.json":
         return None
     return {
         "author_slug": parts[1],
         "title_slug": parts[2],
-        "rendition": parts[4],
     }
+
+
+def choose_catalog_rendition(renditions: dict) -> str | None:
+    """Pick the rendition represented in catalog rows."""
+    if not renditions:
+        return None
+    if R2_DEFAULT_RENDITION in renditions:
+        return R2_DEFAULT_RENDITION
+    return sorted(renditions.keys())[0]
+
+
+def _read_json_object(client, bucket: str, key: str) -> dict | None:
+    try:
+        obj = client.get_object(Bucket=bucket, Key=key)
+    except ClientError as e:
+        if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
+            return None
+        raise
+    return json.loads(obj["Body"].read())
+
+
+def _key_exists(client, bucket: str, key: str) -> bool:
+    try:
+        client.head_object(Bucket=bucket, Key=key)
+        return True
+    except ClientError as e:
+        if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
+            return False
+        raise
 
 
 def build_catalog(client, bucket: str) -> dict:
@@ -59,8 +94,41 @@ def build_catalog(client, bucket: str) -> dict:
             print(f"  [SKIP] unexpected key format: {key}")
             continue
 
-        obj = client.get_object(Bucket=bucket, Key=key)
-        manifest = json.loads(obj["Body"].read())
+        manifest = _read_json_object(client, bucket, key)
+        if not manifest:
+            print(f"  [SKIP] missing manifest: {key}")
+            continue
+
+        renditions = manifest.get("renditions", {})
+        rendition = choose_catalog_rendition(renditions)
+        if not rendition:
+            print(f"  [SKIP] no renditions: {key}")
+            continue
+
+        current_build = renditions.get(rendition, {}).get("current_build")
+        if not current_build:
+            print(f"  [SKIP] no current_build for {rendition}: {key}")
+            continue
+
+        rendition_manifest_key = r2_keys.rendition_manifest_key(
+            meta["author_slug"], meta["title_slug"], rendition, current_build,
+        )
+        rendition_manifest = _read_json_object(client, bucket, rendition_manifest_key)
+        if not rendition_manifest:
+            print(f"  [SKIP] missing rendition manifest: {rendition_manifest_key}")
+            continue
+
+        has_cover = (
+            _key_exists(
+                client, bucket,
+                r2_keys.cover_key(meta["author_slug"], meta["title_slug"], "image/jpeg"),
+            )
+            or _key_exists(
+                client, bucket,
+                r2_keys.cover_key(meta["author_slug"], meta["title_slug"], "image/png"),
+            )
+        )
+        chapters = rendition_manifest.get("chapters", [])
 
         book = {
             "author": manifest.get("author", meta["author_slug"]),
@@ -68,9 +136,10 @@ def build_catalog(client, bucket: str) -> dict:
             "title": manifest.get("title", meta["title_slug"]),
             "title_slug": meta["title_slug"],
             "source": manifest.get("source", "unknown"),
-            "rendition": meta["rendition"],
-            "total_duration_seconds": manifest.get("total_duration_seconds", 0),
-            "chapter_count": len(manifest.get("chapters", [])),
+            "rendition": rendition,
+            "total_duration_seconds": rendition_manifest.get("total_duration_seconds", 0),
+            "chapter_count": len(chapters),
+            "has_cover": has_cover,
         }
         books.append(book)
         mins = book["total_duration_seconds"] / 60
@@ -84,7 +153,7 @@ def build_catalog(client, bucket: str) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Build and upload catalog.json from R2 manifests")
+    parser = argparse.ArgumentParser(description="Build and upload catalog.json from root R2 manifests")
     parser.add_argument("--dry-run", action="store_true", help="Print catalog without uploading")
     args = parser.parse_args()
 

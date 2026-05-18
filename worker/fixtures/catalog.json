@@ -10,7 +10,8 @@
 			"source": "gutenberg",
 			"rendition": "kokoro-af-heart",
 			"total_duration_seconds": 28800.0,
-			"chapter_count": 10
+			"chapter_count": 10,
+			"has_cover": false
 		},
 		{
 			"author": "Fyodor Dostoevsky",
@@ -20,7 +21,8 @@
 			"source": "gutenberg",
 			"rendition": "kokoro-af-heart",
 			"total_duration_seconds": 77400.5,
-			"chapter_count": 42
+			"chapter_count": 42,
+			"has_cover": false
 		}
 	]
 }

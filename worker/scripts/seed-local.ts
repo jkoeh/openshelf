@@ -16,16 +16,21 @@ const BASE_URL = "http://localhost:8787";
 const AUTHOR = "franz-kafka";
 const TITLE = "the-trial";
 const RENDITION = "kokoro-af-heart";
+const BUILD = "2a4f9c1b3d8e7f60";
 
 const seeds: Array<{ key: string; file: string }> = [
 	{ key: "catalog.json", file: "catalog.json" },
-	{ key: `books/${AUTHOR}/${TITLE}/audio/${RENDITION}/manifest.json`, file: "manifest.json" },
+	{ key: `books/${AUTHOR}/${TITLE}/manifest.json`, file: "manifest.json" },
 	{
-		key: `books/${AUTHOR}/${TITLE}/audio/${RENDITION}/word_alignment.json`,
-		file: "word_alignment.json",
+		key: `books/${AUTHOR}/${TITLE}/audio/${RENDITION}/builds/${BUILD}/rendition-manifest.json`,
+		file: "rendition-manifest.json",
 	},
 	{
-		key: `books/${AUTHOR}/${TITLE}/audio/${RENDITION}/chapter-01.m4a`,
+		key: `books/${AUTHOR}/${TITLE}/audio/${RENDITION}/builds/${BUILD}/chapter_data.json`,
+		file: "chapter_data.json",
+	},
+	{
+		key: `books/${AUTHOR}/${TITLE}/audio/${RENDITION}/builds/${BUILD}/chapter-01.m4a`,
 		file: "chapter-01.m4a",
 	},
 ];

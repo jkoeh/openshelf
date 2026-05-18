@@ -5,8 +5,8 @@ per-book artifact on R2. It is a tiny pointer that names the `current_build` per
 rendition. Always overwritten on upload.
 
 The rendition manifest at `audio/{rendition}/builds/{build}/rendition-manifest.json`
-is immutable per (rendition, build) and byte-stable for fixed inputs — see
-pipeline/docs/step5c-rendition-manifest.md for the byte-stability rule.
+is immutable per (rendition, build). Each build ID is minted fresh for a pipeline
+run, so reruns publish under a new prefix instead of overwriting prior build bytes.
 """
 
 from __future__ import annotations
@@ -146,7 +146,7 @@ def merge_book_manifest(
 
 
 # ---------------------------------------------------------------------------
-# Rendition manifest (per-build, immutable, byte-stable)
+# Rendition manifest (per-build, immutable)
 # ---------------------------------------------------------------------------
 
 
@@ -171,9 +171,8 @@ def generate_rendition_manifest(
 ) -> str:
     """Write a rendition-manifest.json for one (rendition, build). Returns the path.
 
-    Byte-stability is mandatory (see step5c-rendition-manifest.md): every field
-    is derived from inputs that already feed into compute_build_id, so identical
-    inputs produce byte-identical output. No wall-clock fields here.
+    The manifest is written under a fresh per-run build prefix. It intentionally
+    contains no wall-clock fields so the artifact describes only the build output.
     """
     manifest = {
         "build": build_id,

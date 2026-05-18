@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, AppState, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import AudioPlayerBar, { nextRate } from "../../../components/AudioPlayerBar";
 import ChapterDropdown from "../../../components/ChapterDropdown";
@@ -11,6 +11,7 @@ import SettingsPanel from "../../../components/SettingsPanel";
 import { useSyncEngine } from "../../../hooks/useSyncEngine";
 import { useTheme } from "../../../hooks/useTheme";
 import { audioUrl, fetchBook, fetchChapter } from "../../../lib/api";
+import { selectRendition } from "../../../lib/renditions";
 import {
   getSavedFontSize,
   getSavedPlaybackRate,
@@ -28,17 +29,24 @@ export default function ReaderPage() {
     chapter: chapterParam,
     time: timeParam,
     autoplay,
+    rendition: renditionParam,
   } = useLocalSearchParams<{
     author: string;
     title: string;
     chapter?: string;
     time?: string;
     autoplay?: string;
+    rendition?: string;
   }>();
   const { colors } = useTheme();
 
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [chapterData, setChapterData] = useState<ChapterResponse | null>(null);
+  const [pinnedBuild, setPinnedBuild] = useState<{
+    chapter: number;
+    rendition: string;
+    build: string;
+  } | null>(null);
   const [currentChapter, setCurrentChapter] = useState(
     chapterParam ? Number.parseInt(chapterParam, 10) : 1,
   );
@@ -53,17 +61,24 @@ export default function ReaderPage() {
   const autoplayTriggered = useRef(false);
 
   // Audio player
-  const audioSrc = author && title ? audioUrl(author, title, currentChapter) : null;
+  const audioSrc =
+    author && title && pinnedBuild?.chapter === currentChapter
+      ? audioUrl(author, title, currentChapter, pinnedBuild.rendition, pinnedBuild.build)
+      : null;
   const player = useAudioPlayer(audioSrc, { updateInterval: 50, crossOrigin: "anonymous" });
   const status = useAudioPlayerStatus(player);
+  const activeRendition = useMemo(
+    () => (manifest ? selectRendition(manifest, renditionParam) : null),
+    [manifest, renditionParam],
+  );
+  const activeChapters = activeRendition?.rendition.chapters ?? [];
+  const totalChapters = activeChapters.length;
 
   // Sync engine — reads player.currentTime directly via rAF, not via status
-  const totalChapters = manifest?.chapters.length ?? 0;
   const sync = useSyncEngine(
     author,
     title,
     currentChapter,
-    totalChapters,
     player,
     syncEnabled,
     chapterData?.words,
@@ -82,7 +97,7 @@ export default function ReaderPage() {
   // Set lock screen metadata when manifest loads
   useEffect(() => {
     if (!manifest || !status.isLoaded) return;
-    const chInfo = manifest.chapters.find((ch) => ch.number === currentChapter);
+    const chInfo = activeChapters.find((ch) => ch.number === currentChapter);
     player.setActiveForLockScreen(true, {
       title: chInfo ? `${chInfo.title}` : manifest.title,
       artist: manifest.author,
@@ -95,7 +110,7 @@ export default function ReaderPage() {
         // Player may already be released by expo-audio during source switches/unmount.
       }
     };
-  }, [manifest, currentChapter, status.isLoaded, player]);
+  }, [manifest, activeChapters, currentChapter, status.isLoaded, player]);
 
   // Keyboard shortcuts (web only)
   useEffect(() => {
@@ -148,14 +163,14 @@ export default function ReaderPage() {
 
   // Auto-advance to next chapter when audio finishes
   useEffect(() => {
-    if (status.didJustFinish && manifest) {
-      if (currentChapter < manifest.chapters.length) {
+    if (status.didJustFinish && totalChapters > 0) {
+      if (currentChapter < totalChapters) {
         setCurrentChapter((prev) => prev + 1);
         // New chapter will auto-play since didJustFinish means we were playing
         autoplayTriggered.current = true;
       }
     }
-  }, [status.didJustFinish, manifest, currentChapter]);
+  }, [status.didJustFinish, totalChapters, currentChapter]);
 
   // When chapter changes and audio was playing, auto-play the new chapter
   useEffect(() => {
@@ -170,22 +185,35 @@ export default function ReaderPage() {
     if (!author || !title) return;
     fetchBook(author, title)
       .then(setManifest)
-      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load book"));
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : "Failed to load book");
+        setLoading(false);
+      });
   }, [author, title]);
+
+  useEffect(() => {
+    if (manifest && !activeRendition) {
+      setError("No playable rendition found");
+      setLoading(false);
+    }
+  }, [manifest, activeRendition]);
 
   // Fetch chapter text when chapter changes
   useEffect(() => {
-    if (!author || !title) return;
+    if (!author || !title || !manifest || !activeRendition) return;
     setLoading(true);
     setError(null);
-    fetchChapter(author, title, currentChapter)
+    const build = activeRendition.rendition.current_build;
+    const rendition = activeRendition.key;
+    setPinnedBuild({ chapter: currentChapter, rendition, build });
+    fetchChapter(author, title, currentChapter, rendition, build)
       .then((data) => {
         setChapterData(data);
         scrollRef.current?.scrollTo({ y: 0, animated: false });
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Failed to load chapter"))
       .finally(() => setLoading(false));
-  }, [author, title, currentChapter]);
+  }, [author, title, manifest, activeRendition, currentChapter]);
 
   // Save progress every 10s while playing
   useEffect(() => {
@@ -231,8 +259,8 @@ export default function ReaderPage() {
 
   const goToChapter = useCallback(
     (num: number) => {
-      if (!manifest) return;
-      const clamped = Math.max(1, Math.min(num, manifest.chapters.length));
+      if (totalChapters === 0) return;
+      const clamped = Math.max(1, Math.min(num, totalChapters));
       if (clamped !== currentChapter) {
         // If audio was playing, flag to auto-play new chapter
         if (status.playing) {
@@ -242,7 +270,7 @@ export default function ReaderPage() {
         setCurrentChapter(clamped);
       }
     },
-    [manifest, currentChapter, status.playing, player],
+    [totalChapters, currentChapter, status.playing, player],
   );
 
   const handlePlayPause = useCallback(() => {
@@ -293,7 +321,7 @@ export default function ReaderPage() {
     );
   }
 
-  const chapterInfo = manifest?.chapters.find((ch) => ch.number === currentChapter);
+  const chapterInfo = activeChapters.find((ch) => ch.number === currentChapter);
   const headerTitle = chapterInfo ? `Ch. ${chapterInfo.number}` : "Loading...";
 
   return (
@@ -351,11 +379,11 @@ export default function ReaderPage() {
       />
 
       {/* Modals */}
-      {manifest ? (
+      {activeRendition ? (
         <ChapterDropdown
           visible={showChapters}
           onClose={() => setShowChapters(false)}
-          chapters={manifest.chapters}
+          chapters={activeChapters}
           currentChapter={currentChapter}
           onSelect={goToChapter}
         />

@@ -13,8 +13,6 @@ graph TD
     B --> C[upload_epub]
     B --> D[upload_cover]
     B --> E[upload_rendition_build]
-    B --> F[upload_chapter_data]
-    B --> G[upload_rendition_manifest]
     B --> H[upload_book_manifest]
 
     C --> C1{book.epub on R2?}
@@ -110,7 +108,7 @@ Unchanged from prior shape — only the path it lives at has changed.
 {
   "version": 1,
   "rendition": "kokoro-af-heart",
-  "build": "2a4f9c1",
+  "build": "2a4f9c1b3d8e7f60",
   "chapters": [
     {
       "number": 1,

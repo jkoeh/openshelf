@@ -1,0 +1,23 @@
+{
+	"version": 1,
+	"rendition": "kokoro-af-heart",
+	"build": "2a4f9c1b3d8e7f60",
+	"chapters": [
+		{
+			"number": 1,
+			"title": "Chapter 1",
+			"word_count": 4,
+			"chunks": [
+				{
+					"text": "Someone must have been telling lies about Josef K.",
+					"words": [
+						{ "word": "Someone", "start": 0.0, "end": 0.3 },
+						{ "word": "must", "start": 0.3, "end": 0.5 },
+						{ "word": "have", "start": 0.5, "end": 0.7 },
+						{ "word": "been", "start": 0.7, "end": 0.9 }
+					]
+				}
+			]
+		}
+	]
+}

@@ -89,8 +89,8 @@ def merge_book_manifest(
       "voice": "af_heart",
       "engine": "kokoro",
       "display": "Heart",
-      "current_build": "2a4f9c1",
-      "available_builds": ["2a4f9c1", "7e8b4d2"]
+      "current_build": "2a4f9c1b3d8e7f60",
+      "available_builds": ["2a4f9c1b3d8e7f60", "7e8b4d2a9c0e1234"]
     }
   }
 }
@@ -109,7 +109,7 @@ This file is **always overwritten** on upload (`upload_book_manifest(..., force=
 When reprocessing produces a new build for a rendition that already has prior builds on R2:
 
 1. Insert `new_entry.current_build` at the front of `available_builds`.
-2. Deduplicate — if the build hash matches the previous current build (no-op rerun), nothing changes.
+2. Deduplicate defensively if the same build ID is already listed.
 3. Truncate to the most recent `retain` builds. Older entries are dropped from the list **but their R2 objects are not deleted**; a separate GC step (see `step6-r2.md`) removes orphaned bytes.
 4. Other renditions in the prior manifest are preserved unchanged.
 

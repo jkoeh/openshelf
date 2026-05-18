@@ -2,9 +2,16 @@ import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import app from "../../src/index";
 
+const AUTHOR = "franz-kafka";
+const TITLE = "the-trial";
+const RENDITION = "kokoro-af-heart";
+const BUILD = "2a4f9c1b3d8e7f60";
+const QUERY = `rendition=${RENDITION}&build=${BUILD}`;
+
 const CHAPTER_DATA = {
 	version: 1,
-	rendition: "kokoro-af-heart",
+	rendition: RENDITION,
+	build: BUILD,
 	chapters: [
 		{
 			number: 1,
@@ -43,14 +50,14 @@ const CHAPTER_DATA = {
 
 beforeAll(async () => {
 	await env.R2_BUCKET.put(
-		"books/franz-kafka/the-trial/audio/kokoro-af-heart/chapter_data.json",
+		`books/${AUTHOR}/${TITLE}/audio/${RENDITION}/builds/${BUILD}/chapter_data.json`,
 		JSON.stringify(CHAPTER_DATA),
 	);
 });
 
 describe("GET /api/v1/books/:author/:title/chapters/:number", () => {
-	it("returns chapter with inline words", async () => {
-		const res = await app.request("/api/v1/books/franz-kafka/the-trial/chapters/1", {}, env);
+	it("returns chapter with inline words from a build-pinned key", async () => {
+		const res = await app.request(`/api/v1/books/${AUTHOR}/${TITLE}/chapters/1?${QUERY}`, {}, env);
 		expect(res.status).toBe(200);
 		const body = await res.json<{
 			number: number;
@@ -65,16 +72,19 @@ describe("GET /api/v1/books/:author/:title/chapters/:number", () => {
 		expect(body.chunks[0]).toBe("Someone must have been telling lies about Josef K.");
 		expect(body.word_count).toBe(20);
 		expect(body.words).toHaveLength(4);
-		// First chunk words have chunk_idx 0
 		expect(body.words[0]).toEqual({ word: "Someone", start: 0.0, end: 0.3, chunk_idx: 0 });
 		expect(body.words[1]).toEqual({ word: "must", start: 0.3, end: 0.5, chunk_idx: 0 });
-		// Second chunk words have chunk_idx 1
 		expect(body.words[2]).toEqual({ word: "Every", start: 3.0, end: 3.2, chunk_idx: 1 });
 		expect(body.words[3]).toEqual({ word: "day", start: 3.2, end: 3.4, chunk_idx: 1 });
 	});
 
+	it("requires rendition and build query params", async () => {
+		const res = await app.request(`/api/v1/books/${AUTHOR}/${TITLE}/chapters/1`, {}, env);
+		expect(res.status).toBe(400);
+	});
+
 	it("returns chapter 2 with words", async () => {
-		const res = await app.request("/api/v1/books/franz-kafka/the-trial/chapters/2", {}, env);
+		const res = await app.request(`/api/v1/books/${AUTHOR}/${TITLE}/chapters/2?${QUERY}`, {}, env);
 		expect(res.status).toBe(200);
 		const body = await res.json<{
 			number: number;
@@ -86,27 +96,35 @@ describe("GET /api/v1/books/:author/:title/chapters/:number", () => {
 	});
 
 	it("returns 404 for nonexistent chapter", async () => {
-		const res = await app.request("/api/v1/books/franz-kafka/the-trial/chapters/99", {}, env);
+		const res = await app.request(`/api/v1/books/${AUTHOR}/${TITLE}/chapters/99?${QUERY}`, {}, env);
 		expect(res.status).toBe(404);
 	});
 
-	it("returns 404 for unknown book", async () => {
-		const res = await app.request("/api/v1/books/unknown/book/chapters/1", {}, env);
+	it("returns 404 for unknown build", async () => {
+		const res = await app.request(
+			`/api/v1/books/${AUTHOR}/${TITLE}/chapters/1?rendition=${RENDITION}&build=ffffffffffffffff`,
+			{},
+			env,
+		);
 		expect(res.status).toBe(404);
 	});
 
 	it("returns 400 for invalid chapter number", async () => {
-		const res = await app.request("/api/v1/books/franz-kafka/the-trial/chapters/abc", {}, env);
+		const res = await app.request(
+			`/api/v1/books/${AUTHOR}/${TITLE}/chapters/abc?${QUERY}`,
+			{},
+			env,
+		);
 		expect(res.status).toBe(400);
 	});
 
 	it("returns 400 for invalid slug", async () => {
-		const res = await app.request("/api/v1/books/INVALID/foo/chapters/1", {}, env);
+		const res = await app.request(`/api/v1/books/INVALID/foo/chapters/1?${QUERY}`, {}, env);
 		expect(res.status).toBe(400);
 	});
 
 	it("has immutable cache-control", async () => {
-		const res = await app.request("/api/v1/books/franz-kafka/the-trial/chapters/1", {}, env);
+		const res = await app.request(`/api/v1/books/${AUTHOR}/${TITLE}/chapters/1?${QUERY}`, {}, env);
 		expect(res.headers.get("Cache-Control")).toContain("immutable");
 	});
 });

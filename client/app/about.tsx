@@ -31,7 +31,7 @@ export default function AboutPage() {
         <Text style={{ color: colors.text, fontSize: 16, lineHeight: 26, marginBottom: 20 }}>
           OpenShelf is an open source public domain audiobook platform. It downloads EPUB books
           from Project Gutenberg and Standard Ebooks, converts them to AI-narrated audio using
-          Kokoro TTS with word-level alignment via WhisperX, and serves them globally via
+          Kokoro TTS with word-level timestamps, and serves them globally via
           Cloudflare R2.
         </Text>
 

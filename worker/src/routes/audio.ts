@@ -1,7 +1,7 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { CACHE_IMMUTABLE } from "../constants";
 import { ErrorSchema } from "../schemas/error";
-import { ChapterNumberStringSchema, SlugSchema } from "../schemas/params";
+import { BuildSchema, ChapterNumberStringSchema, SlugSchema } from "../schemas/params";
 import type { Env } from "../types";
 import { createOpenAPIApp } from "../utils/openapi-app";
 import { r2Key } from "../utils/r2-keys";
@@ -13,6 +13,11 @@ const ParamsSchema = z.object({
 		param: { name: "chapter", in: "path" },
 		example: "01",
 	}),
+});
+
+const QuerySchema = z.object({
+	rendition: SlugSchema.openapi({ example: "kokoro-af-heart" }),
+	build: BuildSchema.openapi({ example: "2a4f9c1b3d8e7f60" }),
 });
 
 const HeadersSchema = z.object({
@@ -31,8 +36,8 @@ const route = createRoute({
 	method: "get",
 	path: "/",
 	tags: ["audio"],
-	summary: "Stream a chapter's audio (m4a / mp3 fallback)",
-	request: { params: ParamsSchema, headers: HeadersSchema },
+	summary: "Stream a build-pinned chapter audio file",
+	request: { params: ParamsSchema, query: QuerySchema, headers: HeadersSchema },
 	responses: {
 		200: {
 			description: "Full audio stream",
@@ -69,7 +74,7 @@ const app = createOpenAPIApp<{ Bindings: Env }>();
 
 app.openapi(route, async (c) => {
 	const { author, title, chapter } = c.req.valid("param");
-	const paddedChapter = chapter.padStart(2, "0");
+	const { rendition, build } = c.req.valid("query");
 	const rangeHeader = c.req.header("Range");
 
 	let range: R2Range | undefined;
@@ -83,19 +88,17 @@ app.openapi(route, async (c) => {
 		}
 		const offset = Number(match[1]);
 		const end = match[2] ? Number(match[2]) : undefined;
+		if (end !== undefined && end < offset) {
+			return c.json(
+				{ error: { code: "RANGE_NOT_SATISFIABLE", message: "Invalid Range header" } },
+				416,
+			);
+		}
 		range = end !== undefined ? { offset, length: end - offset + 1 } : { offset };
 	}
 
-	// Try .m4a first, fall back to .mp3 for legacy content
-	const m4aKey = r2Key.audio(author, title, paddedChapter);
-	let obj = await c.env.R2_BUCKET.get(m4aKey, range ? { range } : undefined);
-	let contentType = "audio/mp4";
-
-	if (!obj) {
-		const mp3Key = m4aKey.replace(/\.m4a$/, ".mp3");
-		obj = await c.env.R2_BUCKET.get(mp3Key, range ? { range } : undefined);
-		contentType = "audio/mpeg";
-	}
+	const audioKey = r2Key.audio(author, title, rendition, build, chapter);
+	const obj = await c.env.R2_BUCKET.get(audioKey, range ? { range } : undefined);
 
 	if (!obj) {
 		return c.json(
@@ -110,7 +113,7 @@ app.openapi(route, async (c) => {
 	}
 
 	const headers: Record<string, string> = {
-		"Content-Type": contentType,
+		"Content-Type": "audio/mp4",
 		"Accept-Ranges": "bytes",
 		"Cache-Control": CACHE_IMMUTABLE,
 		"Content-Disposition": "inline",

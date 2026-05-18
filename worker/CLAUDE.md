@@ -19,7 +19,7 @@ Treat `/api/v1/openapi.json` as the source of truth for any client (web, mobile,
 src/
   index.ts              # OpenAPIHono app: route mounting, /openapi.json, /docs, error handling
   types.ts              # Env bindings, shared types
-  constants.ts          # Default rendition, cache headers
+  constants.ts          # R2/cache/catalog constants
   middleware/
     cors.ts             # CORS middleware
   schemas/
@@ -106,8 +106,8 @@ The book route returns a merge of two R2 reads: the small mutable `manifest.json
       "voice": "af_heart",
       "engine": "kokoro",
       "display": "Heart",
-      "current_build": "2a4f9c1",
-      "available_builds": ["2a4f9c1", "7e8b4d2"],
+      "current_build": "2a4f9c1b3d8e7f60",
+      "available_builds": ["2a4f9c1b3d8e7f60", "7e8b4d2a9c0e1234"],
       "total_duration_seconds": 1847.3,
       "chapters": [
         {"number": 1, "title": "I", "filename": "chapter-01.m4a",

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import type { AudioPlayer } from "expo-audio";
-import { fetchChapterAlignment } from "../lib/api";
 import { findWordAtTime } from "../lib/sync-engine";
 import type { WordEntry } from "../types";
 
@@ -12,20 +11,16 @@ interface SyncState {
 }
 
 /**
- * Hook that fetches alignment data for the current chapter and computes
- * the active word/chunk indices by reading player.currentTime directly
- * in a requestAnimationFrame loop.
+ * Hook that consumes inline chapter words and computes the active word/chunk
+ * indices by reading player.currentTime directly in a requestAnimationFrame loop.
  *
  * Only triggers React re-renders when the active word actually changes,
  * not on every audio time tick.
- *
- * Also prefetches alignment for the next chapter.
  */
 export function useSyncEngine(
   author: string | undefined,
   title: string | undefined,
   chapter: number,
-  totalChapters: number,
   player: AudioPlayer | null,
   syncEnabled: boolean,
   preloadedWords?: WordEntry[],
@@ -35,54 +30,29 @@ export function useSyncEngine(
   const [loading, setLoading] = useState(false);
   const [activeWordIndex, setActiveWordIndex] = useState(-1);
   const [activeChunkIndex, setActiveChunkIndex] = useState(-1);
-  const cache = useRef<Map<number, WordEntry[]>>(new Map());
+  const lastChapter = useRef<number | null>(null);
 
-  // Use preloaded words (from chapter_data.json) or fetch alignment separately
+  // Use inline words from chapter_data.json.
   useEffect(() => {
     if (!author || !title || !syncEnabled) {
       setWords([]);
       return;
     }
 
-    // Words came inline with the chapter response — use them directly
+    if (lastChapter.current !== chapter) {
+      lastChapter.current = chapter;
+      setActiveWordIndex(-1);
+      setActiveChunkIndex(-1);
+    }
+
     if (preloadedWords && preloadedWords.length > 0) {
       setWords(preloadedWords);
       return;
     }
 
-    const cached = cache.current.get(chapter);
-    if (cached) {
-      setWords(cached);
-      return;
-    }
-
-    setLoading(true);
-    fetchChapterAlignment(author, title, chapter)
-      .then((data) => {
-        cache.current.set(chapter, data.words);
-        setWords(data.words);
-      })
-      .catch(() => {
-        setWords([]);
-      })
-      .finally(() => setLoading(false));
+    setWords([]);
+    setLoading(false);
   }, [author, title, chapter, syncEnabled, preloadedWords]);
-
-  // Prefetch next chapter's alignment (only when words aren't inline)
-  useEffect(() => {
-    if (!author || !title || !syncEnabled) return;
-    if (preloadedWords && preloadedWords.length > 0) return;
-    const next = chapter + 1;
-    if (next > totalChapters || cache.current.has(next)) return;
-
-    fetchChapterAlignment(author, title, next)
-      .then((data) => {
-        cache.current.set(next, data.words);
-      })
-      .catch(() => {
-        // prefetch failure is non-critical
-      });
-  }, [author, title, chapter, totalChapters, syncEnabled, preloadedWords]);
 
   // rAF loop: read player.currentTime directly, only setState when indices change
   useEffect(() => {

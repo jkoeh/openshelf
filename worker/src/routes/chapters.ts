@@ -1,7 +1,7 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { CACHE_IMMUTABLE } from "../constants";
 import { ErrorSchema } from "../schemas/error";
-import { ChapterNumberStringSchema, SlugSchema } from "../schemas/params";
+import { BuildSchema, ChapterNumberStringSchema, SlugSchema } from "../schemas/params";
 import type { Env } from "../types";
 import { createOpenAPIApp } from "../utils/openapi-app";
 import { r2Key } from "../utils/r2-keys";
@@ -13,6 +13,11 @@ const ParamsSchema = z.object({
 		param: { name: "number", in: "path" },
 		example: "1",
 	}),
+});
+
+const QuerySchema = z.object({
+	rendition: SlugSchema.openapi({ example: "kokoro-af-heart" }),
+	build: BuildSchema.openapi({ example: "2a4f9c1b3d8e7f60" }),
 });
 
 const WordSchema = z.object({
@@ -47,6 +52,7 @@ interface ChapterDataChapter {
 interface ChapterData {
 	version: number;
 	rendition: string;
+	build: string;
 	chapters: ChapterDataChapter[];
 }
 
@@ -65,7 +71,7 @@ const route = createRoute({
 	path: "/",
 	tags: ["chapters"],
 	summary: "Get chapter text + word timestamps",
-	request: { params: ParamsSchema },
+	request: { params: ParamsSchema, query: QuerySchema },
 	responses: {
 		200: {
 			description: "Chapter payload with flattened word timestamps",
@@ -86,12 +92,18 @@ const app = createOpenAPIApp<{ Bindings: Env }>();
 
 app.openapi(route, async (c) => {
 	const { author, title, number } = c.req.valid("param");
+	const { rendition, build } = c.req.valid("query");
 	const chapterNum = Number(number);
 
-	const obj = await c.env.R2_BUCKET.get(r2Key.chapterData(author, title));
+	const obj = await c.env.R2_BUCKET.get(r2Key.chapterData(author, title, rendition, build));
 	if (!obj) {
 		return c.json(
-			{ error: { code: "NOT_FOUND", message: `Book not found: ${author}/${title}` } },
+			{
+				error: {
+					code: "NOT_FOUND",
+					message: `Build not found: ${author}/${title}/${rendition}/${build}`,
+				},
+			},
 			404,
 		);
 	}

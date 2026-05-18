@@ -9,11 +9,17 @@ interface ChapterListProps {
 	chapters: ManifestChapter[];
 	author: string;
 	title: string;
+	rendition?: string;
 }
 
-export default function ChapterList({ chapters, author, title }: ChapterListProps) {
+export default function ChapterList({ chapters, author, title, rendition }: ChapterListProps) {
 	const { colors } = useTheme();
 	const router = useRouter();
+	const chapterUrl = (chapter: number) => {
+		const search = new URLSearchParams({ chapter: String(chapter), autoplay: "1" });
+		if (rendition) search.set("rendition", rendition);
+		return `/read/${author}/${title}?${search}`;
+	};
 
 	return (
 		<View>
@@ -32,7 +38,7 @@ export default function ChapterList({ chapters, author, title }: ChapterListProp
 			{chapters.map((ch) => (
 				<Pressable
 					key={ch.number}
-					onPress={() => router.push(`/read/${author}/${title}?chapter=${ch.number}&autoplay=1`)}
+					onPress={() => router.push(chapterUrl(ch.number))}
 					style={({ pressed }) => ({
 						flexDirection: "row",
 						justifyContent: "space-between",

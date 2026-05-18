@@ -5,9 +5,8 @@ the shapes these functions produce. Key invariants:
 
 - The book manifest is the only mutable per-book artifact; merge semantics
   prepend the new build, dedupe, and truncate to `retain` entries.
-- The rendition manifest is byte-stable for fixed inputs (no `generated_at`,
-  no wall-clock) so --force reruns produce byte-identical content for an
-  unchanged build.
+- The rendition manifest carries no `generated_at`, so a per-build artifact
+  describes only the build output.
 """
 
 import json
@@ -243,7 +242,7 @@ class TestMergeBookManifest(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# generate_rendition_manifest (per-build, byte-stable)
+# generate_rendition_manifest (per-build, immutable)
 # ---------------------------------------------------------------------------
 
 
@@ -252,7 +251,7 @@ class TestGenerateRenditionManifest(unittest.TestCase):
     def _generate(self, output_dir, chapters=None):
         return generate_rendition_manifest(
             rendition="kokoro-af-heart",
-            build_id="2a4f9c1",
+            build_id="2a4f9c1b3d8e7f60",
             voice="af_heart",
             engine="kokoro",
             pipeline_version="1",
@@ -270,7 +269,7 @@ class TestGenerateRenditionManifest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = self._generate(d)
             data = _read_json(path)
-            self.assertEqual(data["build"], "2a4f9c1")
+            self.assertEqual(data["build"], "2a4f9c1b3d8e7f60")
             self.assertEqual(data["rendition"], "kokoro-af-heart")
             self.assertEqual(data["voice"], "af_heart")
             self.assertEqual(data["engine"], "kokoro")

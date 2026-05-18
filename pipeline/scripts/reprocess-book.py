@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Reprocess an already-downloaded book end-to-end with force-overwrite.
+"""Reprocess an already-downloaded book end-to-end.
 
 Locates the local EPUB under download/books/, then runs convert-book.py with
-`--upload --force` so all local artifacts (audio, manifest, chapter_data) and
-their R2 counterparts are regenerated. Does NOT redownload the EPUB.
+`--upload --force` so audio, chapter_data, and manifests are regenerated under a
+fresh build prefix. Does NOT redownload the EPUB.
 
 Usage:
     python3 pipeline/scripts/reprocess-book.py Kafka Metamorphosis
@@ -49,7 +49,7 @@ def find_local_epub(author: str, title: str, download_dir: str) -> str | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Reprocess a previously-downloaded book end-to-end (overwrites local + R2)."
+        description="Reprocess a previously-downloaded book end-to-end under a fresh build."
     )
     parser.add_argument("author", help="Author name, e.g. Kafka")
     parser.add_argument("title", help="Book title, e.g. Metamorphosis")

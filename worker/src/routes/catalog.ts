@@ -1,10 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import {
-	CACHE_SHORT,
-	CATALOG_PAGE_SIZE_DEFAULT,
-	CATALOG_PAGE_SIZE_MAX,
-	R2_PREFIX_BOOKS,
-} from "../constants";
+import { CACHE_SHORT, CATALOG_PAGE_SIZE_DEFAULT, CATALOG_PAGE_SIZE_MAX } from "../constants";
 import { ErrorSchema } from "../schemas/error";
 import type { Env } from "../types";
 import { createOpenAPIApp } from "../utils/openapi-app";
@@ -25,6 +20,8 @@ const CatalogBookSchema = z
 
 const CatalogResponseSchema = z
 	.object({
+		version: z.number().int().positive(),
+		generated_at: z.string(),
 		books: z.array(CatalogBookSchema),
 		total: z.number().int().nonnegative(),
 		page: z.number().int().positive(),
@@ -33,71 +30,37 @@ const CatalogResponseSchema = z
 	.openapi("Catalog");
 
 const QuerySchema = z.object({
-	q: z.string().optional().openapi({ description: "Case-insensitive substring filter on title + author" }),
-	author: z.string().optional().openapi({ description: "Case-insensitive substring filter on author" }),
+	q: z
+		.string()
+		.optional()
+		.openapi({ description: "Case-insensitive substring filter on title + author" }),
+	author: z
+		.string()
+		.optional()
+		.openapi({ description: "Case-insensitive substring filter on author" }),
 	page: z.string().optional().openapi({ example: "1" }),
 	limit: z.string().optional().openapi({ example: "20" }),
 });
 
 interface CatalogBook extends z.infer<typeof CatalogBookSchema> {}
 
-interface Manifest {
-	title: string;
-	author: string;
-	source: string;
-	rendition: string;
-	total_duration_seconds: number;
-	chapters: unknown[];
+interface CatalogFile {
+	version?: number;
+	generated_at?: string;
+	books?: CatalogBook[];
 }
 
-/**
- * Dynamically build the catalog by listing all manifest.json files on R2.
- * Key pattern: books/<author>/<title>/audio/<rendition>/manifest.json
- */
-async function buildCatalog(bucket: R2Bucket): Promise<CatalogBook[]> {
-	const books: CatalogBook[] = [];
-	let cursor: string | undefined;
-
-	do {
-		const listed = await bucket.list({ prefix: `${R2_PREFIX_BOOKS}/`, cursor });
-
-		const manifestObjects = listed.objects.filter((obj) => obj.key.endsWith("/manifest.json"));
-
-		const results = await Promise.all(
-			manifestObjects.map(async (obj) => {
-				const parts = obj.key.split("/");
-				if (parts.length !== 6) return null;
-
-				const [r2Obj, coverJpg, coverPng] = await Promise.all([
-					bucket.get(obj.key),
-					bucket.head(`${R2_PREFIX_BOOKS}/${parts[1]}/${parts[2]}/cover.jpg`),
-					bucket.head(`${R2_PREFIX_BOOKS}/${parts[1]}/${parts[2]}/cover.png`),
-				]);
-				if (!r2Obj) return null;
-
-				const manifest: Manifest = await r2Obj.json();
-				return {
-					author: manifest.author || parts[1],
-					author_slug: parts[1],
-					title: manifest.title || parts[2],
-					title_slug: parts[2],
-					source: manifest.source || "unknown",
-					rendition: parts[4],
-					total_duration_seconds: manifest.total_duration_seconds || 0,
-					chapter_count: manifest.chapters?.length || 0,
-					has_cover: !!(coverJpg || coverPng),
-				} satisfies CatalogBook;
-			}),
-		);
-
-		for (const book of results) {
-			if (book) books.push(book);
-		}
-
-		cursor = listed.truncated ? listed.cursor : undefined;
-	} while (cursor);
-
-	return books;
+async function readCatalog(bucket: R2Bucket): Promise<Required<CatalogFile>> {
+	const obj = await bucket.get("catalog.json");
+	if (!obj) {
+		return { version: 1, generated_at: "", books: [] };
+	}
+	const catalog = (await obj.json()) as CatalogFile;
+	return {
+		version: catalog.version ?? 1,
+		generated_at: catalog.generated_at ?? "",
+		books: catalog.books ?? [],
+	};
 }
 
 const route = createRoute({
@@ -122,7 +85,8 @@ const app = createOpenAPIApp<{ Bindings: Env }>();
 
 app.openapi(route, async (c) => {
 	const { q, author: authorFilter, page: pageStr, limit: limitStr } = c.req.valid("query");
-	let books = await buildCatalog(c.env.R2_BUCKET);
+	const catalog = await readCatalog(c.env.R2_BUCKET);
+	let books = catalog.books;
 
 	if (q) {
 		const ql = q.toLowerCase();
@@ -146,6 +110,8 @@ app.openapi(route, async (c) => {
 
 	return c.json(
 		{
+			version: catalog.version,
+			generated_at: catalog.generated_at,
 			books: paged,
 			total: books.length,
 			page,

@@ -1,11 +1,11 @@
-import { R2_DEFAULT_RENDITION, R2_PREFIX_BOOKS } from "../constants";
+import { R2_PREFIX_BOOKS } from "../constants";
 
 function bookPrefix(author: string, title: string): string {
 	return `${R2_PREFIX_BOOKS}/${author}/${title}`;
 }
 
-function renditionPrefix(author: string, title: string, rendition = R2_DEFAULT_RENDITION): string {
-	return `${bookPrefix(author, title)}/audio/${rendition}`;
+function chapterFilename(chapter: string | number): string {
+	return `chapter-${String(chapter).padStart(2, "0")}.m4a`;
 }
 
 export const r2Key = {
@@ -14,12 +14,22 @@ export const r2Key = {
 
 	epub: (author: string, title: string) => `${bookPrefix(author, title)}/book.epub`,
 
-	manifest: (author: string, title: string, rendition?: string) =>
-		`${renditionPrefix(author, title, rendition)}/manifest.json`,
+	bookManifest: (author: string, title: string) => `${bookPrefix(author, title)}/manifest.json`,
 
-	audio: (author: string, title: string, chapter: string, rendition?: string) =>
-		`${renditionPrefix(author, title, rendition)}/chapter-${chapter}.m4a`,
+	buildPrefix: (author: string, title: string, rendition: string, build: string) =>
+		`${bookPrefix(author, title)}/audio/${rendition}/builds/${build}`,
 
-	chapterData: (author: string, title: string, rendition?: string) =>
-		`${renditionPrefix(author, title, rendition)}/chapter_data.json`,
+	audio: (
+		author: string,
+		title: string,
+		rendition: string,
+		build: string,
+		chapter: string | number,
+	) => `${r2Key.buildPrefix(author, title, rendition, build)}/${chapterFilename(chapter)}`,
+
+	chapterData: (author: string, title: string, rendition: string, build: string) =>
+		`${r2Key.buildPrefix(author, title, rendition, build)}/chapter_data.json`,
+
+	renditionManifest: (author: string, title: string, rendition: string, build: string) =>
+		`${r2Key.buildPrefix(author, title, rendition, build)}/rendition-manifest.json`,
 };

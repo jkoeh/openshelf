@@ -38,7 +38,7 @@ def generate_rendition_manifest(
 
 ```json
 {
-  "build": "2a4f9c1",
+  "build": "2a4f9c1b3d8e7f60",
   "rendition": "kokoro-af-heart",
   "voice": "af_heart",
   "engine": "kokoro",
@@ -81,4 +81,4 @@ The worker reads this file at request time to enrich `GET /books/:a/:t` response
 
 ## Dependencies
 
-- Standard library only (json, os, datetime)
+- Standard library only (json, os)

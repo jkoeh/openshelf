@@ -103,7 +103,7 @@ def main():
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Overwrite local artifacts and R2 keys (regenerates audio + chapter_data)",
+        help="Regenerate audio + chapter_data under a fresh build prefix",
     )
     parser.add_argument("--delay", type=float, default=2, help="Seconds between HTTP requests (default: 2)")
     parser.add_argument("--download-dir", default="download/books", help="Download directory (default: download/books)")

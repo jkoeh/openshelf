@@ -138,7 +138,7 @@ def main() -> None:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Overwrite local artifacts and R2 keys (regenerates audio, chapter_data, manifest)",
+        help="Regenerate audio, chapter_data, and manifests under a fresh build prefix",
     )
     args = parser.parse_args()
 
