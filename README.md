@@ -2,11 +2,33 @@
 
 Open source public domain audiobook platform. Downloads EPUB books from Project Gutenberg and Standard Ebooks, converts them to AI-narrated audio with word-level text/audio sync, and serves them globally via Cloudflare R2.
 
-## Web Deployment
+## Deployment
 
-The Expo web client deploys as a static Cloudflare Pages site through
-Cloudflare's Git integration. Configure the Pages project against
-`jkoeh/openshelf` with `client` as the root directory.
+OpenShelf has two production surfaces, both deployed by Cloudflare's Git
+integration after merges to the configured production branch.
+
+### Worker API
+
+- Cloudflare Worker: `openshelf-api`
+- Repo: `jkoeh/openshelf`
+- Root directory: `worker`
+- Production branch: `main`
+- Install/build command: `npm ci`
+- Deploy command: `npm run deploy:production`
+
+The production Worker reads `worker/wrangler.toml`, where `[env.production]`
+deploys `openshelf-api` with the `openshelf` R2 bucket binding.
+
+### Web Client
+
+- Cloudflare Pages project: `openshelf`
+- Repo: `jkoeh/openshelf`
+- Root directory: `client`
+- Production branch: `main`
+- Build command: `npm run build:web`
+- Output directory: `dist`
+- Environment variable:
+  `EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1`
 
 ```bash
 cd client
@@ -14,8 +36,8 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
 npx wrangler pages deploy dist --project-name openshelf --branch main
 ```
 
-Cloudflare Pages output directory: `client/dist`. The client includes
-`public/_redirects` so deep links are served by Expo Router.
+The client includes `public/_redirects` so Cloudflare Pages serves Expo Router
+deep links through `index.html`.
 
 ## How It Works
 

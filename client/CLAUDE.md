@@ -61,8 +61,8 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
 - API base URL via `EXPO_PUBLIC_API_BASE` env var (defaults to localhost:8787)
 - Web deploys to Cloudflare Pages from `client/dist`. Keep `public/_redirects`
   present so Expo Router deep links fall back to `index.html`.
-- Production web deploys are automated by Cloudflare's Git integration after
-  merges to the configured production branch.
+- Production web deploys are automated by the `openshelf` Cloudflare Pages
+  project's Git integration after merges to the configured production branch.
 - Styling via NativeWind `className` prop — no inline StyleSheet unless necessary
 - `useSyncEngine` computes active word/chunk inside a `requestAnimationFrame` loop and only setStates when the active word/chunk index changes. It should use status time as the primary playback clock (with `player.currentTime` fallback) for iOS reliability. The hook consumes the inline `words` array from the chapter response; there is no separate alignment fetch.
 

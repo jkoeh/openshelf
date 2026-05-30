@@ -159,3 +159,14 @@ The client treats rendition as a setting and build as transparent: it reads the 
 
 - **staging**: `openshelf-api-staging` worker, `openshelf-staging` R2 bucket
 - **production**: `openshelf-api` worker, `openshelf` R2 bucket
+
+Production deploys are automated by Cloudflare Workers Builds / Git integration:
+
+- Repo: `jkoeh/openshelf`
+- Root directory: `worker`
+- Production branch: `main`
+- Install/build command: `npm ci`
+- Deploy command: `npm run deploy:production`
+
+The deploy command uses `[env.production]` in `wrangler.toml`, so it publishes
+the `openshelf-api` Worker with the production R2 bucket binding.
