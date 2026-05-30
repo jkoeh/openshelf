@@ -27,7 +27,7 @@ src/
     params.ts           # SlugSchema, ChapterNumberStringSchema (shared path params)
   routes/               # one OpenAPIHono subapp per file; each defines route(s) via createRoute
     health.ts           # GET /api/v1/health
-    catalog.ts          # GET /api/v1/catalog
+    catalog.ts          # GET /api/v1/catalog — catalog.json fast path, manifest-derived fallback
     book.ts             # GET /api/v1/books/:author/:title
     chapters.ts         # GET /api/v1/books/:author/:title/chapters/:number?rendition=&build= — text + inline word timestamps (immutable)
     audio.ts            # GET /api/v1/books/:author/:title/audio/:chapter?rendition=&build= — m4a stream, supports Range (immutable)
@@ -133,6 +133,12 @@ The cache header on a route is determined by **whether the URL is content-versio
 | `/catalog` | `public, max-age=60, stale-while-revalidate=86400` | Mutable index of books |
 
 **Invariant:** if the response is sensitive to a build hash, that hash MUST be in the URL (query or path). Never serve different bytes from the same URL with `immutable`. The book manifest is the sole exception — it is the discovery layer that points at immutable build URLs and therefore must be short-cached.
+
+## `GET /catalog` source of truth
+
+The preferred source is root `catalog.json`, written by `pipeline/scripts/build-catalog.py`. If that mutable index is missing, the worker derives the same response shape by listing `books/`, reading root `books/:author/:title/manifest.json` objects, selecting the default rendition (`kokoro-af-heart`, or the first sorted rendition), and enriching each row from that rendition's `current_build` `rendition-manifest.json`.
+
+The fallback exists so a refactor or partial migration that uploads book manifests before rebuilding `catalog.json` does not make the public catalog appear empty. It is not a replacement for the pipeline catalog build; the generated `catalog.json` remains the normal fast path.
 
 ## Rendition vs build
 

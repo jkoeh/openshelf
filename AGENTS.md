@@ -45,7 +45,7 @@ flowchart LR
 
     subgraph Worker[Worker — Cloudflare/Hono + zod-openapi]
         direction TB
-        W_CAT[GET /catalog]
+        W_CAT[GET /catalog<br/>catalog.json fast path<br/>derive from manifests if absent]
         W_BOOK[GET /books/:a/:t<br/>→ book manifest with current_build per rendition]
         W_CH[GET /books/:a/:t/chapters/:n<br/>?rendition · ?build<br/>→ text + flat words[chunk_idx]]
         W_AUDIO[GET /books/:a/:t/audio/:n<br/>?rendition · ?build<br/>→ m4a stream / range]
@@ -55,6 +55,8 @@ flowchart LR
     end
 
     R_CAT --> W_CAT
+    R_BOOKMAN -. fallback .-> W_CAT
+    R_RMAN -. fallback .-> W_CAT
     R_BOOKMAN --> W_BOOK
     R_CD  --> W_CH
     R_M4A --> W_AUDIO
@@ -84,6 +86,7 @@ flowchart LR
 Notes:
 
 - The `chapter_data.json` produced in step P6 is the single source for both chunk text and word timestamps the client needs — there is no separate alignment fetch on the happy path.
+- `catalog.json` is the preferred fast path for `GET /catalog`; when it is missing, the worker may derive the same catalog rows from root book manifests plus each selected rendition's current `rendition-manifest.json`.
 - The client does not poll status for sync; `useSyncEngine` reads `player.currentTime` directly inside `requestAnimationFrame` and only re-renders when the active word index changes.
 - Tap-to-seek in the reader looks up `words[i].start` and calls `player.seekTo`.
 

@@ -2,6 +2,21 @@
 
 Open source public domain audiobook platform. Downloads EPUB books from Project Gutenberg and Standard Ebooks, converts them to AI-narrated audio with word-level text/audio sync, and serves them globally via Cloudflare R2.
 
+## Web Deployment
+
+The Expo web client deploys as a static Cloudflare Pages site through
+Cloudflare's Git integration. Configure the Pages project against
+`jkoeh/openshelf` with `client` as the root directory.
+
+```bash
+cd client
+EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run build:web
+npx wrangler pages deploy dist --project-name openshelf --branch main
+```
+
+Cloudflare Pages output directory: `client/dist`. The client includes
+`public/_redirects` so deep links are served by Expo Router.
+
 ## How It Works
 
 ```mermaid
