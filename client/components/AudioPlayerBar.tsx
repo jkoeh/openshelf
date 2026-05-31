@@ -1,4 +1,3 @@
-import { Ionicons } from "@expo/vector-icons";
 import { Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../hooks/useTheme";
@@ -25,6 +24,99 @@ export function nextRate(current: number): number {
 	const idx = RATE_OPTIONS.findIndex((r) => r >= current);
 	if (idx === -1 || idx === RATE_OPTIONS.length - 1) return RATE_OPTIONS[0];
 	return RATE_OPTIONS[idx + 1];
+}
+
+function Triangle({
+	direction,
+	color,
+	size,
+}: {
+	direction: "left" | "right";
+	color: string;
+	size: number;
+}) {
+	return (
+		<View
+			style={{
+				width: 0,
+				height: 0,
+				borderTopWidth: size * 0.55,
+				borderBottomWidth: size * 0.55,
+				borderTopColor: "transparent",
+				borderBottomColor: "transparent",
+				...(direction === "right"
+					? { borderLeftWidth: size, borderLeftColor: color }
+					: { borderRightWidth: size, borderRightColor: color }),
+			}}
+		/>
+	);
+}
+
+function ChapterIcon({ direction, color }: { direction: "prev" | "next"; color: string }) {
+	const forward = direction === "next";
+
+	return (
+		<View
+			style={{
+				width: 34,
+				height: 34,
+				flexDirection: "row",
+				alignItems: "center",
+				justifyContent: "center",
+			}}
+		>
+			{!forward && (
+				<View
+					style={{
+						width: 3,
+						height: 18,
+						borderRadius: 1.5,
+						backgroundColor: color,
+						marginRight: 3,
+					}}
+				/>
+			)}
+			<Triangle direction={forward ? "right" : "left"} color={color} size={13} />
+			{forward && (
+				<View
+					style={{
+						width: 3,
+						height: 18,
+						borderRadius: 1.5,
+						backgroundColor: color,
+						marginLeft: 3,
+					}}
+				/>
+			)}
+		</View>
+	);
+}
+
+function PlayPauseIcon({ playing, color }: { playing: boolean; color: string }) {
+	return (
+		<View
+			style={{
+				width: 54,
+				height: 54,
+				borderRadius: 27,
+				borderWidth: 2,
+				borderColor: color,
+				alignItems: "center",
+				justifyContent: "center",
+			}}
+		>
+			{playing ? (
+				<View style={{ flexDirection: "row", gap: 6 }}>
+					<View style={{ width: 6, height: 24, borderRadius: 2, backgroundColor: color }} />
+					<View style={{ width: 6, height: 24, borderRadius: 2, backgroundColor: color }} />
+				</View>
+			) : (
+				<View style={{ marginLeft: 4 }}>
+					<Triangle direction="right" color={color} size={19} />
+				</View>
+			)}
+		</View>
+	);
 }
 
 export default function AudioPlayerBar({
@@ -143,8 +235,18 @@ export default function AudioPlayerBar({
 				</Pressable>
 
 				{/* Skip back */}
-				<Pressable onPress={() => onSeek(Math.max(0, currentTime - 15))} hitSlop={8}>
-					<Ionicons name="play-back" size={22} color={colors.text} />
+				<Pressable
+					onPress={() => onSeek(Math.max(0, currentTime - 15))}
+					hitSlop={8}
+					style={{
+						width: 42,
+						height: 34,
+						borderRadius: 17,
+						alignItems: "center",
+						justifyContent: "center",
+					}}
+				>
+					<Text style={{ color: colors.text, fontSize: 13, fontWeight: "700" }}>-15</Text>
 				</Pressable>
 
 				{/* Previous chapter */}
@@ -152,9 +254,16 @@ export default function AudioPlayerBar({
 					onPress={onPrev}
 					disabled={!canPrev}
 					hitSlop={8}
-					style={{ opacity: canPrev ? 1 : 0.25 }}
+					style={{
+						width: 42,
+						height: 34,
+						borderRadius: 17,
+						alignItems: "center",
+						justifyContent: "center",
+						opacity: canPrev ? 1 : 0.25,
+					}}
 				>
-					<Ionicons name="play-skip-back" size={26} color={colors.text} />
+					<ChapterIcon direction="prev" color={colors.text} />
 				</Pressable>
 
 				{/* Play/Pause — central, prominent */}
@@ -164,11 +273,7 @@ export default function AudioPlayerBar({
 					hitSlop={8}
 					style={{ opacity: isLoaded ? 1 : 0.4 }}
 				>
-					<Ionicons
-						name={playing ? "pause-circle" : "play-circle"}
-						size={54}
-						color={colors.text}
-					/>
+					<PlayPauseIcon playing={playing} color={colors.text} />
 				</Pressable>
 
 				{/* Next chapter */}
@@ -176,14 +281,31 @@ export default function AudioPlayerBar({
 					onPress={onNext}
 					disabled={!canNext}
 					hitSlop={8}
-					style={{ opacity: canNext ? 1 : 0.25 }}
+					style={{
+						width: 42,
+						height: 34,
+						borderRadius: 17,
+						alignItems: "center",
+						justifyContent: "center",
+						opacity: canNext ? 1 : 0.25,
+					}}
 				>
-					<Ionicons name="play-skip-forward" size={26} color={colors.text} />
+					<ChapterIcon direction="next" color={colors.text} />
 				</Pressable>
 
 				{/* Skip forward */}
-				<Pressable onPress={() => onSeek(Math.min(duration, currentTime + 15))} hitSlop={8}>
-					<Ionicons name="play-forward" size={22} color={colors.text} />
+				<Pressable
+					onPress={() => onSeek(Math.min(duration, currentTime + 15))}
+					hitSlop={8}
+					style={{
+						width: 42,
+						height: 34,
+						borderRadius: 17,
+						alignItems: "center",
+						justifyContent: "center",
+					}}
+				>
+					<Text style={{ color: colors.text, fontSize: 13, fontWeight: "700" }}>+15</Text>
 				</Pressable>
 
 				{/* Placeholder for symmetry with rate button */}
