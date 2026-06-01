@@ -1,3 +1,5 @@
+import { Ionicons } from "@expo/vector-icons";
+import type { ComponentProps } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../hooks/useTheme";
@@ -26,95 +28,32 @@ export function nextRate(current: number): number {
 	return RATE_OPTIONS[idx + 1];
 }
 
-function Triangle({
-	direction,
+type IoniconName = ComponentProps<typeof Ionicons>["name"];
+
+function IconButton({
+	name,
 	color,
 	size,
+	bordered = false,
 }: {
-	direction: "left" | "right";
+	name: IoniconName;
 	color: string;
 	size: number;
+	bordered?: boolean;
 }) {
 	return (
 		<View
 			style={{
-				width: 0,
-				height: 0,
-				borderTopWidth: size * 0.55,
-				borderBottomWidth: size * 0.55,
-				borderTopColor: "transparent",
-				borderBottomColor: "transparent",
-				...(direction === "right"
-					? { borderLeftWidth: size, borderLeftColor: color }
-					: { borderRightWidth: size, borderRightColor: color }),
-			}}
-		/>
-	);
-}
-
-function ChapterIcon({ direction, color }: { direction: "prev" | "next"; color: string }) {
-	const forward = direction === "next";
-
-	return (
-		<View
-			style={{
-				width: 34,
-				height: 34,
-				flexDirection: "row",
+				width: bordered ? 54 : 42,
+				height: bordered ? 54 : 34,
+				borderRadius: bordered ? 27 : 17,
+				borderWidth: bordered ? 2 : 0,
+				borderColor: bordered ? color : "transparent",
 				alignItems: "center",
 				justifyContent: "center",
 			}}
 		>
-			{!forward && (
-				<View
-					style={{
-						width: 3,
-						height: 18,
-						borderRadius: 1.5,
-						backgroundColor: color,
-						marginRight: 3,
-					}}
-				/>
-			)}
-			<Triangle direction={forward ? "right" : "left"} color={color} size={13} />
-			{forward && (
-				<View
-					style={{
-						width: 3,
-						height: 18,
-						borderRadius: 1.5,
-						backgroundColor: color,
-						marginLeft: 3,
-					}}
-				/>
-			)}
-		</View>
-	);
-}
-
-function PlayPauseIcon({ playing, color }: { playing: boolean; color: string }) {
-	return (
-		<View
-			style={{
-				width: 54,
-				height: 54,
-				borderRadius: 27,
-				borderWidth: 2,
-				borderColor: color,
-				alignItems: "center",
-				justifyContent: "center",
-			}}
-		>
-			{playing ? (
-				<View style={{ flexDirection: "row", gap: 6 }}>
-					<View style={{ width: 6, height: 24, borderRadius: 2, backgroundColor: color }} />
-					<View style={{ width: 6, height: 24, borderRadius: 2, backgroundColor: color }} />
-				</View>
-			) : (
-				<View style={{ marginLeft: 4 }}>
-					<Triangle direction="right" color={color} size={19} />
-				</View>
-			)}
+			<Ionicons name={name} size={size} color={color} />
 		</View>
 	);
 }
@@ -263,7 +202,7 @@ export default function AudioPlayerBar({
 						opacity: canPrev ? 1 : 0.25,
 					}}
 				>
-					<ChapterIcon direction="prev" color={colors.text} />
+					<IconButton name="play-skip-back" size={24} color={colors.text} />
 				</Pressable>
 
 				{/* Play/Pause — central, prominent */}
@@ -273,7 +212,12 @@ export default function AudioPlayerBar({
 					hitSlop={8}
 					style={{ opacity: isLoaded ? 1 : 0.4 }}
 				>
-					<PlayPauseIcon playing={playing} color={colors.text} />
+					<IconButton
+						name={playing ? "pause" : "play"}
+						size={playing ? 28 : 30}
+						color={colors.text}
+						bordered
+					/>
 				</Pressable>
 
 				{/* Next chapter */}
@@ -290,7 +234,7 @@ export default function AudioPlayerBar({
 						opacity: canNext ? 1 : 0.25,
 					}}
 				>
-					<ChapterIcon direction="next" color={colors.text} />
+					<IconButton name="play-skip-forward" size={24} color={colors.text} />
 				</Pressable>
 
 				{/* Skip forward */}
