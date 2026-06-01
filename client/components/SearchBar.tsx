@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import { Search } from "lucide-react-native";
 import { TextInput, View } from "react-native";
 import { useTheme } from "../hooks/useTheme";
 
@@ -27,10 +27,10 @@ export default function SearchBar({
 					height: 36,
 				}}
 			>
-				<Ionicons
-					name="search"
+				<Search
 					size={17}
 					color={colors.textSecondary}
+					strokeWidth={2.2}
 					style={{ marginRight: 6 }}
 				/>
 				<TextInput

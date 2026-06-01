@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import { Volume2, XCircle } from "lucide-react-native";
 import { FlatList, Modal, Pressable, Text, View } from "react-native";
 import { useTheme } from "../hooks/useTheme";
 import type { ManifestChapter } from "../types";
@@ -55,7 +55,7 @@ export default function ChapterDropdown({
 							Chapters
 						</Text>
 						<Pressable onPress={onClose} hitSlop={8}>
-							<Ionicons name="close-circle" size={24} color={colors.textSecondary} />
+							<XCircle size={24} color={colors.textSecondary} strokeWidth={2.2} />
 						</Pressable>
 					</View>
 					<FlatList
@@ -85,10 +85,10 @@ export default function ChapterDropdown({
 									})}
 								>
 									{active ? (
-										<Ionicons
-											name="volume-medium"
+										<Volume2
 											size={16}
 											color={colors.primary}
+											strokeWidth={2.4}
 											style={{ marginRight: 10, width: 20 }}
 										/>
 									) : (

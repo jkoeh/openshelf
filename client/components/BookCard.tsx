@@ -1,5 +1,5 @@
-import { Ionicons } from "@expo/vector-icons";
 import { Link } from "expo-router";
+import { ChevronRight } from "lucide-react-native";
 import { Image, Pressable, Text, View } from "react-native";
 import { useTheme } from "../hooks/useTheme";
 import { coverUrl } from "../lib/api";
@@ -100,7 +100,7 @@ export default function BookCard({ book }: { book: CatalogBook }) {
 					</Text>
 				</View>
 
-				<Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+				<ChevronRight size={18} color={colors.textSecondary} strokeWidth={2.4} />
 			</Pressable>
 		</Link>
 	);

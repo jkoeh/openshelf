@@ -28,6 +28,7 @@ types.ts                    # Shared TypeScript types
 - Expo Router v4 (file-based routing)
 - expo-audio (audio playback)
 - NativeWind v4 (Tailwind for React Native)
+- lucide-react-native + react-native-svg (cross-platform SVG icons)
 - react-native-mmkv (persistent storage)
 - react-native-nitro-modules (required by MMKV v4)
 - react-native-worklets (required by Reanimated v4)
@@ -64,6 +65,9 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
 - Production web deploys are automated by the `openshelf` Cloudflare Pages
   project's Git integration after merges to the configured production branch.
 - Styling via NativeWind `className` prop — no inline StyleSheet unless necessary
+- Icons use `lucide-react-native` SVG components. Do not use icon-font packages
+  for app UI; web export can render those as missing-glyph squares if the font
+  fails to load.
 - `useSyncEngine` computes active word/chunk inside a `requestAnimationFrame` loop and only setStates when the active word/chunk index changes. It should use status time as the primary playback clock (with `player.currentTime` fallback) for iOS reliability. The hook consumes the inline `words` array from the chapter response; there is no separate alignment fetch.
 
 ## Do NOT

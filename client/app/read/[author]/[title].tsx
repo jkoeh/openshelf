@@ -1,6 +1,6 @@
-import { Ionicons } from "@expo/vector-icons";
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { useLocalSearchParams } from "expo-router";
+import { List, Type } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, AppState, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import AudioPlayerBar, { nextRate } from "../../../components/AudioPlayerBar";
@@ -333,11 +333,11 @@ export default function ReaderPage() {
           <View style={{ flexDirection: "row", alignItems: "center", gap: 16 }}>
             {manifest ? (
               <Pressable onPress={() => setShowChapters(true)} hitSlop={8}>
-                <Ionicons name="list" size={22} color={colors.primary} />
+                <List size={22} color={colors.primary} strokeWidth={2.4} />
               </Pressable>
             ) : null}
             <Pressable onPress={() => setShowSettings(true)} hitSlop={8}>
-              <Ionicons name="text" size={20} color={colors.primary} />
+              <Type size={20} color={colors.primary} strokeWidth={2.4} />
             </Pressable>
           </View>
         }

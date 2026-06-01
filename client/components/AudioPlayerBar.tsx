@@ -1,5 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
-import type { ComponentProps } from "react";
+import { Pause, Play, SkipBack, SkipForward, type LucideIcon } from "lucide-react-native";
 import { Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../hooks/useTheme";
@@ -28,15 +27,13 @@ export function nextRate(current: number): number {
 	return RATE_OPTIONS[idx + 1];
 }
 
-type IoniconName = ComponentProps<typeof Ionicons>["name"];
-
 function IconButton({
-	name,
+	Icon,
 	color,
 	size,
 	bordered = false,
 }: {
-	name: IoniconName;
+	Icon: LucideIcon;
 	color: string;
 	size: number;
 	bordered?: boolean;
@@ -53,7 +50,7 @@ function IconButton({
 				justifyContent: "center",
 			}}
 		>
-			<Ionicons name={name} size={size} color={color} />
+			<Icon size={size} color={color} strokeWidth={2.4} />
 		</View>
 	);
 }
@@ -202,7 +199,7 @@ export default function AudioPlayerBar({
 						opacity: canPrev ? 1 : 0.25,
 					}}
 				>
-					<IconButton name="play-skip-back" size={24} color={colors.text} />
+					<IconButton Icon={SkipBack} size={24} color={colors.text} />
 				</Pressable>
 
 				{/* Play/Pause — central, prominent */}
@@ -213,7 +210,7 @@ export default function AudioPlayerBar({
 					style={{ opacity: isLoaded ? 1 : 0.4 }}
 				>
 					<IconButton
-						name={playing ? "pause" : "play"}
+						Icon={playing ? Pause : Play}
 						size={playing ? 28 : 30}
 						color={colors.text}
 						bordered
@@ -234,7 +231,7 @@ export default function AudioPlayerBar({
 						opacity: canNext ? 1 : 0.25,
 					}}
 				>
-					<IconButton name="play-skip-forward" size={24} color={colors.text} />
+					<IconButton Icon={SkipForward} size={24} color={colors.text} />
 				</Pressable>
 
 				{/* Skip forward */}

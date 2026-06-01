@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import { BookOpen, Moon, Sun, type LucideIcon } from "lucide-react-native";
 import { Modal, Pressable, Text, View } from "react-native";
 import type { ThemeName } from "../constants/colors";
 import { useTheme } from "../hooks/useTheme";
@@ -10,10 +10,10 @@ interface SettingsPanelProps {
 	onFontSizeChange: (size: number) => void;
 }
 
-const THEME_OPTIONS: { key: ThemeName; label: string; icon: string }[] = [
-	{ key: "light", label: "Light", icon: "sunny-outline" },
-	{ key: "sepia", label: "Sepia", icon: "book-outline" },
-	{ key: "dark", label: "Dark", icon: "moon-outline" },
+const THEME_OPTIONS: { key: ThemeName; label: string; Icon: LucideIcon }[] = [
+	{ key: "light", label: "Light", Icon: Sun },
+	{ key: "sepia", label: "Sepia", Icon: BookOpen },
+	{ key: "dark", label: "Dark", Icon: Moon },
 ];
 
 const MIN_FONT = 14;
@@ -64,6 +64,7 @@ export default function SettingsPanel({
 					<View style={{ flexDirection: "row", gap: 8, marginBottom: 24 }}>
 						{THEME_OPTIONS.map((opt) => {
 							const active = theme === opt.key;
+							const Icon = opt.Icon;
 							return (
 								<Pressable
 									key={opt.key}
@@ -77,10 +78,10 @@ export default function SettingsPanel({
 										gap: 4,
 									}}
 								>
-									<Ionicons
-										name={opt.icon as keyof typeof Ionicons.glyphMap}
+									<Icon
 										size={18}
 										color={active ? colors.primaryText : colors.text}
+										strokeWidth={2.3}
 									/>
 									<Text
 										style={{

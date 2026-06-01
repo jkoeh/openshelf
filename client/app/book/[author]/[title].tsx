@@ -1,5 +1,5 @@
-import { Ionicons } from "@expo/vector-icons";
 import { Link, useLocalSearchParams, useRouter } from "expo-router";
+import { BookOpen, Download, Headphones, Play } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Image, Pressable, ScrollView, Text, View } from "react-native";
 import ChapterList from "../../../components/ChapterList";
@@ -154,7 +154,7 @@ export default function BookDetailPage() {
 								gap: 8,
 							}}
 						>
-							<Ionicons name="play" size={18} color={colors.primaryText} />
+							<Play size={18} color={colors.primaryText} strokeWidth={2.4} />
 							<Text style={{ color: colors.primaryText, fontSize: 17, fontWeight: "600" }}>
 								Continue Chapter {progress.chapter}
 							</Text>
@@ -172,10 +172,10 @@ export default function BookDetailPage() {
 							gap: 8,
 						}}
 					>
-						<Ionicons
-							name="headset"
+						<Headphones
 							size={18}
 							color={progress ? colors.text : colors.primaryText}
+							strokeWidth={2.4}
 						/>
 						<Text
 							style={{
@@ -201,7 +201,7 @@ export default function BookDetailPage() {
 								gap: 6,
 							}}
 						>
-							<Ionicons name="book-outline" size={17} color={colors.text} />
+							<BookOpen size={17} color={colors.text} strokeWidth={2.3} />
 							<Text style={{ color: colors.text, fontSize: 15, fontWeight: "500" }}>Read</Text>
 						</Pressable>
 						<Link href={epubUrl(author, title)} asChild>
@@ -217,7 +217,7 @@ export default function BookDetailPage() {
 									gap: 6,
 								}}
 							>
-								<Ionicons name="download-outline" size={17} color={colors.text} />
+								<Download size={17} color={colors.text} strokeWidth={2.3} />
 								<Text style={{ color: colors.text, fontSize: 15, fontWeight: "500" }}>
 									EPUB
 								</Text>

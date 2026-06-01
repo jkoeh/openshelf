@@ -1,5 +1,5 @@
-import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { ChevronRight } from "lucide-react-native";
 import { Pressable, Text, View } from "react-native";
 import { useTheme } from "../hooks/useTheme";
 import { formatDuration } from "../lib/format";
@@ -66,7 +66,7 @@ export default function ChapterList({ chapters, author, title, rendition }: Chap
 						>
 							{formatDuration(ch.duration_seconds)}
 						</Text>
-						<Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+						<ChevronRight size={16} color={colors.textSecondary} strokeWidth={2.4} />
 					</View>
 				</Pressable>
 			))}

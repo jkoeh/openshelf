@@ -1,5 +1,5 @@
-import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { ChevronLeft } from "lucide-react-native";
 import { Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../hooks/useTheme";
@@ -46,7 +46,7 @@ export default function Header({
 							hitSlop={8}
 							style={{ flexDirection: "row", alignItems: "center", marginRight: 8 }}
 						>
-							<Ionicons name="chevron-back" size={22} color={colors.primary} />
+							<ChevronLeft size={22} color={colors.primary} strokeWidth={2.4} />
 							<Text style={{ color: colors.primary, fontSize: 17 }}>Back</Text>
 						</Pressable>
 					) : null}
