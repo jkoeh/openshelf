@@ -714,11 +714,13 @@ Implement exactly the types and protocols defined in this plan. No logic yet —
 
 ---
 
-### Phase 2 — Pure voice_director functions
+### Phase 2 — voice_director: pure functions + annotation seam
 
-**File:** `voice_director.py` (pure functions only — no `AudioDirector` class yet)
+**File:** `voice_director.py` (no `AudioDirector` class yet)
 
-Implement in dependency order:
+Two distinct groups in this phase:
+
+**Group A — Truly pure (no LLM, fully deterministic):**
 
 | Function | Critical test |
 |---|---|
@@ -728,12 +730,31 @@ Implement in dependency order:
 | `spans_to_segments(spans, text, registry) -> list[DirectedSegment]` | concat segment texts == original text |
 | `merge_adjacent_segments(segs) -> list[DirectedSegment]` | same-voice adjacent merges; alternating preserved |
 | `assign_voices(characters, pool) -> dict[str, VoiceSpec]` | deterministic; gender hint used; pool exhaustion wraps |
-| `annotate_with_fallback(window, registry, llm, cfg) -> list[DirectedSegment]` | 4 paths: no-quotes/good/malformed/LLMError |
+
+**Group B — LLM-dependent seam (takes `LLMClient`, tested via `StubLLM`):**
+
+`annotate_chunk_speakers(window, registry, llm, cfg) -> list[SpeakerSpan]`
+- Makes the actual LLM call using prompt templates from `cfg`
+- In Phase 2, `cfg` carries **placeholder prompt strings** — real content wired in Phase 4
+- Returns raw spans, not yet validated
+
+`annotate_with_fallback(window, registry, llm, cfg) -> list[DirectedSegment]`
+- Orchestrates: `needs_annotation` gate → `annotate_chunk_speakers` → `validate_spans`
+  → `spans_to_segments` → `merge_adjacent_segments`
+- On any failure (bad spans, `LLMError`, exception): returns single narrator segment
+- NOT pure — calls LLM — but all 4 execution paths are fully exercised with `StubLLM`
+
+The reason Group B is in Phase 2 rather than Phase 4: we want to prove the **safety net** (fallback, firewall, gate) works independently of prompt quality. Phase 4 writes the real prompts and tests LLM output quality. These are different things.
 
 **Tests:** `test_voice_director.py`
 - One test class per function
+- Group A: exact deterministic assertions
 - `validate_spans` property test: random valid tilings always pass and reconstruct original (fixed seed `random.seed(42)`)
-- `annotate_with_fallback`: all 4 paths via `StubLLM` — zero real API calls
+- `annotate_with_fallback` — all 4 paths via `StubLLM`, zero real API calls:
+  - no quotes → `StubLLM` never called; single narrator segment returned
+  - good spans → multi-segment output matching stub's spans
+  - malformed spans (overlap/gap) → single narrator segment, no exception
+  - `LLMError` raised by stub → single narrator segment, no exception
 - `test_sync_invariant`: for any valid output of `annotate_with_fallback`, `"".join(s.text for s in segments) == chunk_text`
 
 **Gate:** `python3 -m unittest pipeline/tests/pipeline/test_voice_director.py` — offline, all pass.
