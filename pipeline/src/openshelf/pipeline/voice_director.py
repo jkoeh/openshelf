@@ -1695,12 +1695,16 @@ class AudioDirector:
         aligner: WordAligner,
         build_dir: str | os.PathLike[str] | None = None,
         sample_rate: int | None = None,
+        cast_mode: str = "solo",
     ):
         self.engine = engine
         self.llm = llm
         self.aligner = aligner
         self.build_dir = Path(build_dir) if build_dir is not None else None
         self.sample_rate = sample_rate
+        if cast_mode not in {"solo", "multicast"}:
+            raise ValueError("cast_mode must be 'solo' or 'multicast'")
+        self.cast_mode = cast_mode
         self.last_chapter_error: str | None = None
         self.last_chapter_fallback_used = False
 
@@ -1746,6 +1750,24 @@ class AudioDirector:
             return segments
         return add_emotion_direction(segments, window, self.llm, emotion_cfg)
 
+    def _solo_segments(
+        self,
+        window: ChunkWindow,
+        registry: CharacterRegistry,
+    ) -> list[DirectedSegment]:
+        segments = [
+            DirectedSegment(
+                text=window.text,
+                voice=registry.narrator_voice,
+                speaker="narrator",
+                original_text=window.text,
+                delivery_type="narration",
+                voice_policy="narrator",
+                join_policy="normal",
+            )
+        ]
+        return self._add_performance_direction(segments, window)
+
     def direct_chapter(
         self,
         title: str,
@@ -1754,6 +1776,11 @@ class AudioDirector:
     ) -> tuple[CharacterRegistry, list[list[DirectedSegment]]]:
         self.last_chapter_error = None
         self.last_chapter_fallback_used = False
+        if self.cast_mode == "solo":
+            return registry, [
+                self._solo_segments(window, registry)
+                for window in windows
+            ]
         try:
             attribution = annotate_chapter_speakers(
                 ChapterWindow(title=title, chunks=windows),
@@ -1792,6 +1819,8 @@ class AudioDirector:
         window: ChunkWindow,
         registry: CharacterRegistry,
     ) -> list[DirectedSegment]:
+        if self.cast_mode == "solo":
+            return self._solo_segments(window, registry)
         segments = annotate_with_fallback(
             window,
             registry,

@@ -42,6 +42,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from ebooklib import epub as _epub_lib
 
 from openshelf.config import (
+    CAST_MODE,
     PIPELINE_VERSION,
     R2_BUCKET,
     REGISTRY_OPENING_CHARS,
@@ -219,6 +220,7 @@ def _build_voice_direction_payload(
     rendition: str,
     build_id: str,
     engine_name: str,
+    cast_mode: str,
     chapters: list[dict],
 ) -> dict:
     return {
@@ -226,6 +228,7 @@ def _build_voice_direction_payload(
         "rendition": rendition,
         "build": build_id,
         "engine": engine_name,
+        "cast_mode": cast_mode,
         "chapters": chapters,
     }
 
@@ -314,6 +317,12 @@ def main() -> None:
     parser.add_argument("--source", default="gutenberg", help="Book source (gutenberg, standard-ebooks)")
     parser.add_argument("--engine", default=TTS_ENGINE, help=f"TTS engine (default: {TTS_ENGINE})")
     parser.add_argument("--voice", default=None, help="Narrator voice override; skips LLM narrator selection")
+    parser.add_argument(
+        "--cast-mode",
+        default=CAST_MODE,
+        choices=["solo", "multicast"],
+        help=f"Voice casting mode: solo narrator or experimental multicast (default: {CAST_MODE})",
+    )
     parser.add_argument("--rendition", default=None, help="Rendition slug (default: derived from engine + narrator)")
     parser.add_argument("--device", default=None, help="Device: cuda, mps, cpu (default: auto)")
     parser.add_argument(
@@ -436,7 +445,7 @@ def main() -> None:
 
     aligner = create_aligner(engine, device=selected_device)
     llm = create_llm()
-    director = AudioDirector(engine, llm, aligner)
+    director = AudioDirector(engine, llm, aligner, cast_mode=args.cast_mode)
 
     narrator_override = _voice_spec_for_override(engine, args.voice) if args.voice else None
     book_ctx = BookContext(
@@ -459,6 +468,7 @@ def main() -> None:
     )
 
     print(f"Rendition:   {rendition}  (narrator={narrator_voice_id})")
+    print(f"Cast mode:   {args.cast_mode}")
     print(f"R2 prefix:   books/{author_slug}/{title_slug}/audio/{rendition}/builds/{build_id}/")
     print(f"Local:       {os.path.abspath(build_dir)}/")
     director.build_dir = Path(build_dir)
@@ -508,6 +518,7 @@ def main() -> None:
         rendition,
         build_id,
         engine.name,
+        args.cast_mode,
         [],
     )
 
@@ -570,6 +581,7 @@ def main() -> None:
                     rendition,
                     build_id,
                     engine.name,
+                    args.cast_mode,
                     [direction_chapter],
                 ),
             )

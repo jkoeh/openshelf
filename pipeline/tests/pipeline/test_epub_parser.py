@@ -586,6 +586,20 @@ class TestParseEpubHeadingNormalization(unittest.TestCase):
         # Chapter.title (used in manifest) is the original heading text.
         self.assertEqual(ch.title, "II")
 
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_invisible_format_controls_removed_from_spoken_text(self, mock_read_epub):
+        body = " ".join(f"word{i}" for i in range(60))
+        dash = "-"
+        html = f"<html><head><meta charset=\"utf-8\"></head><body><h2>VI</h2><p>Alice\ufeff\u2060{dash}{body}</p></body></html>"
+        mock_read_epub.return_value = _make_book([_make_item("ch1.xhtml", html)])
+
+        ch = parse_epub("f.epub")[0]
+
+        self.assertNotIn("\ufeff", ch.text)
+        self.assertNotIn("\u2060", ch.text)
+        self.assertIn("Alice", ch.text)
+        self.assertIn("word0", ch.text)
+        self.assertIn(f"Alice{dash}word0", ch.text)
 
 if __name__ == "__main__":
     unittest.main()

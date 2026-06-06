@@ -84,6 +84,10 @@ direct text and no nested content tags.
 - `<sup>` and `<sub>` tags are removed (footnote markers)
 - `<a>` tags with numeric-only content are removed (cross-references like `[1]`)
 - Non-numeric anchors are preserved (their text is kept)
+- Unicode format-control characters that are not meaningful reader text are
+  removed before whitespace normalization. This includes the zero-width
+  no-break/BOM character `U+FEFF` that appears in some Standard Ebooks source
+  files around punctuation.
 - Whitespace is normalized to single spaces within each element
 
 ### Spoken Detection

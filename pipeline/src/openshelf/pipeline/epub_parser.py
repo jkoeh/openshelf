@@ -48,6 +48,7 @@ _FILENAME_TITLES = {
 }
 
 _ROMAN_VALUES = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
+_INVISIBLE_TEXT_RE = re.compile("[\ufeff\u200b\u200c\u200d\u2060]")
 
 
 def _roman_to_arabic(roman: str) -> int | None:
@@ -108,6 +109,12 @@ def normalize_heading_for_tts(text: str) -> str:
             return f"Chapter {n}. {rest}."
 
     return text
+
+
+def clean_extracted_text(text: str) -> str:
+    """Remove non-spoken format controls and normalize element whitespace."""
+    without_format_controls = _INVISIBLE_TEXT_RE.sub("", text)
+    return re.sub(r"\s+", " ", without_format_controls).strip()
 
 
 def _should_skip(filename: str) -> bool:
@@ -202,7 +209,7 @@ def _extract_content_elements(soup: BeautifulSoup, chapter_num: int) -> list[Con
             if anchor.string and re.match(r"^\d+$", anchor.string.strip()):
                 anchor.decompose()
 
-        text = re.sub(r"\s+", " ", tag.get_text()).strip()
+        text = clean_extracted_text(tag.get_text())
         if not text:
             continue
 
@@ -230,7 +237,7 @@ def _item_word_count(soup: BeautifulSoup) -> int:
     """Quick spoken word count from soup without modifying it (for pre-filter)."""
     words = 0
     for tag in iter_content_tags(soup):
-        text = re.sub(r"\s+", " ", tag.get_text()).strip()
+        text = clean_extracted_text(tag.get_text())
         if text and _is_spoken(tag):
             words += len(text.split())
     return words

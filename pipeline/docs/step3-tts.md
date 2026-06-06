@@ -32,12 +32,14 @@ class TTSEngine(Protocol):
     def synthesize(self, segment: DirectedSegment) -> TTSResult: ...
 ```
 
-Kokoro is the fully wired default adapter. It uses preset voices, LLM casting,
-speaker attribution, narrator-compatible voice policy, and tight joins, but it
-does not use LLM emotion/performance text steering by default. Kokoro native
-token timestamps are not used for final sync. F5-TTS declares emotion control,
-voice cloning, and forced-alignment requirements. In this phase F5 voice choices
-are bootstrapped from Kokoro's preset catalog: `af_heart` becomes
+Kokoro is the fully wired default adapter. It uses preset voices and LLM
+narrator casting. In default `solo` cast mode, Kokoro renders every chunk with
+the narrator voice; `multicast` mode is opt-in and may use speaker attribution,
+narrator-compatible voice policy, and tight joins. Kokoro does not use LLM
+emotion/performance text steering by default. Kokoro native token timestamps are
+not used for final sync. F5-TTS declares emotion control, voice cloning, and
+forced-alignment requirements. In this phase F5 voice choices are bootstrapped
+from Kokoro's preset catalog: `af_heart` becomes
 `f5tts-af_heart`, `bm_george` becomes `f5tts-bm_george`, and so on. The F5
 registry prompt preserves Kokoro's qualitative casting guidance so narrator and
 character selection behaves the same way, but the selected F5 voice clones a
@@ -97,6 +99,12 @@ class SynthesisResult:
 
 `ChunkInfo.directed_segments` is optional for backward compatibility. If absent, `synthesize_chapter` wraps `ChunkInfo.text` in a single narrator segment using the legacy Kokoro voice path so existing tests and scripts keep working.
 
+The default cast mode also supplies a single narrator `DirectedSegment` per
+chunk. This is distinct from a fallback: the character registry may still exist
+for audit/future style guidance, but the audio does not switch narrator identity
+inside the audiobook unless `CAST_MODE=multicast` or `--cast-mode multicast` is
+selected.
+
 ## Public Functions
 
 ```python
@@ -138,22 +146,46 @@ For each segment:
    `[softly]` and SSML-like tags such as `<break time="350ms"/>`; these remain
    in `voice_direction.json` for audit only and must not be spoken. The
    sanitizer also removes BOM/zero-width no-break characters before engine
-   calls, while the original chunk text remains available for alignment and
-   reader output.
-2. Call `engine.synthesize(segment)` with the sanitized text.
-3. If the sanitized synthesis text has no spoken characters, render silence for its requested pause instead of calling the engine.
-4. If steered synthesis fails or returns no audio, retry once with the segment's `original_text`, normal speed, and no inline direction.
-5. Ignore engine-native timestamps for final sync when the post-processing config requires forced alignment.
-6. Call `aligner.align(chunk_audio, original_chunk_text, sample_rate)` after all directed segments for a chunk have been rendered.
-7. Normalize audio and apply boundary fades.
-8. Clamp engine-generated leading/trailing silence when the selected engine
-   declares a maximum boundary pad. This is especially important for F5-TTS,
-   whose cloned-voice calls can return audible silence at both sides of every
-   segment.
-9. Insert engine-configured silence when the voice changes between adjacent segments, unless the next segment's `join_policy` asks for a tight join.
-10. Offset word timestamps by the chunk's absolute frame position.
+   calls. Single line breaks collapse to synthesis spaces. Double line breaks
+   inside a chunk are treated as internal paragraph boundaries, including
+   heading-to-title and title-to-prose boundaries such as
+   `Chapter 6.\n\nPig and Pepper\n\nFor a minute...`, and become controlled
+   synthesis silence. The original chunk text remains available for alignment
+   and reader output.
+2. Optionally prepend the previous spoken sentence as synthesis-only rolling
+   context. The context may help Kokoro and F5 pronounce the first words of a
+   chunk/segment naturally, but it must never be audible in the final reader
+   audio.
+3. Call `engine.synthesize(segment)` with the sanitized/contextualized text.
+4. If contextual synthesis succeeds and the aligner declares context-trim
+   support, align the generated audio against
+   `context + current_segment_text`, trim away the context audio, and keep only
+   the current segment. If the trim boundary cannot be found, retry the same
+   segment without context.
+5. If the sanitized synthesis text has no spoken characters, render silence for its requested pause instead of calling the engine.
+6. If steered synthesis fails or returns no audio, retry once with the segment's `original_text`, normal speed, and no inline direction.
+7. Ignore engine-native timestamps for final sync when the post-processing
+   config requires forced alignment.
+8. Normalize audio, apply boundary fades, and clamp engine-generated
+   leading/trailing silence before timestamping the unit.
+9. For forced-alignment engines, collect each rendered synthesis unit's
+   original text and exact start time inside the stitched chunk. After the
+   chunk audio is complete, call
+   `aligner.align_segments(chunk_audio, unit_texts, unit_starts, sample_rate)`
+   when the aligner supports it. This gives WhisperX full acoustic continuity
+   plus precise text/time boundaries, which is more reliable for dialogue-heavy
+   multi-voice chunks than either one vague whole-chunk block or many isolated
+   tiny clips. If segment-aware alignment is unavailable, fall back to the
+   legacy single-text alignment path.
+10. Insert engine-configured silence when the voice changes between adjacent
+    segments, unless the next segment's `join_policy` asks for a tight join.
+11. Offset word timestamps by the chunk's absolute frame position.
 
-If forced alignment fails, the aligner returns `[]` and the pipeline continues. A bad LLM response cannot corrupt sync because speaker annotation was validated before segments reached TTS, and alignment is always performed against the original chunk text.
+If a forced-alignment unit fails, the aligner returns `[]` for that unit and
+the pipeline continues with the rest of the chunk. A bad LLM response cannot
+corrupt sync because speaker annotation was validated before segments reached
+TTS, and alignment is always performed against original text slices, never
+against LLM-rewritten reader text.
 
 ## Timing Model
 
@@ -166,11 +198,17 @@ A short lead-in silence (`LEAD_IN_SILENCE_MS`, 50ms) is prepended to every chapt
 - Lead-in: `LEAD_IN_SILENCE_MS`
 - Paragraph break: `SILENCE_PARAGRAPH_BREAK_MS`
 - Mid-paragraph: `SILENCE_MID_PARAGRAPH_MS`
+- Internal paragraph break inside a packed chunk: `SILENCE_INTERNAL_PARAGRAPH_BREAK_MS`
 - `chunk_audio_start = frames_so_far / sample_rate`
 
 Voice-transition silence is internal to a chunk and configured by the engine.
 F5-TTS also clamps generated boundary padding to keep stitched quote/tag/quote
 phrases such as `"..." she thought "..."` from sounding like separate clips.
+Synthesis-only line breaks are normalized before engine calls. Single line
+breaks collapse to spaces. Double line breaks inside a packed chunk, including
+chapter heading/title/prose boundaries, are rendered as explicit silence
+between synthesized units, using a shorter pause than cross-chunk paragraph
+spacing.
 Engine-specific pause direction can also insert silence inside a chunk without
 changing reader text.
 
@@ -186,9 +224,19 @@ Directed segment speed is already normalized by `voice_director.py` before TTS s
 
 Kokoro may emit token timestamps. `_extract_words` remains available for tests and debugging, but Kokoro token timestamps are not serialized into `chapter_data.json`.
 
-All engines use `WhisperXAligner` for final sync. The aligner wraps `word_aligner.py` and converts `WordEntry(word, start, end, chunk_idx)` to `WordTimestamp(word, start, end)` at its return boundary. WhisperX is lazy-imported and fully mocked in tests.
+All engines use `WhisperXAligner` for final sync. The aligner wraps `word_aligner.py` and converts `WordEntry(word, start, end, chunk_idx)` to `WordTimestamp(word, start, end)` at its return boundary. `WhisperXAligner` also declares support for context trimming, so rolling synthesis context is enabled only on the real forced-alignment path or on tests that explicitly opt in. WhisperX is lazy-imported and fully mocked in tests.
 
-After each chunk is synthesized, `synthesize_chapter` aligns the final rendered chunk audio against the original `ChunkInfo.text`, then stores absolute chapter-relative word timestamps in `chunk_words[i]`. Failed chunks get `chunk_audio_starts[i] == -1.0` and `chunk_words[i] == []`.
+After each chunk is synthesized, `synthesize_chapter` stores the accumulated
+absolute chapter-relative word timestamps in `chunk_words[i]`. Directed
+forced-alignment chunks receive these words from segment-aware alignment inside
+`_synthesize_segments`; legacy undirected chunks may still fall back to a
+single chunk-level alignment pass. Failed chunks get
+`chunk_audio_starts[i] == -1.0` and `chunk_words[i] == []`.
+
+Before serialization, word timestamps are normalized in reader order so a
+forced-aligner oddity cannot make time move backward inside a chunk. If an
+aligner returns a zero-duration or out-of-order word, the pipeline keeps the
+word text and clamps its start/end just after the previous emitted word.
 
 ## Error Handling
 

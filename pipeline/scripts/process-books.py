@@ -93,6 +93,8 @@ def convert_book(epub_path, source_name, args):
         cmd += ["--voice", args.voice]
     if args.rendition:
         cmd += ["--rendition", args.rendition]
+    if args.cast_mode:
+        cmd += ["--cast-mode", args.cast_mode]
     if args.device:
         cmd += ["--device", args.device]
     if args.keep_wav:
@@ -119,6 +121,7 @@ def main():
     parser.add_argument("--engine", default=None, help="TTS engine (default: TTS_ENGINE)")
     parser.add_argument("--voice", default=None, help="Narrator voice override")
     parser.add_argument("--rendition", default=None, help="Rendition slug override")
+    parser.add_argument("--cast-mode", default=None, choices=["solo", "multicast"], help="Voice casting mode")
     parser.add_argument("--device", default=None, help="Device: cuda, mps, cpu (default: auto)")
     parser.add_argument("--dry-run", action="store_true", help="Download + parse only, no audio")
     parser.add_argument("--keep-wav", action="store_true", help="Keep WAV files after encoding")

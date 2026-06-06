@@ -146,7 +146,11 @@ The `build` field is added so the file is self-identifying — a client that has
 
 `character_registry.json` contains the narrator voice plus every known speaking character, aliases, descriptions, and assigned voice specs. It is immutable under the build prefix so future client character-editing features can start from exactly the registry used for that audio.
 
-`voice_direction.json` contains the per-chapter, per-chunk speaker and performance-direction plan used for synthesis. It preserves original reader text separately from synthesis-only text, so Kokoro steering cues never become reader text.
+`voice_direction.json` contains the build `cast_mode` plus the per-chapter,
+per-chunk speaker and performance-direction plan used for synthesis. In default
+`solo` mode those segments use the narrator voice; in opt-in `multicast` mode
+they may switch voices by character. It preserves original reader text
+separately from synthesis-only text, so steering cues never become reader text.
 
 ## Behavior
 

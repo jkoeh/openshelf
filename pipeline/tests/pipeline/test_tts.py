@@ -23,13 +23,20 @@ from openshelf.pipeline.tts import (
     _limit_boundary_silence,
     _extract_words,
 )
-from openshelf.pipeline.tts_engine import DirectedSegment, PostProcessingConfig, TTSCapabilities, VoiceSpec
+from openshelf.pipeline.tts_engine import (
+    DirectedSegment,
+    PostProcessingConfig,
+    TTSCapabilities,
+    TTSResult,
+    VoiceSpec,
+)
 from openshelf.config import (
     TTS_LANGUAGE,
     TTS_VOICE,
     TTS_SAMPLE_RATE,
     SILENCE_PARAGRAPH_BREAK_MS,
     SILENCE_MID_PARAGRAPH_MS,
+    SILENCE_INTERNAL_PARAGRAPH_BREAK_MS,
     CROSSFADE_MS,
     LEAD_IN_SILENCE_MS,
 )
@@ -57,6 +64,15 @@ class _FakeAligner:
         return [WordTimestamp(word=w, start=i * 0.1, end=i * 0.1 + 0.05)
                 for i, w in enumerate(text.split())]
 
+    def align_segments(self, audio, texts, starts, sample_rate):
+        words = []
+        for text, start in zip(texts, starts):
+            words.extend([
+                WordTimestamp(word=w, start=start + i * 0.1, end=start + i * 0.1 + 0.05)
+                for i, w in enumerate(text.split())
+            ])
+        return words
+
 
 class _RecordingAligner(_FakeAligner):
     def __init__(self):
@@ -65,6 +81,26 @@ class _RecordingAligner(_FakeAligner):
     def align(self, audio, text, sample_rate):
         self.texts.append(text)
         return super().align(audio, text, sample_rate)
+
+    def align_segments(self, audio, texts, starts, sample_rate):
+        self.texts.extend(texts)
+        return super().align_segments(audio, texts, starts, sample_rate)
+
+
+class _ContextTrimAligner(_RecordingAligner):
+    supports_context_trim = True
+
+    def align(self, audio, text, sample_rate):
+        self.texts.append(text)
+        words = text.split()
+        return [
+            WordTimestamp(
+                word=w,
+                start=i * 1000 / sample_rate,
+                end=(i + 1) * 1000 / sample_rate,
+            )
+            for i, w in enumerate(words)
+        ]
 
 
 class TestGetDevice(unittest.TestCase):
@@ -697,7 +733,194 @@ class TestSynthesizeChapterWords(unittest.TestCase):
         synthesize_chapter(pipeline, [chunk], "/tmp/out.wav", aligner=aligner)
 
         self.assertEqual(pipeline.call_args_list[0].args[0], "yes")
-        self.assertEqual(aligner.texts, ["\ufeffyes"])
+        self.assertEqual(aligner.texts, ["yes"])
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_internal_heading_breaks_insert_controlled_silence(self, mock_sf_write):
+        def make_iter(text, voice=None):
+            return iter([_FakeResult("g", "p", _fake_audio(1000), [
+                _FakeToken("Down", 0.0, 0.1),
+            ])])
+
+        pipeline = MagicMock(side_effect=make_iter)
+        chunk = ChunkInfo(text="Chapter 6.\n\nPig and Pepper\n\nFor a minute.")
+
+        synthesize_chapter(pipeline, [chunk], "/tmp/out.wav", aligner=_FakeAligner())
+
+        self.assertEqual(
+            [call.args[0] for call in pipeline.call_args_list],
+            ["Chapter 6.", "Pig and Pepper", "For a minute."],
+        )
+        written = mock_sf_write.call_args[0][1]
+        internal_gap = int(TTS_SAMPLE_RATE * SILENCE_INTERNAL_PARAGRAPH_BREAK_MS / 1000)
+        self.assertEqual(len(written), _LEAD_IN_SAMPLES + 3000 + internal_gap * 2)
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_internal_paragraph_break_in_chunk_inserts_controlled_silence(self, mock_sf_write):
+        def make_iter(text, voice=None):
+            return iter([_FakeResult("g", "p", _fake_audio(1000), [
+                _FakeToken(text.split()[0], 0.0, 0.1),
+            ])])
+
+        pipeline = MagicMock(side_effect=make_iter)
+        chunk = ChunkInfo(text="First paragraph ends.\n\nSecond paragraph begins here.")
+
+        synthesize_chapter(pipeline, [chunk], "/tmp/out.wav", aligner=_FakeAligner())
+
+        self.assertEqual(
+            [call.args[0] for call in pipeline.call_args_list],
+            ["First paragraph ends.", "Second paragraph begins here."],
+        )
+        written = mock_sf_write.call_args[0][1]
+        internal_gap = int(TTS_SAMPLE_RATE * SILENCE_INTERNAL_PARAGRAPH_BREAK_MS / 1000)
+        self.assertEqual(len(written), _LEAD_IN_SAMPLES + 2000 + internal_gap)
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_forced_alignment_directed_segments_align_per_unit(self, mock_sf_write):
+        class FakeEngine:
+            capabilities = TTSCapabilities(
+                emotion_control=False,
+                paralinguistic_markers=False,
+                speed_control=False,
+                provides_timestamps=False,
+                voice_cloning=False,
+            )
+
+            def __init__(self):
+                self.texts = []
+
+            def post_processing_config(self):
+                return PostProcessingConfig(
+                    needs_forced_alignment=True,
+                    voice_transition_silence_ms=0,
+                    normalize_cross_voice=False,
+                )
+
+            def synthesize(self, segment):
+                self.texts.append(segment.text)
+                return TTSResult(
+                    audio=_fake_audio(6000),
+                    sample_rate=TTS_SAMPLE_RATE,
+                    words=None,
+                )
+
+        aligner = _RecordingAligner()
+        chunk = ChunkInfo(
+            text="First line. Second line.",
+            directed_segments=[
+                DirectedSegment(
+                    text="First line.",
+                    voice=VoiceSpec(id="voice-a"),
+                    speaker="narrator",
+                ),
+                DirectedSegment(
+                    text="Second line.",
+                    voice=VoiceSpec(id="voice-b"),
+                    speaker="speaker",
+                ),
+            ],
+        )
+
+        result = synthesize_chapter(FakeEngine(), [chunk], "/tmp/out.wav", aligner=aligner)
+
+        self.assertEqual(aligner.texts, ["First line.", "Second line."])
+        self.assertEqual([w.word for w in result.chunk_words[0]], ["First", "line.", "Second", "line."])
+        self.assertGreater(result.chunk_words[0][2].start, result.chunk_words[0][1].end)
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_word_timestamps_are_clamped_to_reader_order(self, mock_sf_write):
+        class FakeEngine:
+            capabilities = TTSCapabilities(
+                emotion_control=False,
+                paralinguistic_markers=False,
+                speed_control=False,
+                provides_timestamps=False,
+                voice_cloning=False,
+            )
+
+            def post_processing_config(self):
+                return PostProcessingConfig(
+                    needs_forced_alignment=True,
+                    voice_transition_silence_ms=0,
+                    normalize_cross_voice=False,
+                )
+
+            def synthesize(self, segment):
+                return TTSResult(
+                    audio=_fake_audio(6000),
+                    sample_rate=TTS_SAMPLE_RATE,
+                    words=None,
+                )
+
+        class OutOfOrderAligner(_FakeAligner):
+            def align_segments(self, audio, texts, starts, sample_rate):
+                return [
+                    WordTimestamp("Chapter", 0.2, 0.4),
+                    WordTimestamp("1.", 0.05, 0.05),
+                    WordTimestamp("It", 0.5, 0.6),
+                ]
+
+        chunk = ChunkInfo(
+            text="Chapter 1. It",
+            directed_segments=[DirectedSegment(
+                text="Chapter 1. It",
+                voice=VoiceSpec(id="voice-a"),
+                speaker="narrator",
+            )],
+        )
+
+        result = synthesize_chapter(FakeEngine(), [chunk], "/tmp/out.wav", aligner=OutOfOrderAligner())
+
+        words = result.chunk_words[0]
+        self.assertEqual([w.word for w in words], ["Chapter", "1.", "It"])
+        self.assertGreaterEqual(words[1].start, words[0].end)
+        self.assertGreater(words[1].end, words[1].start)
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_rolling_context_is_synthesized_and_trimmed(self, mock_sf_write):
+        class FakeEngine:
+            capabilities = TTSCapabilities(
+                emotion_control=False,
+                paralinguistic_markers=False,
+                speed_control=False,
+                provides_timestamps=False,
+                voice_cloning=False,
+            )
+
+            def __init__(self):
+                self.calls = []
+
+            def post_processing_config(self):
+                return PostProcessingConfig(
+                    needs_forced_alignment=True,
+                    voice_transition_silence_ms=0,
+                    normalize_cross_voice=False,
+                )
+
+            def synthesize(self, segment):
+                self.calls.append(segment.text)
+                audio = np.ones(len(segment.text.split()) * 1000, dtype=np.float32) * 0.25
+                return TTSResult(audio=audio, sample_rate=TTS_SAMPLE_RATE, words=None)
+
+        engine = FakeEngine()
+        aligner = _ContextTrimAligner()
+
+        synthesize_chapter(
+            engine,
+            [
+                ChunkInfo(text="Before."),
+                ChunkInfo(text="After.", ends_paragraph=False),
+            ],
+            "/tmp/out.wav",
+            aligner=aligner,
+        )
+
+        self.assertEqual(engine.calls, ["Before.", "Before. After."])
+        written = mock_sf_write.call_args[0][1]
+        gap = int(TTS_SAMPLE_RATE * SILENCE_PARAGRAPH_BREAK_MS / 1000)
+        expected = _LEAD_IN_SAMPLES + 1000 + gap + 1000
+        self.assertEqual(len(written), expected)
+        self.assertIn("Before. After.", aligner.texts)
 
     @patch("openshelf.pipeline.tts.sf.write")
     def test_punctuation_only_directed_segments_render_as_silence(self, mock_sf_write):

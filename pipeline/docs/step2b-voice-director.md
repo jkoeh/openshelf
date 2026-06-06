@@ -6,17 +6,36 @@
 
 ## Purpose
 
-Prepare each text chunk for multi-voice TTS while preserving the public audio contract. The director:
+Prepare each text chunk for directed TTS while preserving the public audio contract. The director:
 
 1. Builds a book-level character registry once.
 2. Assigns narrator and character voices from the selected engine's voice pool.
 3. Expands the registry per chapter when new quoted speakers appear.
 4. Classifies chapter quote spans in compact LLM batches, then projects the assignments back to chunks.
 5. Validates the chunk spans as a sync firewall.
-6. Groups validated spans into renderable performance units so the output sounds like an audiobook rather than hard-cut speaker clips.
+6. Applies the selected cast mode. The default `solo` mode renders with the
+   narrator voice only; opt-in `multicast` mode may switch voices by character.
 7. Adds engine-owned performance direction only when the engine supports it.
 
 The public playback contract remains `.m4a` plus `chapter_data.json` word timestamps. The build also writes two immutable audit/client-feature artifacts beside them: `character_registry.json` and `voice_direction.json`. These files are uploaded to R2 under the build prefix but must not change the reader text or sync source.
+
+## Cast Modes
+
+`CAST_MODE` controls whether character attribution changes synthesis voices:
+
+- `solo` (default): one narrator voice renders the chapter. The LLM still
+  selects the narrator, builds the character registry, and may expand that
+  registry as new speakers appear, but generated audio does not hand off to
+  character voices mid-prose. Each chunk is represented as a narrator
+  `DirectedSegment`; `voice_direction.json` records `cast_mode: "solo"` so the
+  artifact remains auditable.
+- `multicast`: experimental full-cast behavior. The LLM speaker assignments are
+  converted into character/narrator segments and resolved to character voices.
+  This mode is opt-in because prose such as `"..." she said "..."` can sound
+  stitched when rendered as many separately synthesized actor clips.
+
+`--voice` still overrides narrator selection in both modes. `character_registry.json`
+is written in both modes.
 
 ## Data Types
 
@@ -255,7 +274,7 @@ deleting a valid chunk or leaking visible/audio control text.
 
 ### Direction Artifact
 
-`voice_direction.json` is written once per build and uploaded beside `chapter_data.json`. It is an audit artifact for the exact multi-voice/performance plan used to synthesize the audio.
+`voice_direction.json` is written once per build and uploaded beside `chapter_data.json`. It is an audit artifact for the exact cast/performance plan used to synthesize the audio.
 
 For long-running local builds, the pipeline also writes a local-only chapter snapshot immediately after each chapter is directed:
 
@@ -275,6 +294,7 @@ The final aggregate shape is:
   "rendition": "kokoro-af-heart",
   "build": "2a4f9c1b3d8e7f60",
   "engine": "kokoro",
+  "cast_mode": "solo",
   "chapters": [
     {
       "number": 1,
@@ -316,9 +336,9 @@ class AudioDirector:
     def synthesize_chunk(self, segments: list[DirectedSegment], prior_frames: int) -> tuple[np.ndarray, list[WordTimestamp]]: ...
 ```
 
-`direct_chapter` is the production path. It performs chapter-level speaker attribution and registry expansion, then runs performance/emotion direction per chunk only when `engine.capabilities.emotion_control` or `engine.capabilities.performance_direction` is true and `engine.emotion_prompt_config()` returns a config. Kokoro advertises neither capability in the default path, so it stops after grouping/casting and does not spend LLM calls on performance annotations.
+`direct_chapter` is the production path. In `solo` mode, it returns one narrator segment per chunk and may run performance/emotion direction on that narrator segment only when the engine advertises support. In `multicast` mode, it performs chapter-level speaker attribution and registry expansion, then runs performance/emotion direction per chunk only when `engine.capabilities.emotion_control` or `engine.capabilities.performance_direction` is true and `engine.emotion_prompt_config()` returns a config. Kokoro advertises neither capability in the default path, so it avoids extra LLM performance calls.
 
-`direct_chunk` still runs chunk-level speaker annotation with fallback. It is used by tests, debugging harnesses, and as the fallback if chapter-level attribution fails.
+`direct_chunk` follows the same cast mode. In `solo`, it returns a single narrator segment. In `multicast`, it runs chunk-level speaker annotation with fallback. It is used by tests, debugging harnesses, and as the fallback if chapter-level attribution fails.
 
 ## LLM Clients
 

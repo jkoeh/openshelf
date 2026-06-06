@@ -106,6 +106,7 @@ class TestAudioDirector(unittest.TestCase):
             KokoroAdapter(pipeline=object()),
             llm,
             NullAligner(),
+            cast_mode="multicast",
         )
 
         segments = director.direct_chunk(ChunkWindow("", text, ""), _registry())
@@ -149,7 +150,12 @@ class TestAudioDirector(unittest.TestCase):
 
     def test_fallback_on_llm_error(self):
         text = '"Come," said Holmes.'
-        director = AudioDirector(FakeEngine(), StubLLM([LLMError("nope")]), NullAligner())
+        director = AudioDirector(
+            FakeEngine(),
+            StubLLM([LLMError("nope")]),
+            NullAligner(),
+            cast_mode="multicast",
+        )
 
         segments = director.direct_chunk(ChunkWindow("", text, ""), _registry())
 
@@ -162,7 +168,13 @@ class TestAudioDirector(unittest.TestCase):
         llm = StubLLM([{"quote_speakers": [
             {"quote_id": 0, "speaker": "Holmes"},
         ]}])
-        director = AudioDirector(FakeEngine(), llm, NullAligner(), sample_rate=24000)
+        director = AudioDirector(
+            FakeEngine(),
+            llm,
+            NullAligner(),
+            sample_rate=24000,
+            cast_mode="multicast",
+        )
 
         segments = director.direct_chunk(ChunkWindow("", text, ""), _registry())
         audio, words = director.synthesize_chunk(segments, prior_frames=1200)
@@ -171,6 +183,19 @@ class TestAudioDirector(unittest.TestCase):
         self.assertTrue(all(words[i].start <= words[i + 1].start for i in range(len(words) - 1)))
         self.assertGreaterEqual(words[0].start, 1200 / 24000)
         self.assertLessEqual(words[-1].end, len(audio) / 24000 + 1200 / 24000)
+
+    def test_solo_mode_uses_narrator_without_speaker_llm(self):
+        text = 'He said, "Come."'
+        llm = StubLLM([])
+        director = AudioDirector(FakeEngine(), llm, NullAligner())
+
+        segments = director.direct_chunk(ChunkWindow("", text, ""), _registry())
+
+        self.assertEqual(len(llm.calls), 0)
+        self.assertEqual(len(segments), 1)
+        self.assertEqual(segments[0].speaker, "narrator")
+        self.assertEqual(segments[0].voice.id, "narrator")
+        self.assertEqual(segments[0].text, text)
 
 
 if __name__ == "__main__":

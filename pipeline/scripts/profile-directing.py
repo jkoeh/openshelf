@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ebooklib import epub as _epub_lib
 
-from openshelf.config import REGISTRY_OPENING_CHARS, TTS_LANGUAGE
+from openshelf.config import CAST_MODE, REGISTRY_OPENING_CHARS, TTS_LANGUAGE
 from openshelf.pipeline.engines import create_engine
 from openshelf.pipeline.epub_parser import parse_epub
 from openshelf.pipeline.llm import LLMClient, OpenAILLM, create_llm
@@ -287,6 +287,8 @@ def main() -> int:
     ap.add_argument("--artifact", default=None, help="Write registry and directed chunk artifact JSON")
     ap.add_argument("--chapter-pass", action="store_true",
                     help="Experiment: one LLM call annotates/casts the full chapter, then projects to chunks")
+    ap.add_argument("--cast-mode", default=CAST_MODE, choices=["solo", "multicast"],
+                    help=f"Voice casting mode to profile (default: {CAST_MODE})")
     ap.add_argument("--chunk-attribution", action="store_true",
                     help="Use legacy one attribution call per quote-bearing chunk")
     ap.add_argument("--no-emotion", action="store_true",
@@ -331,7 +333,7 @@ def main() -> int:
           f"model={getattr(base_llm, 'model', '?')}  "
           f"emotion_pass={not args.no_emotion}\n", flush=True)
 
-    director = AudioDirector(engine, llm, aligner=None)
+    director = AudioDirector(engine, llm, aligner=None, cast_mode=args.cast_mode)
 
     ctx = BookContext(
         title=book_title,
@@ -369,6 +371,7 @@ def main() -> int:
                 "epub": args.epub,
                 "engine": args.engine,
                 "mode": "chapter-pass",
+                "cast_mode": args.cast_mode,
                 "llm_provider": base_llm.name,
                 "llm_model": getattr(base_llm, "model", None),
                 "emotion_pass": not args.no_emotion,
@@ -448,6 +451,7 @@ def main() -> int:
                 "epub": args.epub,
                 "engine": args.engine,
                 "mode": "chapter-attribution",
+                "cast_mode": args.cast_mode,
                 "llm_provider": base_llm.name,
                 "llm_model": getattr(base_llm, "model", None),
                 "emotion_pass": not args.no_emotion,
@@ -542,6 +546,7 @@ def main() -> int:
         payload = {
             "epub": args.epub,
             "engine": args.engine,
+            "cast_mode": args.cast_mode,
             "llm_provider": base_llm.name,
             "llm_model": getattr(base_llm, "model", None),
             "emotion_pass": not args.no_emotion,

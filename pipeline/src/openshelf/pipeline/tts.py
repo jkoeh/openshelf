@@ -16,6 +16,7 @@ from openshelf.config import (
     TTS_SAMPLE_RATE,
     SILENCE_PARAGRAPH_BREAK_MS,
     SILENCE_MID_PARAGRAPH_MS,
+    SILENCE_INTERNAL_PARAGRAPH_BREAK_MS,
     CROSSFADE_MS,
     LEAD_IN_SILENCE_MS,
 )
@@ -62,6 +63,8 @@ _BRACKET_CUE_RE = re.compile(
     re.IGNORECASE,
 )
 _TAG_RE = re.compile(r"<[^>]+>")
+_PARAGRAPH_BREAK_RE = re.compile(r"\n\s*\n+")
+_SENTENCE_END_RE = re.compile(r"[.!?][\"'\u201d\u2019)\]]*\s*$")
 
 # Lazy-loaded at first use — torch and kokoro are heavy deps
 torch: Any = None
@@ -274,11 +277,62 @@ def _sanitize_synthesis_text(text: str) -> str:
     clean = text.replace("\ufeff", "")
     without_cues = _BRACKET_CUE_RE.sub("", clean)
     without_tags = _TAG_RE.sub(" ", without_cues)
-    # Keep normal spaces stable without collapsing paragraph breaks that may
-    # still help Kokoro phrase longer passages.
-    without_tags = re.sub(r"[ \t\f\v]+", " ", without_tags)
-    without_tags = re.sub(r" *\n *", "\n", without_tags)
-    return without_tags.strip()
+    return re.sub(r"\s+", " ", without_tags).strip()
+
+
+def _is_true_internal_paragraph_break(left: str, right: str) -> bool:
+    left_clean = _sanitize_synthesis_text(left)
+    right_clean = _sanitize_synthesis_text(right)
+    if not left_clean or not right_clean:
+        return False
+    if not _SENTENCE_END_RE.search(left_clean):
+        return False
+    # Short title/subtitle fragments should flow into the following prose.
+    if _word_count(right_clean) < 4 and not right_clean.startswith(('"', "\u201c")):
+        return False
+    return True
+
+
+def _split_synthesis_units(text: str) -> list[tuple[str, int]]:
+    parts = [part.strip() for part in _PARAGRAPH_BREAK_RE.split(text) if part.strip()]
+    if len(parts) <= 1:
+        return [(text, 0)]
+    return [
+        (part, SILENCE_INTERNAL_PARAGRAPH_BREAK_MS if index < len(parts) - 1 else 0)
+        for index, part in enumerate(parts)
+    ]
+
+
+def _word_count(text: str) -> int:
+    return len(re.findall(r"\b[\w']+\b", text))
+
+
+def _last_sentence(text: str, max_words: int = 30) -> str:
+    clean = _sanitize_synthesis_text(text)
+    if not clean:
+        return ""
+    sentences = re.findall(r"[^.!?]+[.!?][\"'\u201d\u2019]*|[^.!?]+$", clean)
+    if not sentences:
+        return ""
+    sentence = sentences[-1].strip()
+    words = sentence.split()
+    if len(words) > max_words:
+        sentence = " ".join(words[-max_words:])
+    return sentence
+
+
+def _enforce_monotonic_word_order(words: list[WordTimestamp]) -> list[WordTimestamp]:
+    adjusted: list[WordTimestamp] = []
+    cursor = 0.0
+    epsilon = 0.001
+    for word in words:
+        start = max(float(word.start), cursor)
+        end = max(float(word.end), start + epsilon)
+        start = round(start, 4)
+        end = round(end, 4)
+        adjusted.append(WordTimestamp(word=word.word, start=start, end=end))
+        cursor = end
+    return adjusted
 
 
 def _segment_for_synthesis(segment: DirectedSegment) -> DirectedSegment:
@@ -313,6 +367,71 @@ def _synthesize_segment_with_fallback(engine: Any, segment: DirectedSegment) -> 
         return engine.synthesize(retry)
 
 
+def _can_use_rolling_context(aligner: WordAligner, post_cfg: PostProcessingConfig) -> bool:
+    return (
+        post_cfg.needs_forced_alignment
+        and not isinstance(aligner, NullAligner)
+        and bool(getattr(aligner, "supports_context_trim", False))
+    )
+
+
+def _trim_context_audio(
+    audio: np.ndarray,
+    sample_rate: int,
+    aligner: WordAligner,
+    context_text: str,
+    current_text: str,
+) -> np.ndarray | None:
+    context_words = _word_count(context_text)
+    if context_words <= 0:
+        return audio
+    aligned = aligner.align(audio, f"{context_text} {current_text}", sample_rate)
+    if len(aligned) <= context_words:
+        return None
+    start_s = aligned[context_words].start
+    if start_s <= 0:
+        return None
+    trim_at = min(len(audio), int(start_s * sample_rate))
+    trimmed = audio[trim_at:]
+    if len(trimmed) == 0:
+        return None
+    return trimmed
+
+
+def _synthesize_with_rolling_context(
+    engine: Any,
+    aligner: WordAligner,
+    segment: DirectedSegment,
+    post_cfg: PostProcessingConfig,
+    context_text: str,
+) -> Any:
+    if not context_text or not _can_use_rolling_context(aligner, post_cfg):
+        return _synthesize_segment_with_fallback(engine, segment)
+
+    contextual_text = f"{context_text} {segment.text}".strip()
+    contextual_segment = replace(segment, text=contextual_text)
+    try:
+        result = _synthesize_segment_with_fallback(engine, contextual_segment)
+        audio = np.asarray(result.audio, dtype=np.float32)
+        trimmed = _trim_context_audio(
+            audio,
+            int(result.sample_rate),
+            aligner,
+            context_text,
+            segment.text,
+        )
+        if trimmed is None:
+            raise RuntimeError("rolling context trim boundary not found")
+        return replace(result, audio=trimmed)
+    except Exception:
+        logger.warning(
+            "Rolling TTS context failed for %s; retrying without context",
+            segment.speaker,
+            exc_info=True,
+        )
+        return _synthesize_segment_with_fallback(engine, segment)
+
+
 def _synthesize_segments(
     engine: Any,
     aligner: WordAligner,
@@ -320,6 +439,7 @@ def _synthesize_segments(
     post_cfg: PostProcessingConfig,
     sample_rate: int,
     prior_audio_frames: int,
+    rolling_context: list[str] | None = None,
 ) -> tuple[np.ndarray, list[WordTimestamp]]:
     """Synthesize directed segments. Returns (audio, absolute word timestamps)."""
     if not segments:
@@ -327,66 +447,106 @@ def _synthesize_segments(
 
     audio_parts: list[np.ndarray] = []
     all_words: list[WordTimestamp] = []
+    forced_align_texts: list[str] = []
+    forced_align_starts: list[float] = []
     frames_so_far = 0
     prev_voice_id: str | None = None
 
     for segment in segments:
-        synth_segment = _segment_for_synthesis(segment)
-        if not _has_spoken_content(synth_segment.text):
-            if segment.pause_after_ms > 0:
-                pause = _generate_silence(sample_rate, segment.pause_after_ms)
+        units = _split_synthesis_units(segment.text)
+        for unit_index, (unit_text, unit_pause_ms) in enumerate(units):
+            unit_segment = replace(segment, text=unit_text)
+            synth_segment = _segment_for_synthesis(unit_segment)
+            is_last_unit = unit_index == len(units) - 1
+            pause_after_ms = segment.pause_after_ms if is_last_unit else unit_pause_ms
+            if not _has_spoken_content(synth_segment.text):
+                if pause_after_ms > 0:
+                    pause = _generate_silence(sample_rate, pause_after_ms)
+                    audio_parts.append(pause)
+                    frames_so_far += len(pause)
+                continue
+
+            context_text = rolling_context[0] if rolling_context else ""
+            result = _synthesize_with_rolling_context(
+                engine,
+                aligner,
+                synth_segment,
+                post_cfg,
+                context_text,
+            )
+            audio = np.asarray(result.audio, dtype=np.float32)
+            audio = _limit_boundary_silence(
+                audio,
+                sample_rate,
+                post_cfg.max_generated_boundary_silence_ms,
+            )
+            audio = _normalize(audio, cross_voice=post_cfg.normalize_cross_voice)
+            audio = _apply_boundary_fades(audio, sample_rate)
+
+            voice_id = segment.voice.id
+            if prev_voice_id is not None and voice_id != prev_voice_id:
+                transition_ms = 0 if segment.join_policy == "tight" else post_cfg.voice_transition_silence_ms
+                if transition_ms > 0:
+                    silence = _generate_silence(sample_rate, transition_ms)
+                    audio_parts.append(silence)
+                    frames_so_far += len(silence)
+
+            if post_cfg.needs_forced_alignment:
+                forced_align_texts.append(synth_segment.text)
+                forced_align_starts.append(frames_so_far / sample_rate)
+            else:
+                raw_words = result.words
+                if raw_words is None:
+                    raw_words = aligner.align(audio, synth_segment.text, sample_rate)
+
+                offset_s = (prior_audio_frames + frames_so_far) / sample_rate
+                all_words.extend([
+                    WordTimestamp(
+                        word=w.word,
+                        start=round(w.start + offset_s, 4),
+                        end=round(w.end + offset_s, 4),
+                    )
+                    for w in raw_words
+                ])
+
+            audio_parts.append(audio)
+            frames_so_far += len(audio)
+            prev_voice_id = voice_id
+            if rolling_context is not None:
+                rolling_context[0] = _last_sentence(synth_segment.original_text or synth_segment.text)
+
+            if pause_after_ms > 0:
+                pause = _generate_silence(sample_rate, pause_after_ms)
                 audio_parts.append(pause)
                 frames_so_far += len(pause)
-            continue
 
-        result = _synthesize_segment_with_fallback(engine, synth_segment)
-        raw_words = [] if post_cfg.needs_forced_alignment else result.words
-        if raw_words is None:
-            raw_words = aligner.align(
-                result.audio,
-                synth_segment.text,
-                result.sample_rate,
+    if not audio_parts:
+        return _generate_silence(sample_rate, 80), all_words
+    chunk_audio = np.concatenate(audio_parts)
+    if post_cfg.needs_forced_alignment and forced_align_texts:
+        if hasattr(aligner, "align_segments"):
+            raw_words = aligner.align_segments(
+                chunk_audio,
+                forced_align_texts,
+                forced_align_starts,
+                sample_rate,
             )
-
-        audio = np.asarray(result.audio, dtype=np.float32)
-        audio = _limit_boundary_silence(
-            audio,
-            sample_rate,
-            post_cfg.max_generated_boundary_silence_ms,
-        )
-        audio = _normalize(audio, cross_voice=post_cfg.normalize_cross_voice)
-        audio = _apply_boundary_fades(audio, sample_rate)
-
-        voice_id = segment.voice.id
-        if prev_voice_id is not None and voice_id != prev_voice_id:
-            transition_ms = 0 if segment.join_policy == "tight" else post_cfg.voice_transition_silence_ms
-            if transition_ms > 0:
-                silence = _generate_silence(sample_rate, transition_ms)
-                audio_parts.append(silence)
-                frames_so_far += len(silence)
-
-        offset_s = (prior_audio_frames + frames_so_far) / sample_rate
-        all_words.extend([
+        else:
+            raw_words = aligner.align(
+                chunk_audio,
+                " ".join(forced_align_texts),
+                sample_rate,
+            )
+        offset_s = prior_audio_frames / sample_rate
+        all_words = [
             WordTimestamp(
                 word=w.word,
                 start=round(w.start + offset_s, 4),
                 end=round(w.end + offset_s, 4),
             )
             for w in raw_words
-        ])
-
-        audio_parts.append(audio)
-        frames_so_far += len(audio)
-        prev_voice_id = voice_id
-
-        if segment.pause_after_ms > 0:
-            pause = _generate_silence(sample_rate, segment.pause_after_ms)
-            audio_parts.append(pause)
-            frames_so_far += len(pause)
-
-    if not audio_parts:
-        return _generate_silence(sample_rate, 80), all_words
-    return np.concatenate(audio_parts), all_words
+        ]
+    return chunk_audio, all_words
 
 
 def synthesize_chapter(
@@ -420,6 +580,7 @@ def synthesize_chapter(
     post_cfg = engine.post_processing_config()
     if aligner is None:
         aligner = NullAligner()
+    rolling_context = [""]
 
     for i, chunk_info in enumerate(chunks):
         try:
@@ -450,6 +611,7 @@ def synthesize_chapter(
                 post_cfg=post_cfg,
                 sample_rate=sample_rate,
                 prior_audio_frames=chunk_start_frames,
+                rolling_context=rolling_context,
             )
 
             if pending_gap is not None:
@@ -457,7 +619,7 @@ def synthesize_chapter(
                 audio_segments.append(pending_gap)
 
             chunk_start = frames_so_far / sample_rate
-            if post_cfg.needs_forced_alignment:
+            if post_cfg.needs_forced_alignment and not words:
                 chunk_relative_words = aligner.align(chunk_audio, chunk_info.text, sample_rate)
                 words = [
                     WordTimestamp(
@@ -468,7 +630,7 @@ def synthesize_chapter(
                     for w in chunk_relative_words
                 ]
             chunk_audio_starts.append(chunk_start)
-            chunk_words.append(words)
+            chunk_words.append(_enforce_monotonic_word_order(words))
 
             audio_segments.append(chunk_audio)
             frames_so_far += len(chunk_audio)

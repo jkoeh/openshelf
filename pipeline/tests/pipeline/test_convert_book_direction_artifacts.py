@@ -56,10 +56,12 @@ class TestConvertBookDirectionArtifacts(unittest.TestCase):
             "kokoro-af-heart",
             "abc123",
             "kokoro",
+            "solo",
             [chapter],
         )
         summary = convert_book_script._direction_speed_summary(chapter)
 
+        self.assertEqual(payload["cast_mode"], "solo")
         self.assertEqual(payload["chapters"][0]["number"], 3)
         self.assertEqual(summary["segments"], 2)
         self.assertEqual(summary["speed_counts"], {"0.95": 1, "1.05": 1})

@@ -108,12 +108,29 @@ class WordAligner(Protocol):
         sample_rate: int,
     ) -> list[WordTimestamp]: ...
 
+    def align_segments(
+        self,
+        audio: np.ndarray,
+        texts: list[str],
+        starts: list[float],
+        sample_rate: int,
+    ) -> list[WordTimestamp]: ...
+
 
 class NullAligner:
     def align(
         self,
         audio: np.ndarray,
         text: str,
+        sample_rate: int,
+    ) -> list[WordTimestamp]:
+        return []
+
+    def align_segments(
+        self,
+        audio: np.ndarray,
+        texts: list[str],
+        starts: list[float],
         sample_rate: int,
     ) -> list[WordTimestamp]:
         return []

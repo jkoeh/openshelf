@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 class WhisperXAligner:
     """Align one synthesized segment and return segment-relative timestamps."""
+    supports_context_trim = True
 
     def __init__(self, device: str = "cpu", language: str = "en"):
         self.device = device
@@ -24,6 +25,15 @@ class WhisperXAligner:
         self,
         audio: np.ndarray,
         text: str,
+        sample_rate: int,
+    ) -> list[WordTimestamp]:
+        return self.align_segments(audio, [text], [0.0], sample_rate)
+
+    def align_segments(
+        self,
+        audio: np.ndarray,
+        texts: list[str],
+        starts: list[float],
         sample_rate: int,
     ) -> list[WordTimestamp]:
         tmp_path = ""
@@ -36,8 +46,8 @@ class WhisperXAligner:
             sf.write(tmp_path, audio, sample_rate)
             entries = align_chapter(
                 tmp_path,
-                [text],
-                [0.0],
+                texts,
+                starts,
                 device=self.device,
                 language=self.language,
             )
