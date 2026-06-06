@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 
 from openshelf.pipeline.epub_parser import (
     Chapter,
-    _CONTENT_TAGS,
+    iter_content_tags,
 )
 
 
@@ -42,7 +42,7 @@ def annotate_epub(epub_path: str, chapters: list[Chapter]) -> bytes:
 
         # Walk content tags in document order, skip empty — mirrors _extract_content_elements
         el_iter = iter(chapter.elements)
-        for tag in soup.find_all(_CONTENT_TAGS):
+        for tag in iter_content_tags(soup):
             # Apply same cleanup as _extract_content_elements so empty-check matches
             for marker in tag.find_all(["sup", "sub"]):
                 marker.decompose()

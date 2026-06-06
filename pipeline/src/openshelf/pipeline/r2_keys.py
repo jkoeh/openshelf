@@ -51,6 +51,16 @@ def chapter_data_key(author: str, title: str, rendition: str, build: str) -> str
     return f"{build_prefix(author, title, rendition, build)}/chapter_data.json"
 
 
+def character_registry_key(author: str, title: str, rendition: str, build: str) -> str:
+    """The narrator/character voice registry used by one (rendition, build)."""
+    return f"{build_prefix(author, title, rendition, build)}/character_registry.json"
+
+
+def voice_direction_key(author: str, title: str, rendition: str, build: str) -> str:
+    """The speaker and performance-direction audit for one (rendition, build)."""
+    return f"{build_prefix(author, title, rendition, build)}/voice_direction.json"
+
+
 def rendition_manifest_key(author: str, title: str, rendition: str, build: str) -> str:
     """The per-build manifest describing chapter durations and word counts.
 

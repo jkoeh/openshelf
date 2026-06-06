@@ -1,9 +1,12 @@
 ebooklib
 beautifulsoup4
 kokoro
+f5-tts
 soundfile
 numpy
 boto3
 torch
 whisperx
 jiwer
+anthropic
+openai

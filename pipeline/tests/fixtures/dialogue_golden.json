@@ -1,0 +1,28 @@
+[
+  {
+    "id": "pure_narration",
+    "description": "No quotation marks means no LLM call is needed.",
+    "text": "The room was quiet and the fire burned low.",
+    "expected_spans": [
+      {"start": 0, "end": 43, "speaker": "narrator"}
+    ]
+  },
+  {
+    "id": "simple_dialogue",
+    "description": "A named character speaks quoted text after an attribution tag.",
+    "text": "Holmes said, \"Come.\"",
+    "expected_spans": [
+      {"start": 0, "end": 13, "speaker": "narrator"},
+      {"start": 13, "end": 20, "speaker": "Sherlock Holmes"}
+    ]
+  },
+  {
+    "id": "alias_dialogue",
+    "description": "Alias resolves to the canonical registry speaker.",
+    "text": "The detective whispered, \"Wait.\"",
+    "expected_spans": [
+      {"start": 0, "end": 25, "speaker": "narrator"},
+      {"start": 25, "end": 32, "speaker": "Sherlock Holmes"}
+    ]
+  }
+]

@@ -3,7 +3,7 @@
 import re
 import urllib.parse
 
-from openshelf.scrapers.http import make_request
+from openshelf.scrapers.http import make_request, matches_filter
 
 
 def se_search(author=None, language=None, delay=2):
@@ -74,7 +74,7 @@ def se_search(author=None, language=None, delay=2):
             author_name = author_slug.replace("-", " ").title()
             title_name = title_slug.replace("-", " ").title()
 
-            if author and author.lower() not in author_name.lower():
+            if not matches_filter(author, author_name):
                 continue
 
             yield author_name, title_name, epub_url

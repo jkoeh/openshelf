@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -18,8 +19,49 @@ from openshelf.config import (
     CROSSFADE_MS,
     LEAD_IN_SILENCE_MS,
 )
+from openshelf.pipeline.tts_engine import (
+    DirectedSegment,
+    NullAligner,
+    PostProcessingConfig,
+    TTSCapabilities,
+    VoiceSpec,
+    WordAligner,
+    WordTimestamp,
+)
 
 logger = logging.getLogger(__name__)
+_BRACKET_CUE_WORDS = (
+    "anxious",
+    "anxiously",
+    "breathy",
+    "bright",
+    "brightly",
+    "calm",
+    "curious",
+    "excited",
+    "gentle",
+    "neutral",
+    "sigh",
+    "singing",
+    "sings",
+    "soft",
+    "softly",
+    "somber",
+    "tense",
+    "warm",
+    "warmly",
+    "weary",
+    "whisper",
+)
+_BRACKET_CUE_RE = re.compile(
+    r"\[\s*(?:"
+    + "|".join(re.escape(word) for word in _BRACKET_CUE_WORDS)
+    + r")(?:\s*,\s*(?:"
+    + "|".join(re.escape(word) for word in _BRACKET_CUE_WORDS)
+    + r"))*\s*\]",
+    re.IGNORECASE,
+)
+_TAG_RE = re.compile(r"<[^>]+>")
 
 # Lazy-loaded at first use — torch and kokoro are heavy deps
 torch: Any = None
@@ -46,13 +88,7 @@ def _import_kpipeline() -> Any:
 class ChunkInfo:
     text: str
     ends_paragraph: bool = True
-
-
-@dataclass
-class WordTimestamp:
-    word: str
-    start: float  # seconds, relative to start of final chapter audio
-    end: float
+    directed_segments: list[DirectedSegment] | None = None
 
 
 @dataclass
@@ -94,7 +130,11 @@ def _generate_silence(sample_rate: int, duration_ms: int) -> np.ndarray:
     return np.zeros(n_samples, dtype=np.float32)
 
 
-def _normalize(audio: np.ndarray, target_peak: float = 0.89) -> np.ndarray:
+def _normalize(
+    audio: np.ndarray,
+    target_peak: float = 0.89,
+    cross_voice: bool = False,
+) -> np.ndarray:
     if len(audio) == 0:
         return audio
     peak = np.abs(audio).max()
@@ -114,6 +154,29 @@ def _apply_boundary_fades(
     audio[:fade_samples] *= np.linspace(0, 1, fade_samples, dtype=np.float32)
     audio[-fade_samples:] *= np.linspace(1, 0, fade_samples, dtype=np.float32)
     return audio
+
+
+def _limit_boundary_silence(
+    audio: np.ndarray,
+    sample_rate: int,
+    max_silence_ms: int | None,
+) -> np.ndarray:
+    if max_silence_ms is None or max_silence_ms < 0 or len(audio) == 0:
+        return audio
+
+    max_samples = int(sample_rate * max_silence_ms / 1000)
+    peak = float(np.abs(audio).max())
+    if peak <= 0.0:
+        return audio[:max_samples]
+
+    threshold = max(0.005, peak * 0.02)
+    voiced = np.flatnonzero(np.abs(audio) >= threshold)
+    if voiced.size == 0:
+        return audio[:max_samples]
+
+    start = max(0, int(voiced[0]) - max_samples)
+    end = min(len(audio), int(voiced[-1]) + max_samples + 1)
+    return audio[start:end]
 
 
 def _extract_words(results: list, sample_rate: int = TTS_SAMPLE_RATE) -> list[WordTimestamp]:
@@ -179,15 +242,151 @@ def _synthesize_single_chunk(
     sample_rate: int,
 ) -> tuple[np.ndarray, list[WordTimestamp]]:
     """Synthesize a single chunk. Returns (audio, word_timestamps)."""
-    results = list(pipeline(chunk_info.text, voice=voice))
-    if not results:
-        raise RuntimeError("No audio returned")
-    chunk_audio = np.concatenate([np.asarray(
-        r.audio if hasattr(r, "audio") else r[2], dtype=np.float32
-    ) for r in results])
-    words = _extract_words(results)
-    chunk_audio = _normalize(chunk_audio)
-    return _apply_boundary_fades(chunk_audio, sample_rate), words
+    from openshelf.pipeline.engines.kokoro import KokoroAdapter
+
+    engine = KokoroAdapter(pipeline=pipeline)
+    segment = DirectedSegment(
+        text=chunk_info.text,
+        voice=VoiceSpec(id=voice, preset_name=voice),
+        speaker="narrator",
+    )
+    return _synthesize_segments(
+        engine=engine,
+        aligner=NullAligner(),
+        segments=[segment],
+        post_cfg=engine.post_processing_config(),
+        sample_rate=sample_rate,
+        prior_audio_frames=0,
+    )
+
+
+def _spoken_probe_text(text: str) -> str:
+    """Remove synthesis cues before deciding if text has pronounceable content."""
+    return _sanitize_synthesis_text(text)
+
+
+def _has_spoken_content(text: str) -> bool:
+    return any(ch.isalnum() for ch in _spoken_probe_text(text))
+
+
+def _sanitize_synthesis_text(text: str) -> str:
+    """Strip audit-only steering markup that engines may speak literally."""
+    clean = text.replace("\ufeff", "")
+    without_cues = _BRACKET_CUE_RE.sub("", clean)
+    without_tags = _TAG_RE.sub(" ", without_cues)
+    # Keep normal spaces stable without collapsing paragraph breaks that may
+    # still help Kokoro phrase longer passages.
+    without_tags = re.sub(r"[ \t\f\v]+", " ", without_tags)
+    without_tags = re.sub(r" *\n *", "\n", without_tags)
+    return without_tags.strip()
+
+
+def _segment_for_synthesis(segment: DirectedSegment) -> DirectedSegment:
+    clean_text = _sanitize_synthesis_text(segment.text)
+    if clean_text == segment.text:
+        return segment
+    return replace(segment, text=clean_text)
+
+
+def _synthesize_segment_with_fallback(engine: Any, segment: DirectedSegment) -> Any:
+    segment = _segment_for_synthesis(segment)
+    try:
+        return engine.synthesize(segment)
+    except Exception:
+        original = segment.original_text or segment.text
+        if original == segment.text:
+            raise
+        if not _has_spoken_content(original):
+            raise
+        retry = replace(
+            segment,
+            text=original,
+            emotion=None,
+            speed=1.0,
+            original_text=original,
+        )
+        logger.warning(
+            "Steered TTS failed for %s; retrying original text",
+            segment.speaker,
+            exc_info=True,
+        )
+        return engine.synthesize(retry)
+
+
+def _synthesize_segments(
+    engine: Any,
+    aligner: WordAligner,
+    segments: list[DirectedSegment],
+    post_cfg: PostProcessingConfig,
+    sample_rate: int,
+    prior_audio_frames: int,
+) -> tuple[np.ndarray, list[WordTimestamp]]:
+    """Synthesize directed segments. Returns (audio, absolute word timestamps)."""
+    if not segments:
+        raise RuntimeError("No directed segments to synthesize")
+
+    audio_parts: list[np.ndarray] = []
+    all_words: list[WordTimestamp] = []
+    frames_so_far = 0
+    prev_voice_id: str | None = None
+
+    for segment in segments:
+        synth_segment = _segment_for_synthesis(segment)
+        if not _has_spoken_content(synth_segment.text):
+            if segment.pause_after_ms > 0:
+                pause = _generate_silence(sample_rate, segment.pause_after_ms)
+                audio_parts.append(pause)
+                frames_so_far += len(pause)
+            continue
+
+        result = _synthesize_segment_with_fallback(engine, synth_segment)
+        raw_words = [] if post_cfg.needs_forced_alignment else result.words
+        if raw_words is None:
+            raw_words = aligner.align(
+                result.audio,
+                synth_segment.text,
+                result.sample_rate,
+            )
+
+        audio = np.asarray(result.audio, dtype=np.float32)
+        audio = _limit_boundary_silence(
+            audio,
+            sample_rate,
+            post_cfg.max_generated_boundary_silence_ms,
+        )
+        audio = _normalize(audio, cross_voice=post_cfg.normalize_cross_voice)
+        audio = _apply_boundary_fades(audio, sample_rate)
+
+        voice_id = segment.voice.id
+        if prev_voice_id is not None and voice_id != prev_voice_id:
+            transition_ms = 0 if segment.join_policy == "tight" else post_cfg.voice_transition_silence_ms
+            if transition_ms > 0:
+                silence = _generate_silence(sample_rate, transition_ms)
+                audio_parts.append(silence)
+                frames_so_far += len(silence)
+
+        offset_s = (prior_audio_frames + frames_so_far) / sample_rate
+        all_words.extend([
+            WordTimestamp(
+                word=w.word,
+                start=round(w.start + offset_s, 4),
+                end=round(w.end + offset_s, 4),
+            )
+            for w in raw_words
+        ])
+
+        audio_parts.append(audio)
+        frames_so_far += len(audio)
+        prev_voice_id = voice_id
+
+        if segment.pause_after_ms > 0:
+            pause = _generate_silence(sample_rate, segment.pause_after_ms)
+            audio_parts.append(pause)
+            frames_so_far += len(pause)
+
+    if not audio_parts:
+        return _generate_silence(sample_rate, 80), all_words
+    return np.concatenate(audio_parts), all_words
 
 
 def synthesize_chapter(
@@ -196,6 +395,7 @@ def synthesize_chapter(
     output_path: str,
     voice: str = TTS_VOICE,
     sample_rate: int = TTS_SAMPLE_RATE,
+    aligner: WordAligner | None = None,
 ) -> SynthesisResult:
     if not chunks:
         raise ValueError("chunks list is empty")
@@ -210,9 +410,21 @@ def synthesize_chapter(
     chunk_words: list[list[WordTimestamp]] = []
     prior_chunk_emitted = False
 
+    if isinstance(getattr(pipeline, "capabilities", None), TTSCapabilities):
+        engine = pipeline
+    else:
+        from openshelf.pipeline.engines.kokoro import KokoroAdapter
+
+        engine = KokoroAdapter(pipeline=pipeline)
+
+    post_cfg = engine.post_processing_config()
+    if aligner is None:
+        aligner = NullAligner()
+
     for i, chunk_info in enumerate(chunks):
         try:
-            chunk_audio, words = _synthesize_single_chunk(pipeline, chunk_info, voice, sample_rate)
+            pending_gap: np.ndarray | None = None
+            chunk_start_frames = frames_so_far
 
             if prior_chunk_emitted:
                 # Variable silence: longer at paragraph breaks, shorter mid-paragraph
@@ -220,23 +432,43 @@ def synthesize_chapter(
                     gap_ms = SILENCE_PARAGRAPH_BREAK_MS
                 else:
                     gap_ms = SILENCE_MID_PARAGRAPH_MS
-                silence = _generate_silence(sample_rate, gap_ms)
-                frames_so_far += len(silence)
-                audio_segments.append(silence)
+                pending_gap = _generate_silence(sample_rate, gap_ms)
+                chunk_start_frames += len(pending_gap)
+
+            segments = chunk_info.directed_segments
+            if segments is None:
+                segments = [DirectedSegment(
+                    text=chunk_info.text,
+                    voice=VoiceSpec(id=voice, preset_name=voice),
+                    speaker="narrator",
+                )]
+
+            chunk_audio, words = _synthesize_segments(
+                engine=engine,
+                aligner=aligner,
+                segments=segments,
+                post_cfg=post_cfg,
+                sample_rate=sample_rate,
+                prior_audio_frames=chunk_start_frames,
+            )
+
+            if pending_gap is not None:
+                frames_so_far += len(pending_gap)
+                audio_segments.append(pending_gap)
 
             chunk_start = frames_so_far / sample_rate
+            if post_cfg.needs_forced_alignment:
+                chunk_relative_words = aligner.align(chunk_audio, chunk_info.text, sample_rate)
+                words = [
+                    WordTimestamp(
+                        word=w.word,
+                        start=round(w.start + chunk_start, 4),
+                        end=round(w.end + chunk_start, 4),
+                    )
+                    for w in chunk_relative_words
+                ]
             chunk_audio_starts.append(chunk_start)
-
-            # Offset word timestamps to be relative to the full chapter audio
-            offset_words = [
-                WordTimestamp(
-                    word=w.word,
-                    start=round(w.start + chunk_start, 4),
-                    end=round(w.end + chunk_start, 4),
-                )
-                for w in words
-            ]
-            chunk_words.append(offset_words)
+            chunk_words.append(words)
 
             audio_segments.append(chunk_audio)
             frames_so_far += len(chunk_audio)

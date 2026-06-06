@@ -11,6 +11,7 @@ Usage:
 """
 
 import argparse
+import logging
 import os
 import subprocess
 import sys
@@ -18,52 +19,66 @@ import sys
 # Allow running from the scripts/ directory without pip install
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+from openshelf.pipeline.logging_utils import Heartbeat, configure_pipeline_logging
 from openshelf.scrapers.gutenberg import gutenberg_search
-from openshelf.scrapers.http import download_book, sanitize
+from openshelf.scrapers.http import download_book, matches_filter, sanitize
 from openshelf.scrapers.standard_ebooks import se_search
+
+
+logger = logging.getLogger("openshelf.process_books")
 
 
 def search_and_download(args):
     """Search sources and download matching EPUBs. Returns list of (epub_path, source_name)."""
     downloaded = []
     query = args.author or args.book
+    logger.info("Starting search source=%s query=%r", args.source, query)
 
     if args.source in ("gutenberg", "all"):
         source_name = "gutenberg"
         source_dir = os.path.join(args.download_dir, source_name)
         print("=== Project Gutenberg ===")
-        for author_name, title, epub_url in gutenberg_search(author=query, delay=args.delay):
-            if args.book and args.book.lower() not in title.lower():
-                continue
-            if args.author and args.author.lower() not in author_name.lower():
-                continue
-            print(f"  {author_name} — {title}")
-            ok = download_book(author_name, title, epub_url, source_dir, delay=args.delay)
-            if ok:
-                author_slug = sanitize(author_name)
-                title_slug = sanitize(title) or "untitled"
-                epub_path = os.path.join(source_dir, author_slug, title_slug + ".epub")
-                if os.path.isfile(epub_path):
-                    downloaded.append((epub_path, source_name))
+        with Heartbeat(logger, "Searching Project Gutenberg"):
+            for author_name, title, epub_url in gutenberg_search(author=query, delay=args.delay):
+                if not matches_filter(args.book, title):
+                    logger.debug("Skipping Gutenberg title filter: %s", title)
+                    continue
+                if not matches_filter(args.author, author_name):
+                    logger.debug("Skipping Gutenberg author filter: %s", author_name)
+                    continue
+                logger.info("Matched Gutenberg book: %s - %s", author_name, title)
+                print(f"  {author_name} - {title}")
+                ok = download_book(author_name, title, epub_url, source_dir, delay=args.delay)
+                if ok:
+                    author_slug = sanitize(author_name)
+                    title_slug = sanitize(title) or "untitled"
+                    epub_path = os.path.join(source_dir, author_slug, title_slug + ".epub")
+                    if os.path.isfile(epub_path):
+                        downloaded.append((epub_path, source_name))
 
     if args.source in ("standard-ebooks", "all"):
         source_name = "standard-ebooks"
         source_dir = os.path.join(args.download_dir, source_name)
         print("\n=== Standard Ebooks ===")
-        for author_name, title, epub_url in se_search(author=query, delay=args.delay):
-            if args.book and args.book.lower() not in title.lower():
-                continue
-            if args.author and args.author.lower() not in author_name.lower():
-                continue
-            print(f"  {author_name} — {title}")
-            ok = download_book(author_name, title, epub_url, source_dir, delay=args.delay)
-            if ok:
-                author_slug = sanitize(author_name)
-                title_slug = sanitize(title) or "untitled"
-                epub_path = os.path.join(source_dir, author_slug, title_slug + ".epub")
-                if os.path.isfile(epub_path):
-                    downloaded.append((epub_path, source_name))
+        with Heartbeat(logger, "Searching Standard Ebooks"):
+            for author_name, title, epub_url in se_search(author=query, delay=args.delay):
+                if not matches_filter(args.book, title):
+                    logger.debug("Skipping Standard Ebooks title filter: %s", title)
+                    continue
+                if not matches_filter(args.author, author_name):
+                    logger.debug("Skipping Standard Ebooks author filter: %s", author_name)
+                    continue
+                logger.info("Matched Standard Ebooks book: %s - %s", author_name, title)
+                print(f"  {author_name} - {title}")
+                ok = download_book(author_name, title, epub_url, source_dir, delay=args.delay)
+                if ok:
+                    author_slug = sanitize(author_name)
+                    title_slug = sanitize(title) or "untitled"
+                    epub_path = os.path.join(source_dir, author_slug, title_slug + ".epub")
+                    if os.path.isfile(epub_path):
+                        downloaded.append((epub_path, source_name))
 
+    logger.info("Search/download complete: %d book(s)", len(downloaded))
     return downloaded
 
 
@@ -72,8 +87,12 @@ def convert_book(epub_path, source_name, args):
     script = os.path.join(os.path.dirname(__file__), "convert-book.py")
     cmd = [sys.executable, script, epub_path, "--source", source_name, "--output", args.output]
 
+    if args.engine:
+        cmd += ["--engine", args.engine]
     if args.voice:
         cmd += ["--voice", args.voice]
+    if args.rendition:
+        cmd += ["--rendition", args.rendition]
     if args.device:
         cmd += ["--device", args.device]
     if args.keep_wav:
@@ -84,7 +103,9 @@ def convert_book(epub_path, source_name, args):
         cmd.append("--dry-run")
     if args.force:
         cmd.append("--force")
+    cmd += ["--log-dir", args.log_dir]
 
+    logger.info("Starting convert-book subprocess: %s", " ".join(cmd))
     return subprocess.run(cmd).returncode
 
 
@@ -95,7 +116,9 @@ def main():
     parser.add_argument("--epub", help="Path to a local EPUB file (skips download)")
     parser.add_argument("--source", default="all", choices=["gutenberg", "standard-ebooks", "all"])
     parser.add_argument("--output", "-o", default="audio", help="Audio output directory (default: audio/)")
-    parser.add_argument("--voice", default=None, help="Kokoro voice ID")
+    parser.add_argument("--engine", default=None, help="TTS engine (default: TTS_ENGINE)")
+    parser.add_argument("--voice", default=None, help="Narrator voice override")
+    parser.add_argument("--rendition", default=None, help="Rendition slug override")
     parser.add_argument("--device", default=None, help="Device: cuda, mps, cpu (default: auto)")
     parser.add_argument("--dry-run", action="store_true", help="Download + parse only, no audio")
     parser.add_argument("--keep-wav", action="store_true", help="Keep WAV files after encoding")
@@ -107,7 +130,17 @@ def main():
     )
     parser.add_argument("--delay", type=float, default=2, help="Seconds between HTTP requests (default: 2)")
     parser.add_argument("--download-dir", default="download/books", help="Download directory (default: download/books)")
+    parser.add_argument("--log-dir", default="logs", help="Local log directory (default: logs/)")
     args = parser.parse_args()
+
+    run_name = "process-books"
+    if args.author:
+        run_name += f"-{sanitize(args.author)}"
+    if args.book:
+        run_name += f"-{sanitize(args.book)}"
+    log_path = configure_pipeline_logging(run_name, args.log_dir)
+    print(f"Log file: {log_path}")
+    logger.info("process-books started")
 
     if not args.author and not args.book and not args.epub:
         parser.error("at least one of --author, --book, or --epub is required")
@@ -117,8 +150,8 @@ def main():
         epub_path = os.path.abspath(args.epub)
         if not os.path.isfile(epub_path):
             print(f"Error: file not found: {epub_path}")
+            logger.error("Local EPUB not found: %s", epub_path)
             sys.exit(1)
-        # Infer source from path, default to "local"
         source_name = "local"
         for src in ("gutenberg", "standard-ebooks"):
             if src in epub_path:
@@ -126,18 +159,18 @@ def main():
                 break
         downloaded = [(epub_path, source_name)]
         print(f"Using local EPUB: {epub_path}\n")
+        logger.info("Using local EPUB: %s source=%s", epub_path, source_name)
     else:
-        # Phase 1: Search and download
         print("Phase 1: Downloading books ...\n")
         downloaded = search_and_download(args)
 
         if not downloaded:
             print("\nNo books downloaded.")
+            logger.warning("No books downloaded")
             return
 
         print(f"\n{len(downloaded)} book(s) downloaded.\n")
 
-    # Phase 2: Convert each book
     print("Phase 2: Converting books ...\n")
     succeeded = 0
     failed = 0
@@ -150,12 +183,15 @@ def main():
         rc = convert_book(epub_path, source_name, args)
         if rc == 0:
             succeeded += 1
+            logger.info("convert-book succeeded: %s", epub_path)
         else:
             failed += 1
+            logger.error("convert-book failed rc=%s: %s", rc, epub_path)
             print(f"\nError: convert-book.py exited with code {rc}")
 
     print(f"\n{'=' * 60}")
     print(f"Done. {succeeded} succeeded, {failed} failed out of {len(downloaded)} book(s).")
+    logger.info("process-books complete: %d succeeded, %d failed", succeeded, failed)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 
 ## What This Project Is
 
-**OpenShelf** is an open source public domain audiobook platform. It downloads EPUB books from Project Gutenberg and Standard Ebooks, converts them to AI-narrated audio using Kokoro TTS with word-level timestamps extracted directly from Kokoro's token output, and serves them globally via Cloudflare R2.
+**OpenShelf** is an open source public domain audiobook platform. It downloads EPUB books from Project Gutenberg and Standard Ebooks, converts them to AI-narrated audio through swappable TTS engines, aligns final audio with WhisperX word timestamps, and serves it globally via Cloudflare R2.
 
 ## End-to-End Flow
 
@@ -14,8 +14,11 @@ flowchart LR
         direction TB
         P1[EPUB] --> P2[parse_epub<br/>chapters + ContentElements]
         P2 --> P3[text_chunker<br/>ChunkInfo per chunk]
-        P3 --> P4[tts.synthesize_chapter<br/>Kokoro KPipeline]
+        P3 --> P3B[voice_director<br/>registry + speaker spans + engine-aware direction]
+        P3B --> P4[TTSEngine adapter<br/>Kokoro or F5-TTS]
         P4 -->|WAV + chunk_words<br/>+ chunk_audio_starts| P5[encode_to_aac<br/>m4a]
+        P3B --> P6A[character_registry.json<br/>voices + aliases]
+        P3B --> P6B[voice_direction.json<br/>speaker + performance audit]
         P4 --> P6[chapter_data.json<br/>chunks + words]
         P5 --> P7[rendition-manifest.json<br/>per-build chapter list]
         P2 --> P8[annotated EPUB<br/>+ cover]
@@ -30,6 +33,8 @@ flowchart LR
         R_EPUB[book.epub]
         R_COVER[cover jpg/png]
         R_BOOKMAN[manifest.json<br/>book-level pointer · MUTABLE]
+        R_REG[audio/{rendition}/builds/{build}/<br/>character_registry.json]
+        R_DIR[audio/{rendition}/builds/{build}/<br/>voice_direction.json]
         R_RMAN[audio/{rendition}/builds/{build}/<br/>rendition-manifest.json]
         R_M4A[audio/{rendition}/builds/{build}/<br/>chapter-NN.m4a]
         R_CD[audio/{rendition}/builds/{build}/<br/>chapter_data.json]
@@ -38,6 +43,8 @@ flowchart LR
 
     P5 --> R_M4A
     P6 --> R_CD
+    P6A --> R_REG
+    P6B --> R_DIR
     P7 --> R_RMAN
     P10 --> R_BOOKMAN
     P8 --> R_EPUB
@@ -86,6 +93,8 @@ flowchart LR
 Notes:
 
 - The `chapter_data.json` produced in step P6 is the single source for both chunk text and word timestamps the client needs — there is no separate alignment fetch on the happy path.
+- Multi-voice generation writes auditable per-build artifacts to R2. `character_registry.json` carries the narrator, character aliases, descriptions, and assigned voices for future client features. `voice_direction.json` carries speaker and engine performance direction used for synthesis. The reader still consumes `chapter_data.json` for text and word sync.
+- Kokoro uses LLM casting, speaker attribution, and adapter-owned performance steering for multiple preset voices. Kokoro steering may alter synthesis-only text with pace, pauses, punctuation shaping, SSML/cues, and whisper-style hints inspired by Kokoro voice-quality guidance, but those annotations never appear in reader text. WhisperX is the canonical word-timestamp source for every engine; Kokoro native token timestamps are not used for the final sync contract.
 - `catalog.json` is the preferred fast path for `GET /catalog`; when it is missing, the worker may derive the same catalog rows from root book manifests plus each selected rendition's current `rendition-manifest.json`.
 - The client does not poll status for sync; `useSyncEngine` reads `player.currentTime` directly inside `requestAnimationFrame` and only re-renders when the active word index changes.
 - Tap-to-seek in the reader looks up `words[i].start` and calls `player.seekTo`.
@@ -94,7 +103,7 @@ Notes:
 
 OpenShelf separates two orthogonal concepts that used to be conflated:
 
-- **Rendition** is a user-facing artistic identity (a Kokoro voice + engine). Examples: `kokoro-af-heart`, `kokoro-bf-emma`. Stable across pipeline changes. The user picks a rendition.
+- **Rendition** is a user-facing artistic identity (a narrator voice + engine). Examples: `kokoro-af-heart`, `kokoro-bf-emma`, `f5tts-custom`. Stable across pipeline changes. The user picks a rendition.
 - **Build** is an internal pipeline-output identity. It is a fresh random 16-hex string minted once per pipeline run. The user never sees it.
 
 Storage and HTTP URLs include **both**: `audio/{rendition}/builds/{build}/...` on R2; `?rendition=...&build=...` on every immutable HTTP route. The book-level `manifest.json` is the single mutable pointer that names the `current_build` per rendition. This makes audio + chapter_data + rendition-manifest a coherent atomic snapshot per (rendition, build), so a client can never mix bytes from different builds mid-session.
@@ -141,7 +150,7 @@ npm run typecheck    # Type-check worker + client
 ## Conventions
 
 - Each component owns its dependency file (`pipeline/requirements.txt`, `worker/package.json`, `client/package.json`)
-- Shared data contract: pipeline writes JSON (manifest, chapter_data) to R2; worker reads it. `chapter_data.json` carries per-chapter chunk text and inline Kokoro word timestamps in a single file.
+- Shared data contract: pipeline writes JSON (manifest, chapter_data, character_registry, voice_direction) to R2. `chapter_data.json` carries per-chapter chunk text and word timestamps in a single file, regardless of TTS engine; direction artifacts are audit/client-feature metadata and must not replace reader text.
 - `sanitize()` in `pipeline/src/openshelf/scrapers/http.py` is the single source of truth for slug generation
 - Idempotent at every level: file exists -> skip, R2 key exists -> skip
 

@@ -4,6 +4,7 @@
 # Project artifacts
 download/
 audio/
+pipeline/voices/
 .env
 
 # Python

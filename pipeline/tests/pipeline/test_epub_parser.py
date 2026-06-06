@@ -18,10 +18,11 @@ from openshelf.pipeline.epub_parser import (
 
 # --- Test helpers ---
 
-def _make_item(filename: str, html: str):
+def _make_item(filename: str, html: str, item_id: str | None = None):
     """Create a mock EpubItem with given filename and HTML content."""
     item = MagicMock()
     item.get_name.return_value = filename
+    item.get_id.return_value = item_id or filename.rsplit("/", 1)[-1]
     item.get_content.return_value = html.encode("utf-8")
     return item
 
@@ -30,6 +31,14 @@ def _make_book(items: list):
     """Create a mock EpubBook that returns given items as ITEM_DOCUMENT."""
     book = MagicMock()
     book.get_items_of_type.return_value = items
+    return book
+
+
+def _make_book_with_spine(items: list, spine: list[str]):
+    book = _make_book(items)
+    book.spine = [(item_id, "yes") for item_id in spine]
+    by_id = {item.get_id(): item for item in items}
+    book.get_item_with_id.side_effect = lambda item_id: by_id.get(item_id)
     return book
 
 
@@ -74,6 +83,19 @@ class TestParseEpubBasic(unittest.TestCase):
         chapters = parse_epub("fake.epub")
         self.assertEqual(len(chapters), 3)
         self.assertEqual([c.number for c in chapters], [1, 2, 3])
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_uses_spine_order_when_available(self, mock_read):
+        items = [
+            _make_item("text/chapter-1.xhtml", _chapter_html("h2", "Chapter One", 60), item_id="chapter-1.xhtml"),
+            _make_item("text/epigraph.xhtml", _chapter_html("h2", "Epigraph", 60), item_id="epigraph.xhtml"),
+        ]
+        mock_read.return_value = _make_book_with_spine(items, ["epigraph.xhtml", "chapter-1.xhtml"])
+
+        chapters = parse_epub("fake.epub")
+
+        self.assertEqual([ch.title for ch in chapters], ["Epigraph", "Chapter One"])
+        self.assertEqual([ch.number for ch in chapters], [1, 2])
 
     @patch("openshelf.pipeline.epub_parser.epub.read_epub")
     def test_word_count_includes_heading(self, mock_read):
@@ -141,6 +163,13 @@ class TestParseEpubTitleExtraction(unittest.TestCase):
         self.assertEqual(parse_epub("f.epub")[0].title, "Chapter 1")
 
     @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_epigraph_filename_title_fallback(self, mock_read):
+        words = " ".join(f"w{i}" for i in range(60))
+        html = f"<html><body><p>{words}</p></body></html>"
+        mock_read.return_value = _make_book([_make_item("text/epigraph.xhtml", html)])
+        self.assertEqual(parse_epub("f.epub")[0].title, "Epigraph")
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
     def test_h1_preferred_over_h2(self, mock_read):
         words = " ".join(f"w{i}" for i in range(60))
         html = f"<html><body><h2>Second</h2><h1>First</h1><p>{words}</p></body></html>"
@@ -173,6 +202,37 @@ class TestParseEpubFiltering(unittest.TestCase):
         items = [
             _make_item("cover.xhtml", _words_html(60)),
             _make_item("ch01.xhtml", _chapter_html("h2", "Ch", 60)),
+        ]
+        mock_read.return_value = _make_book(items)
+        self.assertEqual(len(parse_epub("f.epub")), 1)
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_skips_standard_ebooks_backmatter(self, mock_read):
+        items = [
+            _make_item("text/colophon.xhtml", _chapter_html("h2", "Colophon", 60)),
+            _make_item("text/imprint.xhtml", _chapter_html("h2", "Imprint", 60)),
+            _make_item("text/list-of-illustrations.xhtml", _chapter_html("h2", "List of Illustrations", 60)),
+            _make_item("text/uncopyright.xhtml", _chapter_html("h2", "Uncopyright", 60)),
+            _make_item("text/chapter-1.xhtml", _chapter_html("h2", "I", 60)),
+        ]
+        mock_read.return_value = _make_book(items)
+        chapters = parse_epub("f.epub")
+        self.assertEqual(len(chapters), 1)
+        self.assertEqual(chapters[0].title, "I")
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_skips_exact_loi_basename(self, mock_read):
+        items = [
+            _make_item("text/loi.xhtml", _chapter_html("h2", "List of Illustrations", 60)),
+            _make_item("text/chapter-1.xhtml", _chapter_html("h2", "I", 60)),
+        ]
+        mock_read.return_value = _make_book(items)
+        self.assertEqual(len(parse_epub("f.epub")), 1)
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_loi_is_not_broad_substring_skip(self, mock_read):
+        items = [
+            _make_item("text/loitering.xhtml", _chapter_html("h2", "Loitering", 60)),
         ]
         mock_read.return_value = _make_book(items)
         self.assertEqual(len(parse_epub("f.epub")), 1)
@@ -322,6 +382,34 @@ class TestParseEpubEdgeCases(unittest.TestCase):
         chapters = parse_epub("f.epub")
         self.assertEqual(len(chapters), 1)
         self.assertIn("w0", chapters[0].text)
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_nested_blockquote_paragraphs_not_duplicated(self, mock_read):
+        stanza1 = " ".join(f"a{i}" for i in range(30))
+        stanza2 = " ".join(f"b{i}" for i in range(30))
+        html = (
+            "<html><body><h1>T</h1><blockquote>"
+            f"<p>{stanza1}</p><p>{stanza2}</p>"
+            "</blockquote></body></html>"
+        )
+        mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
+
+        ch = parse_epub("f.epub")[0]
+
+        self.assertEqual(ch.paragraphs, ["T", stanza1, stanza2])
+        self.assertEqual(ch.text.count("a0"), 1)
+        self.assertEqual(ch.text.count("b0"), 1)
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_nested_list_paragraphs_not_duplicated(self, mock_read):
+        para = " ".join(f"w{i}" for i in range(60))
+        html = f"<html><body><ol><li><p>{para}</p></li></ol></body></html>"
+        mock_read.return_value = _make_book([_make_item("ch.xhtml", html)])
+
+        ch = parse_epub("f.epub")[0]
+
+        self.assertEqual(ch.paragraphs, [para])
+        self.assertEqual(ch.text.count("w0"), 1)
 
 
 class TestParseEpubParagraphs(unittest.TestCase):

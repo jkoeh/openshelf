@@ -5,7 +5,7 @@
 
 ## Purpose
 
-Upload all pipeline artifacts to Cloudflare R2 (S3-compatible object storage) under a build-versioned key layout. Per-build artifacts (audio, chapter_data, rendition-manifest) live under `audio/{rendition}/builds/{build}/...` and are immutable once written. The per-book `manifest.json` is the single mutable pointer that names the `current_build` per rendition and is always overwritten on upload.
+Upload all pipeline artifacts to Cloudflare R2 (S3-compatible object storage) under a build-versioned key layout. Per-build artifacts (audio, chapter_data, character_registry, voice_direction, rendition-manifest) live under `audio/{rendition}/builds/{build}/...` and are immutable once written. The per-book `manifest.json` is the single mutable pointer that names the `current_build` per rendition and is always overwritten on upload.
 
 ```mermaid
 graph TD
@@ -23,7 +23,9 @@ graph TD
     E1 -->|Yes| E2[Skip entire build]
     E1 -->|No| E3[PUT all m4a files]
     E3 --> E4[PUT chapter_data.json]
-    E4 --> E5[PUT rendition-manifest.json last]
+    E4 --> E4A[PUT character_registry.json]
+    E4A --> E4B[PUT voice_direction.json]
+    E4B --> E5[PUT rendition-manifest.json last]
 
     H --> H1[Always overwrite book manifest]
 ```
@@ -46,6 +48,8 @@ def upload_rendition_build(
     audio_dir: str,
     chapter_data_path: str,
     rendition_manifest_path: str,
+    character_registry_path: str | None = None,
+    voice_direction_path: str | None = None,
     force: bool = False,
 ) -> list[str]
     # Writes all per-build artifacts under audio/{rendition}/builds/{build}/.
@@ -91,10 +95,18 @@ books/{author_slug}/{title_slug}/
           chapter-01.m4a                                 # immutable
           chapter-02.m4a
           chapter_data.json                              # immutable
+          character_registry.json                        # immutable
+          voice_direction.json                           # immutable
           rendition-manifest.json                        # immutable; written last
 ```
 
-Every key under a `builds/{build_id}/` prefix is part of a coherent atomic snapshot: the audio bytes, the chapter_data word timestamps, and the rendition-manifest's chapter durations all describe the same build. A client that pins to a build hash for a chapter session is guaranteed not to see a mid-listen mismatch.
+Every key under a `builds/{build_id}/` prefix is part of a coherent atomic snapshot: the audio bytes, the chapter_data word timestamps, the character registry, the voice direction audit, and the rendition-manifest's chapter durations all describe the same build. A client that pins to a build hash for a chapter session is guaranteed not to see a mid-listen mismatch.
+
+For local quality checks, `convert-book.py --chapters` may restrict generation to
+one chapter or a comma/range list such as `2` or `2,4-5`. This writes the same
+per-build artifact shapes, but with only the selected chapters in
+`chapter_data.json`, `voice_direction.json`, and `rendition-manifest.json`. The
+flag is for local sample builds and must not alter the public schema.
 
 ### Key constructors
 
@@ -129,6 +141,12 @@ Unchanged from prior shape — only the path it lives at has changed.
 ```
 
 The `build` field is added so the file is self-identifying — a client that has the bytes can sanity-check it matches the build it pinned to.
+
+## Direction Artifacts
+
+`character_registry.json` contains the narrator voice plus every known speaking character, aliases, descriptions, and assigned voice specs. It is immutable under the build prefix so future client character-editing features can start from exactly the registry used for that audio.
+
+`voice_direction.json` contains the per-chapter, per-chunk speaker and performance-direction plan used for synthesis. It preserves original reader text separately from synthesis-only text, so Kokoro steering cues never become reader text.
 
 ## Behavior
 

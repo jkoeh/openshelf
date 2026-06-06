@@ -6,7 +6,8 @@ the single-gate idempotency check, and the per-uploader force semantics.
 
 Key invariants enforced here:
 
-- Per-build artifacts (audio, chapter_data, rendition-manifest) all live
+- Per-build artifacts (audio, chapter_data, character_registry,
+  voice_direction, rendition-manifest) all live
   under the same `audio/{rendition}/builds/{build}/` prefix and are written
   in a single call to `upload_rendition_build`. The rendition-manifest is
   always uploaded last so its presence on R2 signals the build is complete.
@@ -76,14 +77,17 @@ def upload_rendition_build(
     audio_dir: str,
     chapter_data_path: str,
     rendition_manifest_path: str,
+    character_registry_path: str | None = None,
+    voice_direction_path: str | None = None,
     force: bool = False,
 ) -> list[str]:
     """Upload every per-build artifact for one (rendition, build).
 
-    Order: all m4a files, then chapter_data.json, then rendition-manifest.json
-    last. The rendition-manifest is the single-gate idempotency signal: if
-    it already exists on R2, the whole build is skipped (one HEAD request,
-    not O(N) per file). `force=True` skips the check and re-uploads.
+    Order: all m4a files, then JSON build artifacts, then
+    rendition-manifest.json last. The rendition-manifest is the single-gate
+    idempotency signal: if it already exists on R2, the whole build is
+    skipped (one HEAD request, not O(N) per file). `force=True` skips the
+    check and re-uploads.
 
     Returns the list of R2 keys written (empty list when skipped).
     """
@@ -127,7 +131,36 @@ def upload_rendition_build(
     logger.info("Uploaded: %s", cd_key)
     uploaded.append(cd_key)
 
-    # 3. rendition-manifest.json LAST — completion signal.
+    # 3. Optional artifacts are uploaded before the manifest completion signal.
+    if character_registry_path and os.path.exists(character_registry_path):
+        registry_key = r2_keys.character_registry_key(author_slug, title_slug, rendition, build_id)
+        client.upload_file(
+            character_registry_path,
+            bucket,
+            registry_key,
+            ExtraArgs={
+                "ContentType": "application/json",
+                "CacheControl": R2_CACHE_CONTROL_IMMUTABLE,
+            },
+        )
+        logger.info("Uploaded: %s", registry_key)
+        uploaded.append(registry_key)
+
+    if voice_direction_path and os.path.exists(voice_direction_path):
+        direction_key = r2_keys.voice_direction_key(author_slug, title_slug, rendition, build_id)
+        client.upload_file(
+            voice_direction_path,
+            bucket,
+            direction_key,
+            ExtraArgs={
+                "ContentType": "application/json",
+                "CacheControl": R2_CACHE_CONTROL_IMMUTABLE,
+            },
+        )
+        logger.info("Uploaded: %s", direction_key)
+        uploaded.append(direction_key)
+
+    # 4. rendition-manifest.json LAST: completion signal.
     client.upload_file(
         rendition_manifest_path,
         bucket,

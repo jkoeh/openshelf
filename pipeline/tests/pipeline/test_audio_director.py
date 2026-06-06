@@ -1,0 +1,177 @@
+"""Integration-style tests for AudioDirector with fake engines."""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import tempfile
+import unittest
+
+import numpy as np
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+
+from openshelf.pipeline.engines.kokoro import KokoroAdapter  # noqa: E402
+from openshelf.pipeline.llm import LLMError, StubLLM  # noqa: E402
+from openshelf.pipeline.tts_engine import (  # noqa: E402
+    AnnotationPromptConfig,
+    DirectedSegment,
+    NullAligner,
+    PostProcessingConfig,
+    RegistryPromptConfig,
+    TTSCapabilities,
+    TTSResult,
+    VoiceSpec,
+    WordTimestamp,
+)
+from openshelf.pipeline.voice_director import (  # noqa: E402
+    AudioDirector,
+    BookContext,
+    CharacterProfile,
+    CharacterRegistry,
+    ChunkWindow,
+)
+
+
+class FakeEngine:
+    name = "fake"
+    capabilities = TTSCapabilities(
+        emotion_control=False,
+        paralinguistic_markers=False,
+        speed_control=True,
+        provides_timestamps=True,
+        voice_cloning=False,
+    )
+
+    def __init__(self):
+        self.voice_pool = [
+            VoiceSpec(id="narrator", preset_name="af_heart"),
+            VoiceSpec(id="holmes", preset_name="bm_george"),
+        ]
+
+    def registry_prompt_config(self):
+        return RegistryPromptConfig("Voices: narrator, holmes", {})
+
+    def annotation_prompt_config(self):
+        return AnnotationPromptConfig("")
+
+    def emotion_prompt_config(self):
+        return None
+
+    def post_processing_config(self):
+        return PostProcessingConfig(False, 0, False)
+
+    def available_voices(self):
+        return list(self.voice_pool)
+
+    def synthesize(self, segment: DirectedSegment):
+        words = segment.text.split()
+        audio = np.ones(max(1, len(words)) * 100, dtype=np.float32)
+        return TTSResult(
+            audio=audio,
+            sample_rate=24000,
+            words=[
+                WordTimestamp(
+                    word=w,
+                    start=i * 100 / 24000,
+                    end=(i + 1) * 100 / 24000,
+                )
+                for i, w in enumerate(words)
+            ],
+        )
+
+
+def _registry() -> CharacterRegistry:
+    return CharacterRegistry(
+        narrator_voice=VoiceSpec(id="narrator", preset_name="af_heart"),
+        characters={
+            "Sherlock Holmes": CharacterProfile(
+                canonical="Sherlock Holmes",
+                aliases=["Holmes"],
+                description="A detective.",
+                voice=VoiceSpec(id="holmes", preset_name="bm_george"),
+            ),
+        },
+    )
+
+
+class TestAudioDirector(unittest.TestCase):
+    def test_kokoro_skips_performance_direction(self):
+        text = 'He said, "Come."'
+        llm = StubLLM([{"quote_speakers": [
+            {"quote_id": 0, "speaker": "Holmes"},
+        ]}])
+        director = AudioDirector(
+            KokoroAdapter(pipeline=object()),
+            llm,
+            NullAligner(),
+        )
+
+        segments = director.direct_chunk(ChunkWindow("", text, ""), _registry())
+
+        self.assertEqual(len(llm.calls), 1)
+        self.assertEqual(segments[1].text, '"Come."')
+        self.assertEqual(segments[1].original_text, '"Come."')
+        self.assertIsNone(segments[1].emotion)
+        self.assertEqual(segments[1].speed, 1.0)
+        self.assertEqual(segments[1].pause_after_ms, 0)
+
+    def test_registry_saved_to_disk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            llm = StubLLM([{
+                "narrator_voice_id": "narrator",
+                "characters": [{
+                    "canonical": "Sherlock Holmes",
+                    "aliases": ["Holmes"],
+                    "description": "A detective.",
+                    "gender": "male",
+                    "age": "adult",
+                    "persona_of": None,
+                    "voice_id": "holmes",
+                }],
+            }])
+            director = AudioDirector(FakeEngine(), llm, NullAligner(), build_dir=tmp)
+            registry = director.build_registry(BookContext(
+                title="Test",
+                author="Author",
+                language="en",
+                opening_text='"Come," said Holmes.',
+            ))
+
+            path = os.path.join(tmp, "character_registry.json")
+            self.assertTrue(os.path.exists(path))
+            with open(path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            self.assertEqual(payload["narrator_voice"]["id"], "narrator")
+            self.assertIn("Sherlock Holmes", payload["characters"])
+            self.assertEqual(registry.characters["Sherlock Holmes"].voice.id, "holmes")
+
+    def test_fallback_on_llm_error(self):
+        text = '"Come," said Holmes.'
+        director = AudioDirector(FakeEngine(), StubLLM([LLMError("nope")]), NullAligner())
+
+        segments = director.direct_chunk(ChunkWindow("", text, ""), _registry())
+
+        self.assertEqual(len(segments), 1)
+        self.assertEqual(segments[0].speaker, "narrator")
+        self.assertEqual(segments[0].text, text)
+
+    def test_full_chunk_pipeline(self):
+        text = 'He said, "Come."'
+        llm = StubLLM([{"quote_speakers": [
+            {"quote_id": 0, "speaker": "Holmes"},
+        ]}])
+        director = AudioDirector(FakeEngine(), llm, NullAligner(), sample_rate=24000)
+
+        segments = director.direct_chunk(ChunkWindow("", text, ""), _registry())
+        audio, words = director.synthesize_chunk(segments, prior_frames=1200)
+
+        self.assertGreater(len(audio), 0)
+        self.assertTrue(all(words[i].start <= words[i + 1].start for i in range(len(words) - 1)))
+        self.assertGreaterEqual(words[0].start, 1200 / 24000)
+        self.assertLessEqual(words[-1].end, len(audio) / 24000 + 1200 / 24000)
+
+
+if __name__ == "__main__":
+    unittest.main()

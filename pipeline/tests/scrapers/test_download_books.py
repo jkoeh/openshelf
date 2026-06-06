@@ -1,9 +1,11 @@
 """Unit tests for openshelf.scrapers — all network calls are mocked."""
 
 import json
+import importlib.util
 import os
 import sys
 import tempfile
+import types
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -48,6 +50,22 @@ class TestSanitize(unittest.TestCase):
 
     def test_leading_trailing_specials(self):
         self.assertEqual(http.sanitize("--hello--"), "hello")
+
+
+class TestSearchMatching(unittest.TestCase):
+    def test_matches_apostrophe_insensitive_title(self):
+        self.assertTrue(
+            http.matches_filter(
+                "Alice's Adventures in Wonderland",
+                "Alices Adventures In Wonderland",
+            )
+        )
+
+    def test_matches_author_tokens_in_different_order(self):
+        self.assertTrue(http.matches_filter("Lewis Carroll", "Carroll, Lewis"))
+
+    def test_excludes_missing_token(self):
+        self.assertFalse(http.matches_filter("Alice Looking Glass", "Alices Adventures"))
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +204,13 @@ class TestSeSearch(unittest.TestCase):
         self.assertEqual(results, [])
 
     @patch.object(standard_ebooks, "make_request")
+    def test_author_filter_handles_inverted_names(self, mock_req):
+        html = '<li about="/ebooks/carroll-lewis/alices-adventures-in-wonderland">'
+        mock_req.return_value = html.encode()
+        results = list(standard_ebooks.se_search(author="Lewis Carroll", delay=0))
+        self.assertEqual(len(results), 1)
+
+    @patch.object(standard_ebooks, "make_request")
     def test_pagination(self, mock_req):
         page1 = '<li about="/ebooks/author-one/book-one/translator">page=2'
         page2 = '<li about="/ebooks/author-two/book-two/translator">'
@@ -283,6 +308,47 @@ class TestDownloadBook(unittest.TestCase):
                 tmpdir, "fyodor-dostoyevsky", "crime-punishment.epub"
             )
             self.assertTrue(os.path.exists(expected))
+
+
+class TestProcessBooksFiltering(unittest.TestCase):
+    def _load_process_books(self):
+        script = os.path.join(
+            os.path.dirname(__file__), "..", "..", "scripts", "process-books.py",
+        )
+        spec = importlib.util.spec_from_file_location("process_books_for_test", script)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        return module
+
+    def test_standard_ebooks_book_filter_ignores_apostrophe(self):
+        module = self._load_process_books()
+
+        def fake_download(author_name, title, epub_url, source_dir, delay=0):
+            author_slug = http.sanitize(author_name)
+            title_slug = http.sanitize(title) or "untitled"
+            author_dir = os.path.join(source_dir, author_slug)
+            os.makedirs(author_dir, exist_ok=True)
+            with open(os.path.join(author_dir, title_slug + ".epub"), "wb") as f:
+                f.write(b"PK\x03\x04")
+            return True
+
+        args = types.SimpleNamespace(
+            source="standard-ebooks",
+            download_dir=tempfile.mkdtemp(),
+            author="Lewis Carroll",
+            book="Alice's Adventures in Wonderland",
+            delay=0,
+        )
+        with (
+            patch.object(module, "se_search", return_value=[
+                ("Lewis Carroll", "Alices Adventures In Wonderland", "http://x.epub"),
+            ]),
+            patch.object(module, "download_book", side_effect=fake_download),
+        ):
+            downloaded = module.search_and_download(args)
+
+        self.assertEqual(len(downloaded), 1)
 
 
 if __name__ == "__main__":

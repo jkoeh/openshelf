@@ -47,6 +47,14 @@ def _make_build_dir(tmp_dir: str, n_chapters: int = 2) -> tuple[str, str, str]:
     return audio_dir, chapter_data_path, rendition_manifest_path
 
 
+def _make_direction_artifacts(tmp_dir: str) -> tuple[str, str]:
+    character_registry_path = os.path.join(tmp_dir, "character_registry.json")
+    voice_direction_path = os.path.join(tmp_dir, "voice_direction.json")
+    open(character_registry_path, "w").close()
+    open(voice_direction_path, "w").close()
+    return character_registry_path, voice_direction_path
+
+
 # ---------------------------------------------------------------------------
 # make_client / key_exists — basic plumbing
 # ---------------------------------------------------------------------------
@@ -180,6 +188,28 @@ class TestUploadRenditionBuildKeys(unittest.TestCase):
                 audio_dir, cd, rm,
             )
         self.assertEqual(len(keys), 4)
+
+    @patch("openshelf.pipeline.r2.key_exists", return_value=False)
+    def test_uploads_character_registry_and_voice_direction_when_provided(self, _exists):
+        client = MagicMock()
+        with tempfile.TemporaryDirectory() as tmp:
+            audio_dir, cd, rm = _make_build_dir(tmp, n_chapters=1)
+            registry, direction = _make_direction_artifacts(tmp)
+            keys = upload_rendition_build(
+                client, BUCKET, AUTHOR, TITLE, RENDITION, BUILD,
+                audio_dir, cd, rm,
+                character_registry_path=registry,
+                voice_direction_path=direction,
+            )
+        self.assertIn(
+            "books/kafka/the-trial/audio/kokoro-af-heart/builds/2a4f9c1/character_registry.json",
+            keys,
+        )
+        self.assertIn(
+            "books/kafka/the-trial/audio/kokoro-af-heart/builds/2a4f9c1/voice_direction.json",
+            keys,
+        )
+        self.assertEqual(client.upload_file.call_count, 5)
 
 
 class TestUploadRenditionBuildOrdering(unittest.TestCase):

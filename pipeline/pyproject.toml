@@ -10,12 +10,15 @@ requires-python = ">=3.11"
 
 dependencies = [
     "kokoro",
+    "f5-tts",
     "soundfile",
     "numpy",
     "pydub",
     "ebooklib",
     "beautifulsoup4",
     "boto3",
+    "anthropic",
+    "openai",
     "python-dotenv",
     "torch",
 ]

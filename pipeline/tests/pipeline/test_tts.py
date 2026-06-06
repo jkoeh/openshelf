@@ -20,8 +20,10 @@ from openshelf.pipeline.tts import (
     _generate_silence,
     _normalize,
     _apply_boundary_fades,
+    _limit_boundary_silence,
     _extract_words,
 )
+from openshelf.pipeline.tts_engine import DirectedSegment, PostProcessingConfig, TTSCapabilities, VoiceSpec
 from openshelf.config import (
     TTS_LANGUAGE,
     TTS_VOICE,
@@ -48,6 +50,21 @@ def _fake_audio(n_samples: int, peak: float = 0.5) -> np.ndarray:
 def _make_chunks(texts, ends_paragraph=True):
     """Wrap plain strings into ChunkInfo objects for tests."""
     return [ChunkInfo(text=t, ends_paragraph=ends_paragraph) for t in texts]
+
+
+class _FakeAligner:
+    def align(self, audio, text, sample_rate):
+        return [WordTimestamp(word=w, start=i * 0.1, end=i * 0.1 + 0.05)
+                for i, w in enumerate(text.split())]
+
+
+class _RecordingAligner(_FakeAligner):
+    def __init__(self):
+        self.texts = []
+
+    def align(self, audio, text, sample_rate):
+        self.texts.append(text)
+        return super().align(audio, text, sample_rate)
 
 
 class TestGetDevice(unittest.TestCase):
@@ -557,11 +574,16 @@ class TestSynthesizeChapterWords(unittest.TestCase):
             ])])
 
         pipeline = MagicMock(side_effect=make_iter)
-        result = synthesize_chapter(pipeline, _make_chunks(["text"]), "/tmp/out.wav")
+        result = synthesize_chapter(
+            pipeline,
+            _make_chunks(["text"]),
+            "/tmp/out.wav",
+            aligner=_FakeAligner(),
+        )
 
         self.assertEqual(len(result.chunk_words), 1)
         self.assertEqual(len(result.chunk_words[0]), 1)
-        self.assertEqual(result.chunk_words[0][0].word, "word")
+        self.assertEqual(result.chunk_words[0][0].word, "text")
 
     @patch("openshelf.pipeline.tts.sf.write")
     def test_chunk_words_offset_by_start(self, mock_sf_write):
@@ -572,7 +594,12 @@ class TestSynthesizeChapterWords(unittest.TestCase):
             ])])
 
         pipeline = MagicMock(side_effect=make_iter)
-        result = synthesize_chapter(pipeline, _make_chunks(["A.", "B."]), "/tmp/out.wav")
+        result = synthesize_chapter(
+            pipeline,
+            _make_chunks(["A.", "B."]),
+            "/tmp/out.wav",
+            aligner=_FakeAligner(),
+        )
 
         self.assertEqual(len(result.chunk_words), 2)
         # Second chunk's word should be offset
@@ -598,9 +625,142 @@ class TestSynthesizeChapterWords(unittest.TestCase):
             pipeline,
             [ChunkInfo(text="bad"), ChunkInfo(text="good")],
             "/tmp/out.wav",
+            aligner=_FakeAligner(),
         )
         self.assertEqual(result.chunk_words[0], [])
         self.assertEqual(len(result.chunk_words[1]), 1)
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_synthesis_annotations_are_not_spoken_or_aligned_as_reader_text(self, mock_sf_write):
+        def make_iter(text, voice=None):
+            return iter([_FakeResult("g", "p", _fake_audio(1000), [
+                _FakeToken("hello", 0.1, 0.3),
+            ])])
+
+        pipeline = MagicMock(side_effect=make_iter)
+        aligner = _RecordingAligner()
+        chunk = ChunkInfo(
+            text="hello",
+            directed_segments=[DirectedSegment(
+                text="[softly] hello <break time=\"350ms\"/>",
+                voice=VoiceSpec(id="af_heart", preset_name="af_heart"),
+                speaker="narrator",
+            )],
+        )
+
+        result = synthesize_chapter(pipeline, [chunk], "/tmp/out.wav", aligner=aligner)
+
+        self.assertEqual(pipeline.call_args_list[0].args[0], "hello")
+        self.assertEqual(aligner.texts, ["hello"])
+        self.assertEqual([w.word for w in result.chunk_words[0]], ["hello"])
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_synthesis_sanitizer_preserves_non_cue_bracket_text(self, mock_sf_write):
+        def make_iter(text, voice=None):
+            return iter([_FakeResult("g", "p", _fake_audio(1000), [
+                _FakeToken("Keep", 0.0, 0.1),
+            ])])
+
+        pipeline = MagicMock(side_effect=make_iter)
+        chunk = ChunkInfo(
+            text="Keep [the note] please.",
+            directed_segments=[DirectedSegment(
+                text="[softly] Keep [the note] please.",
+                voice=VoiceSpec(id="af_heart", preset_name="af_heart"),
+                speaker="narrator",
+            )],
+        )
+
+        synthesize_chapter(pipeline, [chunk], "/tmp/out.wav", aligner=_FakeAligner())
+
+        self.assertEqual(pipeline.call_args_list[0].args[0], "Keep [the note] please.")
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_synthesis_sanitizer_removes_bom_before_tts(self, mock_sf_write):
+        def make_iter(text, voice=None):
+            return iter([_FakeResult("g", "p", _fake_audio(1000), [
+                _FakeToken("yes", 0.0, 0.1),
+            ])])
+
+        pipeline = MagicMock(side_effect=make_iter)
+        aligner = _RecordingAligner()
+        chunk = ChunkInfo(
+            text="\ufeffyes",
+            directed_segments=[DirectedSegment(
+                text="\ufeffyes",
+                voice=VoiceSpec(id="af_heart", preset_name="af_heart"),
+                speaker="narrator",
+                original_text="\ufeffyes",
+            )],
+        )
+
+        synthesize_chapter(pipeline, [chunk], "/tmp/out.wav", aligner=aligner)
+
+        self.assertEqual(pipeline.call_args_list[0].args[0], "yes")
+        self.assertEqual(aligner.texts, ["\ufeffyes"])
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_punctuation_only_directed_segments_render_as_silence(self, mock_sf_write):
+        def make_iter(text, voice=None):
+            return iter([_FakeResult("g", "p", _fake_audio(1000), [
+                _FakeToken(text, 0.0, 0.2),
+            ])])
+
+        pipeline = MagicMock(side_effect=make_iter)
+        chunk = ChunkInfo(
+            text='"Hello," she said. "World."',
+            directed_segments=[
+                DirectedSegment(
+                    text='"Hello,"',
+                    voice=VoiceSpec(id="af_heart", preset_name="af_heart"),
+                    speaker="Alice",
+                    original_text='"Hello,"',
+                ),
+                DirectedSegment(
+                    text="[neutral] ...",
+                    voice=VoiceSpec(id="af_heart", preset_name="af_heart"),
+                    speaker="narrator",
+                    pause_after_ms=100,
+                    original_text="...",
+                ),
+                DirectedSegment(
+                    text='"World."',
+                    voice=VoiceSpec(id="af_heart", preset_name="af_heart"),
+                    speaker="Alice",
+                    original_text='"World."',
+                ),
+            ],
+        )
+
+        result = synthesize_chapter(pipeline, [chunk], "/tmp/out.wav", aligner=_FakeAligner())
+
+        self.assertEqual(result.skipped_chunks, 0)
+        self.assertEqual(pipeline.call_count, 2)
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_failed_steered_segment_retries_original_text(self, mock_sf_write):
+        def make_iter(text, voice=None):
+            if text == "hullo":
+                raise RuntimeError("bad steering")
+            return iter([_FakeResult("g", "p", _fake_audio(1000), [
+                _FakeToken("hello", 0.0, 0.2),
+            ])])
+
+        pipeline = MagicMock(side_effect=make_iter)
+        chunk = ChunkInfo(
+            text="hello",
+            directed_segments=[DirectedSegment(
+                text="hullo",
+                voice=VoiceSpec(id="af_heart", preset_name="af_heart"),
+                speaker="narrator",
+                original_text="hello",
+            )],
+        )
+
+        result = synthesize_chapter(pipeline, [chunk], "/tmp/out.wav", aligner=_FakeAligner())
+
+        self.assertEqual(result.skipped_chunks, 0)
+        self.assertEqual([call.args[0] for call in pipeline.call_args_list], ["hullo", "hello"])
 
 
 class TestLeadInSilence(unittest.TestCase):
@@ -623,6 +783,74 @@ class TestLeadInSilence(unittest.TestCase):
             written[:_LEAD_IN_SAMPLES],
             np.zeros(_LEAD_IN_SAMPLES, dtype=np.float32),
         )
+
+
+class TestBoundarySilenceLimiter(unittest.TestCase):
+
+    def test_leaves_audio_unchanged_without_limit(self):
+        audio = np.asarray([0.0, 0.5, 0.0], dtype=np.float32)
+
+        result = _limit_boundary_silence(audio, TTS_SAMPLE_RATE, None)
+
+        np.testing.assert_array_equal(result, audio)
+
+    def test_clamps_leading_and_trailing_padding(self):
+        voiced = np.ones(100, dtype=np.float32) * 0.25
+        audio = np.concatenate([
+            np.zeros(1000, dtype=np.float32),
+            voiced,
+            np.zeros(1000, dtype=np.float32),
+        ])
+
+        result = _limit_boundary_silence(audio, TTS_SAMPLE_RATE, 25)
+
+        self.assertEqual(len(result), 100 + 2 * int(TTS_SAMPLE_RATE * 25 / 1000))
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_synthesis_uses_engine_boundary_silence_limit(self, mock_sf_write):
+        class FakeEngine:
+            capabilities = TTSCapabilities(
+                emotion_control=False,
+                paralinguistic_markers=False,
+                speed_control=False,
+                provides_timestamps=False,
+                voice_cloning=True,
+            )
+
+            def post_processing_config(self):
+                return PostProcessingConfig(
+                    needs_forced_alignment=True,
+                    voice_transition_silence_ms=0,
+                    normalize_cross_voice=False,
+                    max_generated_boundary_silence_ms=25,
+                )
+
+            def synthesize(self, segment):
+                audio = np.concatenate([
+                    np.zeros(1000, dtype=np.float32),
+                    np.ones(100, dtype=np.float32) * 0.25,
+                    np.zeros(1000, dtype=np.float32),
+                ])
+                return type("Result", (), {
+                    "audio": audio,
+                    "sample_rate": TTS_SAMPLE_RATE,
+                    "words": None,
+                })()
+
+        chunk = ChunkInfo(
+            text="Hello.",
+            directed_segments=[DirectedSegment(
+                text="Hello.",
+                voice=VoiceSpec(id="voice"),
+                speaker="narrator",
+            )],
+        )
+
+        synthesize_chapter(FakeEngine(), [chunk], "/tmp/out.wav", aligner=_FakeAligner())
+
+        written = mock_sf_write.call_args[0][1]
+        expected_chunk_len = 100 + 2 * int(TTS_SAMPLE_RATE * 25 / 1000)
+        self.assertEqual(len(written), _LEAD_IN_SAMPLES + expected_chunk_len)
 
 
 if __name__ == "__main__":

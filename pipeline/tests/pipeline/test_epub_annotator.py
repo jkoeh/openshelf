@@ -124,6 +124,30 @@ class TestAnnotateEpubIdInjection(unittest.TestCase):
         self.assertIn('id="ch1-el0001"', injected)
         self.assertIn('id="ch1-el0002"', injected)
 
+    @patch("openshelf.pipeline.epub_annotator.epub.write_epub")
+    @patch("openshelf.pipeline.epub_annotator.epub.read_epub")
+    def test_nested_blockquote_ids_go_to_inner_paragraphs(self, mock_read, mock_write):
+        html = (
+            "<html><body><blockquote>"
+            "<p>Stanza one.</p><p>Stanza two.</p>"
+            "</blockquote></body></html>"
+        )
+        item = _make_epub_item("ch01.xhtml", html)
+        mock_read.return_value = _make_epub_book([item])
+        mock_write.side_effect = lambda buf, book: buf.write(b"")
+
+        chapter = _make_chapter(1, "ch01.xhtml", [
+            _make_content_element("ch1-el0000", "p", "Stanza one."),
+            _make_content_element("ch1-el0001", "p", "Stanza two."),
+        ])
+        annotate_epub("fake.epub", [chapter])
+
+        injected = item.set_content.call_args[0][0].decode("utf-8")
+        self.assertIn('<blockquote>', injected)
+        self.assertIn('<p id="ch1-el0000">Stanza one.</p>', injected)
+        self.assertIn('<p id="ch1-el0001">Stanza two.</p>', injected)
+        self.assertNotIn('<blockquote id=', injected)
+
 
 class TestAnnotateEpubSkippedItems(unittest.TestCase):
 

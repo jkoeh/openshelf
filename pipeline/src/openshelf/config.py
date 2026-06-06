@@ -6,9 +6,10 @@ from pathlib import Path
 # Project root — three levels up from this file (pipeline/src/openshelf/config.py)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
-# Load .env from project root if present
+# Load .env files if present. Values already exported in the shell win.
 try:
     from dotenv import load_dotenv
+    load_dotenv(PROJECT_ROOT / "pipeline" / ".env")
     load_dotenv(PROJECT_ROOT / ".env")
 except ImportError:
     pass
@@ -29,13 +30,29 @@ PIPELINE_VERSION = "1"
 
 # TTS
 TTS_VOICE = "af_heart"
+TTS_ENGINE = os.getenv("TTS_ENGINE", "kokoro")
 TTS_LANGUAGE = "a"  # Kokoro lang_code: a=American English, b=British English
 TTS_SAMPLE_RATE = 24000
 CHUNK_MAX_WORDS = 200
-SILENCE_PARAGRAPH_BREAK_MS = 700
-SILENCE_MID_PARAGRAPH_MS = 200
+SILENCE_PARAGRAPH_BREAK_MS = 400
+SILENCE_MID_PARAGRAPH_MS = 90
 CROSSFADE_MS = 15
 LEAD_IN_SILENCE_MS = 50
+VOICES_DIR = PROJECT_ROOT / "pipeline" / "voices"
+
+# LLM voice direction
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "anthropic")
+LLM_MODEL = os.getenv("LLM_MODEL", "")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+ANTHROPIC_MODEL = os.getenv(
+    "ANTHROPIC_MODEL",
+    LLM_MODEL or "claude-haiku-4-5-20251001",
+)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", LLM_MODEL or "gpt-5-nano")
+OPENAI_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "4096"))
+REGISTRY_OPENING_CHARS = 4000
+EMBEDDED_DIALOGUE_MODE = os.getenv("EMBEDDED_DIALOGUE_MODE", "reciter")
 
 # WER validation
 WER_THRESHOLD = 0.30

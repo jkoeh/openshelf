@@ -10,9 +10,9 @@ Parse an EPUB file into a list of chapters, each containing structured content e
 ```mermaid
 graph TD
     A[EPUB file] --> B[ebooklib.read_epub]
-    B --> C{For each HTML document}
+    B --> C{For each spine HTML document}
     C --> D{Skip?}
-    D -->|nav/toc/cover| E[Discard]
+    D -->|nav/toc/cover/backmatter| E[Discard]
     D -->|No| F[BeautifulSoup parse]
     F --> G[Pre-check word count]
     G -->|< 50 words| E
@@ -56,7 +56,13 @@ def parse_epub(epub_path: str) -> list[Chapter]
 
 ### Document Filtering
 
-Items are skipped if their filename (case-insensitive) contains any of: `nav`, `toc`, `cover`. Titlepage is intentionally kept — it becomes the audiobook opening.
+HTML documents are processed in EPUB spine order when a spine is available,
+falling back to ebooklib document order otherwise.
+
+Items are skipped if their filename (case-insensitive) contains any of: `nav`,
+`toc`, `cover`, `colophon`, `imprint`, `illustration`, `copyright`,
+`uncopyright`; or if the basename is exactly `loi`. Titlepage is intentionally
+kept — it becomes the audiobook opening.
 
 Word count is checked **before** assigning a chapter number, so filtered items don't cause gaps in numbering or element IDs.
 
@@ -64,6 +70,14 @@ Word count is checked **before** assigning a chapter number, so filtered items d
 
 Only these tags are extracted as content elements:
 `p`, `h1`, `h2`, `h3`, `h4`, `h5`, `h6`, `blockquote`, `li`, `figcaption`
+
+Nested content tags are not extracted twice. If a content tag contains another
+content tag, the outer container is skipped and the inner content tags are
+extracted in document order. This matters for Standard Ebooks structures such
+as `<blockquote><p>...</p></blockquote>`: the poem stanza paragraphs are spoken
+once, not once as the whole blockquote and again as each nested paragraph.
+Container tags such as `blockquote` and `li` are still extracted when they have
+direct text and no nested content tags.
 
 ### HTML Cleaning
 
@@ -82,7 +96,10 @@ An element is `spoken=False` if it or any ancestor has an `epub:type` attribute 
 
 ### Title Extraction
 
-First `h1` found in the document, falling back to `h2`, then `h3`, then `"Chapter N"`. Headings are also stored as the first spoken element of the chapter, so the TTS reads them as the chapter opens.
+First `h1` found in the document, falling back to `h2`, then `h3`, then a
+known frontmatter filename title such as `"Epigraph"`, then `"Chapter N"`.
+Headings are also stored as the first spoken element of the chapter, so the TTS
+reads them as the chapter opens.
 
 ### Heading Normalization for TTS
 

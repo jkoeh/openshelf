@@ -45,10 +45,11 @@ def annotate_epub(epub_path: str, chapters: list[Chapter]) -> bytes
 
 Replays the **exact same** tag-walking and cleanup logic as `epub_parser._extract_content_elements`:
 1. Find all content tags (`p`, `h1`-`h6`, `blockquote`, `li`, `figcaption`)
-2. Decompose `<sup>`, `<sub>` tags
-3. Decompose `<a>` tags with numeric-only content
-4. Skip tags with empty text after cleanup
-5. Assign the next `ContentElement.id` to the tag
+2. Skip outer content containers that contain nested content tags, so text is not duplicated
+3. Decompose `<sup>`, `<sub>` tags
+4. Decompose `<a>` tags with numeric-only content
+5. Skip tags with empty text after cleanup
+6. Assign the next `ContentElement.id` to the tag
 
 This mirror is critical — if the walking order diverges from Step 1, IDs would be misassigned.
 

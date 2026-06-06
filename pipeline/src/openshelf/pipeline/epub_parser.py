@@ -28,11 +28,24 @@ class Chapter:
     epub_item_name: str = ""  # EPUB document item filename (for annotate_epub)
 
 
-_SKIP_PATTERNS = ("nav", "toc", "cover")
+_SKIP_PATTERNS = (
+    "nav",
+    "toc",
+    "cover",
+    "colophon",
+    "imprint",
+    "illustration",
+    "copyright",
+    "uncopyright",
+)
+_SKIP_BASENAMES = {"loi"}
 _MIN_WORD_COUNT = 50
 _CONTENT_TAGS = ("p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "li", "figcaption")
 _HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 _SKIP_EPUB_TYPES = frozenset({"footnote", "endnote", "toc", "pagebreak"})
+_FILENAME_TITLES = {
+    "epigraph": "Epigraph",
+}
 
 _ROMAN_VALUES = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
 
@@ -99,14 +112,58 @@ def normalize_heading_for_tts(text: str) -> str:
 
 def _should_skip(filename: str) -> bool:
     name_lower = filename.lower()
-    return any(p in name_lower for p in _SKIP_PATTERNS)
+    stem = name_lower.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    return stem in _SKIP_BASENAMES or any(p in name_lower for p in _SKIP_PATTERNS)
 
 
-def _extract_title(soup: BeautifulSoup, fallback_number: int) -> str:
+def _document_items(book) -> list:
+    """Return document items in EPUB spine order when possible."""
+    items = list(book.get_items_of_type(ebooklib.ITEM_DOCUMENT))
+    spine = getattr(book, "spine", None)
+    if not isinstance(spine, (list, tuple)):
+        return items
+
+    by_name = {item.get_name(): item for item in items}
+    by_id = {}
+    for item in items:
+        try:
+            by_id[item.get_id()] = item
+        except Exception:
+            continue
+
+    ordered = []
+    seen: set[str] = set()
+    for entry in spine:
+        item_id = entry[0] if isinstance(entry, (list, tuple)) else entry
+        item = by_id.get(item_id)
+        if item is None:
+            try:
+                item = book.get_item_with_id(item_id)
+            except Exception:
+                item = None
+        if item is None:
+            continue
+        name = item.get_name()
+        if name in by_name and name not in seen:
+            ordered.append(item)
+            seen.add(name)
+
+    ordered.extend(item for item in items if item.get_name() not in seen)
+    return ordered
+
+
+def _filename_stem(filename: str) -> str:
+    return filename.lower().rsplit("/", 1)[-1].rsplit(".", 1)[0]
+
+
+def _extract_title(soup: BeautifulSoup, fallback_number: int, filename: str = "") -> str:
     for tag in ("h1", "h2", "h3"):
         heading = soup.find(tag)
         if heading:
             return re.sub(r"\s+", " ", heading.get_text(separator=" ")).strip()
+    filename_title = _FILENAME_TITLES.get(_filename_stem(filename))
+    if filename_title:
+        return filename_title
     return f"Chapter {fallback_number}"
 
 
@@ -121,11 +178,23 @@ def _is_spoken(element) -> bool:
     return True
 
 
+def _has_nested_content_tag(tag) -> bool:
+    return tag.find(_CONTENT_TAGS) is not None
+
+
+def iter_content_tags(soup: BeautifulSoup):
+    """Yield content tags without duplicating nested content containers."""
+    for tag in soup.find_all(_CONTENT_TAGS):
+        if _has_nested_content_tag(tag):
+            continue
+        yield tag
+
+
 def _extract_content_elements(soup: BeautifulSoup, chapter_num: int) -> list[ContentElement]:
     elements: list[ContentElement] = []
     idx = 0
 
-    for tag in soup.find_all(_CONTENT_TAGS):
+    for tag in iter_content_tags(soup):
         # Remove footnote markers and numeric anchors from this element's content
         for marker in tag.find_all(["sup", "sub"]):
             marker.decompose()
@@ -160,7 +229,7 @@ def _extract_content_elements(soup: BeautifulSoup, chapter_num: int) -> list[Con
 def _item_word_count(soup: BeautifulSoup) -> int:
     """Quick spoken word count from soup without modifying it (for pre-filter)."""
     words = 0
-    for tag in soup.find_all(_CONTENT_TAGS):
+    for tag in iter_content_tags(soup):
         text = re.sub(r"\s+", " ", tag.get_text()).strip()
         if text and _is_spoken(tag):
             words += len(text.split())
@@ -225,7 +294,7 @@ def _guess_media_type(filename: str) -> str:
 
 def parse_epub(epub_path: str) -> list[Chapter]:
     book = epub.read_epub(epub_path)
-    items = book.get_items_of_type(ebooklib.ITEM_DOCUMENT)
+    items = _document_items(book)
 
     chapters: list[Chapter] = []
     chapter_num = 0
@@ -248,7 +317,7 @@ def parse_epub(epub_path: str) -> list[Chapter]:
         paragraphs = [el.text for el in elements if el.spoken]
         text = "\n\n".join(paragraphs)
         wc = len(text.split())
-        title = _extract_title(soup, chapter_num)
+        title = _extract_title(soup, chapter_num, filename)
 
         chapters.append(Chapter(
             number=chapter_num,

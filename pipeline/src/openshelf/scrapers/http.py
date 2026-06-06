@@ -3,6 +3,7 @@
 import http.cookiejar
 import re
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 
@@ -20,6 +21,28 @@ def sanitize(name):
     s = name.lower().strip()
     s = re.sub(r"[^a-z0-9]+", "-", s)
     return s.strip("-")
+
+
+def normalize_search_text(value: str) -> str:
+    """Normalize loose user/catalog text for search-result filtering."""
+    value = unicodedata.normalize("NFKD", value.casefold())
+    value = "".join(ch for ch in value if not unicodedata.combining(ch))
+    value = re.sub(r"['\u2018\u2019\u02bc]", "", value)
+    value = re.sub(r"[^a-z0-9]+", " ", value)
+    return " ".join(value.split())
+
+
+def matches_filter(filter_value: str | None, candidate: str) -> bool:
+    """Return true when every normalized filter token appears in candidate."""
+    if not filter_value:
+        return True
+    needle = normalize_search_text(filter_value)
+    haystack = normalize_search_text(candidate)
+    if not needle:
+        return True
+    if needle in haystack:
+        return True
+    return all(token in haystack.split() for token in needle.split())
 
 
 def make_request(url, delay=0, accept=None):

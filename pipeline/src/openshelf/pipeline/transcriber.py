@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import string
 from typing import Any
 
 from openshelf.config import WHISPER_MODEL_SIZE
@@ -66,7 +67,10 @@ def compute_wer(reference: str, hypothesis: str) -> float:
     if not reference.strip():
         return 1.0
 
-    import jiwer
+    try:
+        import jiwer
+    except ImportError:
+        return _compute_wer_fallback(reference, hypothesis)
 
     transforms = jiwer.Compose([
         jiwer.ToLowerCase(),
@@ -82,3 +86,30 @@ def compute_wer(reference: str, hypothesis: str) -> float:
         reference_transform=transforms,
         hypothesis_transform=transforms,
     )
+
+
+def _normalize_words(text: str) -> list[str]:
+    table = str.maketrans("", "", string.punctuation)
+    return text.lower().translate(table).split()
+
+
+def _compute_wer_fallback(reference: str, hypothesis: str) -> float:
+    ref_words = _normalize_words(reference)
+    hyp_words = _normalize_words(hypothesis)
+    if not ref_words and not hyp_words:
+        return 0.0
+    if not ref_words:
+        return 1.0
+
+    prev = list(range(len(hyp_words) + 1))
+    for i, ref_word in enumerate(ref_words, start=1):
+        curr = [i]
+        for j, hyp_word in enumerate(hyp_words, start=1):
+            cost = 0 if ref_word == hyp_word else 1
+            curr.append(min(
+                prev[j] + 1,
+                curr[j - 1] + 1,
+                prev[j - 1] + cost,
+            ))
+        prev = curr
+    return prev[-1] / len(ref_words)
