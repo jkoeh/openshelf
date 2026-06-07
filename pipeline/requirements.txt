@@ -2,6 +2,7 @@ ebooklib
 beautifulsoup4
 kokoro
 f5-tts
+chatterbox-tts
 soundfile
 numpy
 boto3

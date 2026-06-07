@@ -15,7 +15,7 @@ flowchart LR
         P1[EPUB] --> P2[parse_epub<br/>chapters + ContentElements]
         P2 --> P3[text_chunker<br/>ChunkInfo per chunk]
         P3 --> P3B[voice_director<br/>registry + speaker spans + engine-aware direction]
-        P3B --> P4[TTSEngine adapter<br/>Kokoro or F5-TTS]
+        P3B --> P4[TTSEngine adapter<br/>Kokoro, F5-TTS, or Chatterbox]
         P4 -->|WAV + chunk_words<br/>+ chunk_audio_starts| P5[encode_to_aac<br/>m4a]
         P3B --> P6A[character_registry.json<br/>voices + aliases]
         P3B --> P6B[voice_direction.json<br/>speaker + performance audit]
@@ -103,7 +103,7 @@ Notes:
 
 OpenShelf separates two orthogonal concepts that used to be conflated:
 
-- **Rendition** is a user-facing artistic identity (a narrator voice + engine). Examples: `kokoro-af-heart`, `kokoro-bf-emma`, `f5tts-custom`. Stable across pipeline changes. The user picks a rendition.
+- **Rendition** is a user-facing artistic identity (a narrator voice + engine). Examples: `kokoro-af-heart`, `kokoro-bf-emma`, `f5tts-custom`, `chatterbox-custom`. Stable across pipeline changes. The user picks a rendition.
 - **Build** is an internal pipeline-output identity. It is a fresh random 16-hex string minted once per pipeline run. The user never sees it.
 
 Storage and HTTP URLs include **both**: `audio/{rendition}/builds/{build}/...` on R2; `?rendition=...&build=...` on every immutable HTTP route. The book-level `manifest.json` is the single mutable pointer that names the `current_build` per rendition. This makes audio + chapter_data + rendition-manifest a coherent atomic snapshot per (rendition, build), so a client can never mix bytes from different builds mid-session.

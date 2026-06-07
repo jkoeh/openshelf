@@ -15,6 +15,10 @@ def create_engine(name: str | None = None, **kwargs) -> TTSEngine:
         from openshelf.pipeline.engines.f5tts import F5TTSAdapter
 
         return F5TTSAdapter(**kwargs)
+    if selected in {"chatterbox", "chatterboxtts"}:
+        from openshelf.pipeline.engines.chatterbox import ChatterboxAdapter
+
+        return ChatterboxAdapter(**kwargs)
     raise ValueError(f"Unsupported TTS engine: {name}")
 
 

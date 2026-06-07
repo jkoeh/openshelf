@@ -237,9 +237,15 @@ Direction is capability-gated:
 
 - Kokoro: casting and structural voice direction only; skip the LLM
   performance/emotion pass; final sync via WhisperX.
-- F5-TTS: `emotion_control=True`; use engine-owned emotion labels and pace mapping.
+- F5-TTS: `emotion_control=True`; use engine-owned emotion labels, optional
+  intensity, pace mapping, and style reference selection.
+- Chatterbox: `emotion_control=True`; use engine-owned emotion labels,
+  optional intensity, pace metadata, and adapter-owned mapping to
+  `exaggeration`/`cfg_weight`.
 
-The LLM returns one annotation per existing segment and must not split segments. Speed labels map deterministically to audiobook-safe values:
+The LLM returns one annotation per existing segment and must not split segments.
+It may include `intensity` as a normalized `0.0`-to-`1.0` hint. Speed labels
+map deterministically to audiobook-safe values:
 
 ```python
 {"slow": 0.85, "normal": 0.95, "fast": 1.05}
@@ -258,6 +264,13 @@ they can suggest breath without creating pasted-clip gaps. Paragraph/chunk
 spacing remains the responsibility of the TTS timing model, not the LLM.
 
 If an engine uses paralinguistic markers, the engine prompt config owns the marker format and injection rules. Inline marker text is allowed only for engines with tested support that guarantees markers are not spoken. F5-TTS uses metadata labels, not inline markers.
+
+Engine adapters may translate generic direction into engine-specific controls.
+F5-TTS maps `emotion` to same-voice style/reference clips where available.
+Chatterbox maps `emotion` plus `intensity` to its documented expression
+controls (`exaggeration` and `cfg_weight`). These controls are serialized in
+`voice_direction.json` under `engine_controls` for audit and must not be
+serialized into `chapter_data.json`.
 
 On any direction failure, return the original segments unchanged.
 
@@ -310,6 +323,11 @@ The final aggregate shape is:
               "original_text": "Alice was beginning...",
               "synthesis_text": "Alice was beginning...",
               "emotion": "gentle",
+              "engine_controls": {
+                "intensity": 0.35,
+                "exaggeration": 0.55,
+                "cfg_weight": 0.5
+              },
               "speed": 1.0,
               "pause_after_ms": 0,
               "delivery_type": "narration",

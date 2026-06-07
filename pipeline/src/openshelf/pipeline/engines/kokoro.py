@@ -119,6 +119,9 @@ class KokoroAdapter:
     def available_voices(self) -> list[VoiceSpec]:
         return list(KOKORO_VOICES)
 
+    def apply_performance_controls(self, segment: DirectedSegment) -> DirectedSegment:
+        return segment
+
     def synthesize(self, segment: DirectedSegment) -> TTSResult:
         from openshelf.pipeline.tts import _extract_words
 

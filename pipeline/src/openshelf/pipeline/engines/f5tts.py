@@ -7,7 +7,7 @@ auditable local build inputs, not public R2 artifacts.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import re
 
@@ -34,6 +34,26 @@ DEFAULT_REF_TEXT = (
     "The speaker reads clearly, with steady pacing, natural pauses, and a "
     "neutral expressive tone."
 )
+
+F5_EMOTION_VOCABULARY = [
+    "neutral",
+    "happy",
+    "sad",
+    "angry",
+    "anxious",
+    "surprised",
+    "amused",
+]
+
+STYLE_REF_TEXTS = {
+    "neutral": DEFAULT_REF_TEXT,
+    "happy": "OpenShelf presents this bright reference passage with a warm smile and buoyant energy.",
+    "sad": "OpenShelf presents this quiet reference passage with restrained sorrow and reflective pauses.",
+    "angry": "OpenShelf presents this tense reference passage with controlled force and clipped emphasis.",
+    "anxious": "OpenShelf presents this uneasy reference passage with nervous urgency and careful breaths.",
+    "surprised": "OpenShelf presents this startled reference passage with lifted energy and alert phrasing.",
+    "amused": "OpenShelf presents this amused reference passage with playful warmth and a light smile.",
+}
 
 
 @dataclass(frozen=True)
@@ -192,15 +212,7 @@ class F5TTSAdapter:
 
     def emotion_prompt_config(self) -> EmotionPromptConfig:
         return EmotionPromptConfig(
-            emotion_vocabulary=[
-                "neutral",
-                "happy",
-                "sad",
-                "angry",
-                "anxious",
-                "surprised",
-                "amused",
-            ],
+            emotion_vocabulary=list(F5_EMOTION_VOCABULARY),
             marker_format=None,
             injection_rules=(
                 "Label each speech segment with one emotion. Narrator is "
@@ -221,12 +233,30 @@ class F5TTSAdapter:
         voices: list[VoiceSpec] = []
         for kokoro_voice in KOKORO_VOICES:
             preset = _kokoro_preset(kokoro_voice)
+            style_paths = self._style_ref_audio_paths(preset)
             voices.append(VoiceSpec(
                 id=_f5_voice_id(preset),
                 ref_audio_path=str(self.voice_dir / f"{preset}.wav"),
                 ref_text=DEFAULT_REF_TEXT,
+                style_ref_audio_paths=style_paths,
+                style_ref_texts={
+                    style: STYLE_REF_TEXTS[style]
+                    for style in style_paths
+                    if style in STYLE_REF_TEXTS
+                },
             ))
         return voices
+
+    def _style_ref_audio_paths(self, preset: str) -> dict[str, str]:
+        refs: dict[str, str] = {"neutral": str(self.voice_dir / f"{preset}.wav")}
+        for emotion in F5_EMOTION_VOCABULARY:
+            nested = self.voice_dir / preset / f"{emotion}.wav"
+            flat = self.voice_dir / f"{preset}-{emotion}.wav"
+            if nested.exists():
+                refs[emotion] = str(nested)
+            elif flat.exists():
+                refs[emotion] = str(flat)
+        return refs
 
     def _runtime(self):
         if self._f5tts is None:
@@ -240,14 +270,37 @@ class F5TTSAdapter:
             self._f5tts = F5TTS(model=self.model, device=self.device)
         return self._f5tts
 
+    def _styled_voice(self, segment: DirectedSegment) -> tuple[VoiceSpec, str]:
+        emotion = segment.emotion or "neutral"
+        if emotion not in F5_EMOTION_VOCABULARY:
+            emotion = "neutral"
+        audio_paths = segment.voice.style_ref_audio_paths or {}
+        text_by_style = segment.voice.style_ref_texts or {}
+        style = emotion if emotion in audio_paths and Path(audio_paths[emotion]).exists() else "neutral"
+        ref_audio = audio_paths.get(style) or segment.voice.ref_audio_path
+        ref_text = text_by_style.get(style) or segment.voice.ref_text
+        return replace(segment.voice, ref_audio_path=ref_audio, ref_text=ref_text), style
+
+    def apply_performance_controls(self, segment: DirectedSegment) -> DirectedSegment:
+        _, style = self._styled_voice(segment)
+        return replace(
+            segment,
+            engine_controls={
+                **segment.engine_controls,
+                "style_ref": style,
+            },
+        )
+
     def synthesize(self, segment: DirectedSegment) -> TTSResult:
-        ref_audio = segment.voice.ref_audio_path
+        segment = self.apply_performance_controls(segment)
+        voice, _style = self._styled_voice(segment)
+        ref_audio = voice.ref_audio_path
         if not ref_audio:
             raise ValueError(f"F5-TTS voice {segment.voice.id!r} requires reference audio")
         if not Path(ref_audio).exists():
             raise FileNotFoundError(f"F5-TTS reference audio not found: {ref_audio}")
 
-        ref_text = segment.voice.ref_text
+        ref_text = voice.ref_text
         if not ref_text:
             raise ValueError(f"F5-TTS voice {segment.voice.id!r} requires reference text")
 

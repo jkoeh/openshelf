@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
     "kokoro",
     "f5-tts",
+    "chatterbox-tts",
     "soundfile",
     "numpy",
     "pydub",

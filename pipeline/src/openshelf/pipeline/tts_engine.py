@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from dataclasses import dataclass, field
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -31,6 +31,8 @@ class VoiceSpec:
     preset_name: str | None = None
     ref_audio_path: str | None = None
     ref_text: str | None = None
+    style_ref_audio_paths: dict[str, str] = field(default_factory=dict)
+    style_ref_texts: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -45,6 +47,7 @@ class DirectedSegment:
     delivery_type: str = "narration"
     voice_policy: str = "narrator"
     join_policy: str = "normal"
+    engine_controls: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -95,6 +98,8 @@ class TTSEngine(Protocol):
     def post_processing_config(self) -> PostProcessingConfig: ...
 
     def available_voices(self) -> list[VoiceSpec]: ...
+
+    def apply_performance_controls(self, segment: DirectedSegment) -> DirectedSegment: ...
 
     def synthesize(self, segment: DirectedSegment) -> TTSResult: ...
 

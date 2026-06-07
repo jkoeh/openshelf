@@ -262,6 +262,7 @@ EMOTION_SCHEMA = {
                     "index": {"type": "integer"},
                     "emotion": {"type": "string"},
                     "speed": {"type": "string"},
+                    "intensity": {"type": "number"},
                     "synthesis_text": {"type": "string"},
                     "pause_after_ms": {"type": "integer"},
                 },
@@ -323,6 +324,18 @@ def _directed_speed(speed_label: str, segment: DirectedSegment) -> float:
     if word_count > NARRATOR_LONG_SEGMENT_WORDS:
         return min(speed, SPEED_MAP["normal"])
     return min(speed, NARRATOR_MAX_SPEED)
+
+
+def _directed_intensity(value: Any) -> float:
+    if value is None:
+        return 0.5
+    try:
+        intensity = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("intensity must be numeric") from None
+    if intensity < 0.0 or intensity > 1.0:
+        raise ValueError("intensity out of supported range")
+    return intensity
 
 
 def _directed_pause_after_ms(value: Any, segment: DirectedSegment) -> int:
@@ -1663,6 +1676,7 @@ def add_emotion_direction(
             speed_label = str(item.get("speed", "normal"))
             if speed_label not in SPEED_MAP:
                 raise ValueError("speed label is not supported")
+            intensity = _directed_intensity(item.get("intensity"))
             text = updated[index].text
             synthesis_text = item.get("synthesis_text")
             if isinstance(synthesis_text, str) and synthesis_text.strip():
@@ -1681,6 +1695,10 @@ def add_emotion_direction(
                 speed=_directed_speed(speed_label, updated[index]),
                 pause_after_ms=pause_after_ms,
                 original_text=updated[index].original_text or updated[index].text,
+                engine_controls={
+                    **updated[index].engine_controls,
+                    "intensity": intensity,
+                },
             )
         return updated
     except Exception:
@@ -1748,7 +1766,11 @@ class AudioDirector:
         emotion_cfg = self.engine.emotion_prompt_config()
         if emotion_cfg is None:
             return segments
-        return add_emotion_direction(segments, window, self.llm, emotion_cfg)
+        directed = add_emotion_direction(segments, window, self.llm, emotion_cfg)
+        apply_controls = getattr(self.engine, "apply_performance_controls", None)
+        if callable(apply_controls):
+            return [apply_controls(segment) for segment in directed]
+        return directed
 
     def _solo_segments(
         self,

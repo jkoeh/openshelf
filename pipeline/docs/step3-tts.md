@@ -45,6 +45,11 @@ registry prompt preserves Kokoro's qualitative casting guidance so narrator and
 character selection behaves the same way, but the selected F5 voice clones a
 local reference clip instead of calling Kokoro at synthesis time.
 
+Chatterbox is a zero-shot voice-cloning adapter with expression controls. It
+uses local reference clips, maps generic direction to the upstream
+`exaggeration` and `cfg_weight` controls, returns `words=None`, and relies on
+WhisperX for final sync.
+
 F5 reference clips are generated locally from Kokoro with:
 
 ```bash
@@ -61,12 +66,30 @@ F5-TTS synthesis uses the official `f5_tts.api.F5TTS` Python API lazily at the
 first synthesis call. `F5TTSAdapter.synthesize(...)` passes the selected
 `VoiceSpec.ref_audio_path` as `ref_file`, `VoiceSpec.ref_text` as `ref_text`,
 the sanitized segment text as `gen_text`, and the directed numeric speed as
-`speed`. It returns the generated waveform and sample rate as `TTSResult` with
-`words=None`; WhisperX remains the final sync source. The adapter must raise a
-clear error before model load when the selected voice has no reference audio or
-the reference WAV is missing, and it must raise an install-oriented error if the
+`speed`. When `segment.emotion` has a matching style reference for that voice,
+the adapter uses the style reference clip and records `style_ref` in
+`engine_controls`; otherwise it falls back to the neutral/base reference. It
+returns the generated waveform and sample rate as `TTSResult` with `words=None`;
+WhisperX remains the final sync source. The adapter must raise a clear error
+before model load when the selected voice has no reference audio or the
+reference WAV is missing, and it must raise an install-oriented error if the
 `f5-tts` package is unavailable. Tests inject a fake F5 runtime object so unit
 tests never download models.
+
+F5 style clips are optional local inputs. The adapter recognizes
+`pipeline/voices/f5tts/{preset}/{emotion}.wav` and
+`pipeline/voices/f5tts/{preset}-{emotion}.wav`; missing style clips fall back
+to the base `{preset}.wav`.
+
+Chatterbox synthesis uses `chatterbox.tts.ChatterboxTTS` lazily at the first
+synthesis call. `ChatterboxAdapter.synthesize(...)` passes the sanitized segment
+text as `text`, the selected `VoiceSpec.ref_audio_path` as `audio_prompt_path`,
+and adapter-owned expression controls as `exaggeration` and `cfg_weight`.
+Chatterbox output is watermarked by the upstream model when `perth` exposes its
+implicit watermarker. On Windows installs where the optional compiled
+watermarker is unavailable, the adapter substitutes `perth.DummyWatermarker`
+before model construction so local generation can still run. Either way,
+WhisperX remains the final sync source before serialization.
 
 ## Dataclasses
 
@@ -88,6 +111,29 @@ class TTSResult:
     audio: np.ndarray
     sample_rate: int
     words: list[WordTimestamp] | None
+
+@dataclass
+class VoiceSpec:
+    id: str
+    preset_name: str | None = None
+    ref_audio_path: str | None = None
+    ref_text: str | None = None
+    style_ref_audio_paths: dict[str, str] = field(default_factory=dict)
+    style_ref_texts: dict[str, str] = field(default_factory=dict)
+
+@dataclass
+class DirectedSegment:
+    text: str
+    voice: VoiceSpec
+    speaker: str
+    emotion: str | None = None
+    speed: float = 1.0
+    pause_after_ms: int = 0
+    original_text: str | None = None
+    delivery_type: str = "narration"
+    voice_policy: str = "narrator"
+    join_policy: str = "normal"
+    engine_controls: dict[str, Any] = field(default_factory=dict)
 
 @dataclass
 class SynthesisResult:

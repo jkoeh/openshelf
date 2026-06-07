@@ -190,6 +190,7 @@ def _directed_segment_to_dict(segment: DirectedSegment) -> dict:
         "delivery_type": segment.delivery_type,
         "voice_policy": segment.voice_policy,
         "join_policy": segment.join_policy,
+        "engine_controls": segment.engine_controls,
     }
 
 

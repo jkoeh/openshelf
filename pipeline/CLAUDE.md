@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Python pipeline that downloads EPUB books, converts them to AI-narrated audio, captures word-level timestamps with WhisperX, and uploads the public artifact contract to Cloudflare R2. Kokoro and F5-TTS sit behind a shared TTS engine adapter. Kokoro can be steered with synthesis-only performance hints, but WhisperX is the canonical sync source for every engine. The LLM voice director chooses a narrator, builds an auditable character registry, labels speakers by character offsets, and adds only engine-supported performance direction.
+Python pipeline that downloads EPUB books, converts them to AI-narrated audio, captures word-level timestamps with WhisperX, and uploads the public artifact contract to Cloudflare R2. Kokoro, F5-TTS, and Chatterbox sit behind a shared TTS engine adapter. Kokoro uses casting and structural direction but skips LLM performance/emotion steering; F5-TTS and Chatterbox can receive engine-supported performance direction. WhisperX is the canonical sync source for every engine. The LLM voice director chooses a narrator, builds an auditable character registry, labels speakers by character offsets, and adds only engine-supported performance direction.
 
 ## Structure
 
@@ -21,8 +21,9 @@ src/openshelf/
     llm.py                  # LLM adapters: stub, replay, recording, Anthropic, OpenAI
     tts_engine.py           # Engine protocols, voice specs, directed segments, aligners
     engines/                # TTSEngine adapters and factories
-      kokoro.py             # Kokoro preset voices + synthesis-only performance steering
+      kokoro.py             # Kokoro preset voices + casting guidance
       f5tts.py              # F5-TTS voice cloning adapter (local reference clips)
+      chatterbox.py         # Chatterbox zero-shot cloning adapter (local reference clips + expression controls)
     tts.py                  # Step 3:  directed segments -> WAV + per-chunk word timestamps
     encoder.py              # Step 4:  WAV -> AAC (.m4a) via ffmpeg
     manifest.py             # Step 5a/c: book + per-build rendition manifests
@@ -51,10 +52,24 @@ tests/
 
 - Python 3.11+
 - Scraper: stdlib only (no pip deps)
-- Pipeline: kokoro, ebooklib, beautifulsoup4, soundfile, numpy, boto3, torch, whisperx
+- Pipeline: kokoro, f5-tts, chatterbox-tts, ebooklib, beautifulsoup4, soundfile, numpy, boto3, torch, whisperx
 - LLM: Anthropic or OpenAI in production, replay/stub clients in tests
 - Audio: AAC 48kbps via ffmpeg (.m4a container)
 - Storage: Cloudflare R2 (S3-compatible)
+
+## Engine Knowledge Base
+
+Before changing a TTS engine, read `docs/engine-knowledge-base.md`. It is the
+progressive-disclosure map for Kokoro, F5-TTS, and Chatterbox support:
+
+- the runtime API each adapter calls
+- voice/reference-clip model
+- capability flags and post-processing config
+- what reaches synthesis versus what stays audit-only in `voice_direction.json`
+- how to keep engine-specific controls out of `chapter_data.json`
+
+Use it as the entry point, then open only the relevant adapter under
+`src/openshelf/pipeline/engines/` and the matching step docs.
 
 ## Commands
 
@@ -84,7 +99,8 @@ python3 pipeline/scripts/process-books.py --epub path/to/book.epub --upload  # l
 #   --source gutenberg|standard-ebooks|all  (default: all)
 #   --upload                  Upload to R2 after conversion
 #   --dry-run                 Download + parse only, no audio generation
-#   --engine kokoro|f5tts     TTS engine (default: TTS_ENGINE)
+#   --engine kokoro|f5tts|chatterbox
+#                              TTS engine (default: TTS_ENGINE)
 #   --voice <id>              Narrator override; skips LLM narrator selection
 #   --device cuda|mps|cpu     (default: auto-detect)
 #   --keep-wav                Keep WAV files after AAC encoding
@@ -128,6 +144,7 @@ python3 pipeline/scripts/test-audio-quality.py --epub <path> --chapters 1-2
 - Pipeline-specific secrets live in `pipeline/.env`; root `.env` remains a fallback. Shell environment variables still win.
 - `character_registry.json` and `voice_direction.json` are immutable per-build artifacts uploaded to R2. `character_registry.json` is intended for future client character editing/features; `voice_direction.json` audits speaker assignments and synthesis-only performance steering.
 - Public output is unchanged for every engine: `.m4a` audio plus `chapter_data.json` with original chunk text and WhisperX word timestamps.
+- TTS engine API notes live in `docs/engine-knowledge-base.md`; update that file before wiring a new engine API or changing an existing adapter's runtime parameters.
 - LLM steering annotations are synthesis-only. They may be passed to a TTS engine, but they must never be serialized into `chapter_data.json` or shown in the reader.
 - `TTS_ENGINE`, `LLM_PROVIDER`, `LLM_MODEL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `VOICES_DIR`, and `REGISTRY_OPENING_CHARS` are owned by `config.py`.
 - `transcriber.compute_wer` prefers `jiwer` when installed and falls back to an internal word-level edit-distance implementation so offline tests do not require dependency installation.

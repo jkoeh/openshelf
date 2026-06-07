@@ -457,6 +457,9 @@ def _synthesize_segments(
         for unit_index, (unit_text, unit_pause_ms) in enumerate(units):
             unit_segment = replace(segment, text=unit_text)
             synth_segment = _segment_for_synthesis(unit_segment)
+            apply_controls = getattr(engine, "apply_performance_controls", None)
+            if callable(apply_controls):
+                synth_segment = apply_controls(synth_segment)
             is_last_unit = unit_index == len(units) - 1
             pause_after_ms = segment.pause_after_ms if is_last_unit else unit_pause_ms
             if not _has_spoken_content(synth_segment.text):

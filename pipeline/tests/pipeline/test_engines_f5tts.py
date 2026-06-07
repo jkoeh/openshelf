@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from pathlib import Path
 
 import numpy as np
 
@@ -150,6 +151,59 @@ class TestF5TTSAdapter(unittest.TestCase):
         self.assertEqual(runtime.calls[0]["speed"], 0.95)
         self.assertEqual(runtime.calls[0]["seed"], 123)
         self.assertFalse(runtime.calls[0]["remove_silence"])
+
+    def test_synthesize_selects_emotion_style_reference_when_available(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            voice_dir = Path(tmp) / "f5tts"
+            style_dir = voice_dir / "af_heart"
+            style_dir.mkdir(parents=True)
+            base_ref = voice_dir / "af_heart.wav"
+            anxious_ref = style_dir / "anxious.wav"
+            base_ref.write_bytes(b"RIFF")
+            anxious_ref.write_bytes(b"RIFF")
+
+            runtime = FakeF5Runtime()
+            engine = F5TTSAdapter(voices_dir=tmp, f5tts=runtime)
+            voice = engine.available_voices()[0]
+            segment = DirectedSegment(
+                text="Oh dear.",
+                original_text="Oh dear.",
+                voice=voice,
+                speaker="narrator",
+                emotion="anxious",
+            )
+
+            directed = engine.apply_performance_controls(segment)
+            result = engine.synthesize(directed)
+
+        self.assertEqual(result.sample_rate, 24000)
+        self.assertEqual(directed.engine_controls["style_ref"], "anxious")
+        self.assertEqual(runtime.calls[0]["ref_file"], str(anxious_ref))
+        self.assertEqual(runtime.calls[0]["ref_text"], "OpenShelf presents this uneasy reference passage with nervous urgency and careful breaths.")
+
+    def test_synthesize_falls_back_to_neutral_reference_for_missing_style(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            voice_dir = Path(tmp) / "f5tts"
+            voice_dir.mkdir(parents=True)
+            base_ref = voice_dir / "af_heart.wav"
+            base_ref.write_bytes(b"RIFF")
+
+            runtime = FakeF5Runtime()
+            engine = F5TTSAdapter(voices_dir=tmp, f5tts=runtime)
+            voice = engine.available_voices()[0]
+            segment = DirectedSegment(
+                text="Oh dear.",
+                original_text="Oh dear.",
+                voice=voice,
+                speaker="narrator",
+                emotion="anxious",
+            )
+
+            directed = engine.apply_performance_controls(segment)
+            engine.synthesize(directed)
+
+        self.assertEqual(directed.engine_controls["style_ref"], "neutral")
+        self.assertEqual(runtime.calls[0]["ref_file"], str(base_ref))
 
     def test_synthesize_rejects_missing_reference_audio_before_model_load(self):
         runtime = FakeF5Runtime()
