@@ -63,6 +63,13 @@ from openshelf.pipeline.manifest import (
     generate_rendition_manifest,
     merge_book_manifest,
 )
+from openshelf.pipeline.run_context import (
+    RunContextError,
+    make_run_context,
+    prepare_run_context,
+    run_context_path as build_run_context_path,
+    validate_build_id,
+)
 from openshelf.pipeline.text_chunker import chunk_text
 from openshelf.pipeline.tts import ChunkInfo, WordTimestamp, load_pipeline, synthesize_chapter
 from openshelf.pipeline.tts_engine import DirectedSegment, VoiceSpec
@@ -335,10 +342,12 @@ def main() -> None:
     parser.add_argument("--keep-wav", action="store_true", help="Keep WAV files after encoding")
     parser.add_argument("--upload", action="store_true", help="Upload to Cloudflare R2 after conversion")
     parser.add_argument("--log-dir", default="logs", help="Local log directory (default: logs/)")
+    parser.add_argument("--build-id", default=None, help="Target 16-hex build ID for resume/force runs")
+    parser.add_argument("--resume", action="store_true", help="Resume an existing build only if run.json matches")
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Regenerate audio, chapter_data, and manifests under a fresh build prefix",
+        help="Overwrite artifacts in the selected build prefix",
     )
     args = parser.parse_args()
     try:
@@ -351,8 +360,13 @@ def main() -> None:
     if not os.path.isfile(args.epub):
         print(f"Error: {args.epub} not found")
         sys.exit(1)
+    if args.resume and not args.build_id:
+        parser.error("--resume requires --build-id")
 
-    build_id = new_build_id()
+    try:
+        build_id = validate_build_id(args.build_id) if args.build_id else new_build_id()
+    except RunContextError as e:
+        parser.error(str(e))
     epub_stem = sanitize(os.path.splitext(os.path.basename(args.epub))[0])
     log_path = configure_pipeline_logging(f"convert-book-{epub_stem}-{build_id}", args.log_dir)
     print(f"Log file: {log_path}")
@@ -455,12 +469,43 @@ def main() -> None:
         language=TTS_LANGUAGE,
         opening_text=_opening_text(chunked_chapters, REGISTRY_OPENING_CHARS),
     )
-    with Heartbeat(logger, "Building character registry with LLM"):
+    registry_label = (
+        "Building narrator-only character registry"
+        if narrator_override is not None
+        else "Building character registry with LLM"
+    )
+    with Heartbeat(logger, registry_label):
         registry = director.build_registry(book_ctx, narrator_voice_override=narrator_override)
     narrator_voice = registry.narrator_voice
     narrator_voice_id = _voice_id_for_manifest(narrator_voice)
     rendition = args.rendition or _derive_rendition(engine.name, narrator_voice)
     build_dir = os.path.join(book_dir, "audio", rendition, "builds", build_id)
+    selected_chapter_numbers = [ch_data["number"] for ch_data in generation_chapters]
+    run_context = make_run_context(
+        build=build_id,
+        pipeline_version=PIPELINE_VERSION,
+        epub_path=args.epub,
+        author_slug=author_slug,
+        title_slug=title_slug,
+        book_author=book_author,
+        book_title=book_title,
+        engine=engine.name,
+        voice=narrator_voice_id,
+        rendition=rendition,
+        cast_mode=args.cast_mode,
+        language=TTS_LANGUAGE,
+        chapters=selected_chapter_numbers,
+    )
+    run_context_path = build_run_context_path(build_dir)
+    try:
+        prepare_run_context(
+            run_context_path,
+            run_context,
+            resume=args.resume,
+            force=args.force,
+        )
+    except RunContextError as e:
+        parser.error(str(e))
     logger.info(
         "Registry built narrator=%s characters=%d rendition=%s",
         narrator_voice_id,
@@ -472,6 +517,7 @@ def main() -> None:
     print(f"Cast mode:   {args.cast_mode}")
     print(f"R2 prefix:   books/{author_slug}/{title_slug}/audio/{rendition}/builds/{build_id}/")
     print(f"Local:       {os.path.abspath(build_dir)}/")
+    print(f"Run context: {run_context_path}")
     director.build_dir = Path(build_dir)
 
     # Annotated EPUB (book-level, immutable, no rendition/build scope)
@@ -743,6 +789,7 @@ def main() -> None:
                 rendition_manifest_path=rendition_manifest_path,
                 character_registry_path=character_registry_path,
                 voice_direction_path=voice_direction_path,
+                run_context_path=run_context_path,
                 force=args.force,
             )
 

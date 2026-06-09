@@ -148,6 +148,32 @@ class TestAudioDirector(unittest.TestCase):
             self.assertIn("Sherlock Holmes", payload["characters"])
             self.assertEqual(registry.characters["Sherlock Holmes"].voice.id, "holmes")
 
+    def test_voice_override_skips_registry_llm(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            llm = StubLLM([])
+            director = AudioDirector(FakeEngine(), llm, NullAligner(), build_dir=tmp)
+            voice = VoiceSpec(id="narrator", preset_name="af_heart")
+
+            registry = director.build_registry(
+                BookContext(
+                    title="Test",
+                    author="Author",
+                    language="en",
+                    opening_text='"Come," said Holmes.',
+                ),
+                narrator_voice_override=voice,
+            )
+
+            path = os.path.join(tmp, "character_registry.json")
+            self.assertTrue(os.path.exists(path))
+            with open(path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            self.assertEqual(len(llm.calls), 0)
+            self.assertEqual(registry.narrator_voice.id, "narrator")
+            self.assertEqual(registry.characters, {})
+            self.assertEqual(payload["narrator_voice"]["id"], "narrator")
+            self.assertEqual(payload["characters"], {})
+
     def test_fallback_on_llm_error(self):
         text = '"Come," said Holmes.'
         director = AudioDirector(

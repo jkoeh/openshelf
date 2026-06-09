@@ -64,6 +64,13 @@ Items are skipped if their filename (case-insensitive) contains any of: `nav`,
 `uncopyright`; or if the basename is exactly `loi`. Titlepage is intentionally
 kept — it becomes the audiobook opening.
 
+Project Gutenberg legal boilerplate is also skipped even when it appears as a
+long spine document that would otherwise pass the word-count filter. A document
+is treated as boilerplate when its extracted text contains `project gutenberg`
+plus a legal marker such as `license`, `start of the project gutenberg ebook`,
+or `end of the project gutenberg ebook`. This keeps the audiobook content to
+the book itself while preserving the unmodified source EPUB upload.
+
 Word count is checked **before** assigning a chapter number, so filtered items don't cause gaps in numbering or element IDs.
 
 ### Content Tags

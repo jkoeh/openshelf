@@ -103,6 +103,12 @@ class TestBuildScopedKeys(unittest.TestCase):
             "books/franz-kafka/the-metamorphosis/audio/kokoro-af-heart/builds/2a4f9c1/voice_direction.json",
         )
 
+    def test_run_context_key(self):
+        self.assertEqual(
+            r2_keys.run_context_key(AUTHOR, TITLE, RENDITION, BUILD),
+            "books/franz-kafka/the-metamorphosis/audio/kokoro-af-heart/builds/2a4f9c1/run.json",
+        )
+
     def test_rendition_manifest_key(self):
         self.assertEqual(
             r2_keys.rendition_manifest_key(AUTHOR, TITLE, RENDITION, BUILD),
@@ -140,6 +146,9 @@ class TestRoutingThroughBookPrefix(unittest.TestCase):
 
     def test_voice_direction_under_prefix(self):
         self._starts_with_book_prefix(r2_keys.voice_direction_key(AUTHOR, TITLE, RENDITION, BUILD))
+
+    def test_run_context_under_prefix(self):
+        self._starts_with_book_prefix(r2_keys.run_context_key(AUTHOR, TITLE, RENDITION, BUILD))
 
     def test_rendition_manifest_under_prefix(self):
         self._starts_with_book_prefix(r2_keys.rendition_manifest_key(AUTHOR, TITLE, RENDITION, BUILD))

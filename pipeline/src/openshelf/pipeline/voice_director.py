@@ -1173,6 +1173,12 @@ def build_character_registry(
     voice_pool: list[VoiceSpec],
     narrator_voice_override: VoiceSpec | None = None,
 ) -> CharacterRegistry:
+    if narrator_voice_override is not None:
+        return CharacterRegistry(
+            narrator_voice=narrator_voice_override,
+            characters={},
+        )
+
     if not voice_pool and narrator_voice_override is None:
         raise ValueError("voice pool must not be empty")
 

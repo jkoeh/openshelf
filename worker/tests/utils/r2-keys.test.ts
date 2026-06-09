@@ -28,6 +28,9 @@ describe("r2Key", () => {
 		expect(r2Key.chapterData(AUTHOR, TITLE, RENDITION, BUILD)).toBe(
 			"books/franz-kafka/the-metamorphosis/audio/kokoro-af-heart/builds/2a4f9c1b3d8e7f60/chapter_data.json",
 		);
+		expect(r2Key.runContext(AUTHOR, TITLE, RENDITION, BUILD)).toBe(
+			"books/franz-kafka/the-metamorphosis/audio/kokoro-af-heart/builds/2a4f9c1b3d8e7f60/run.json",
+		);
 		expect(r2Key.renditionManifest(AUTHOR, TITLE, RENDITION, BUILD)).toBe(
 			"books/franz-kafka/the-metamorphosis/audio/kokoro-af-heart/builds/2a4f9c1b3d8e7f60/rendition-manifest.json",
 		);

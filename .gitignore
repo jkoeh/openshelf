@@ -44,3 +44,4 @@ worker/.wrangler/
 client/node_modules/
 client/.expo/
 client/dist/
+*.log

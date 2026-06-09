@@ -60,7 +60,7 @@ def generate_rendition_manifest(
 
 | Field | Source |
 |---|---|
-| `build` | `new_build_id()` output (16-hex random) |
+| `build` | 16-hex build ID from `new_build_id()` by default, or `--build-id` when resuming a targeted build |
 | `rendition`, `voice`, `engine` | CLI / config |
 | `pipeline_version` | `config.PIPELINE_VERSION` |
 | `total_duration_seconds` | Sum of chapter durations |
@@ -73,7 +73,11 @@ There is intentionally no `generated_at` field. Wall-clock metadata belongs on t
 
 ### Idempotency
 
-Like every per-build artifact, this file is written once into a build-versioned R2 path. Because each pipeline run mints a new `build_id`, the upload is gated solely on resuming a partial same-run upload (manifest-last single-gate). A `--force` reprocess produces a fresh build with a fresh ID and uploads under a new prefix.
+Like every per-build artifact, this file is written into a build-versioned R2
+path. Default reprocesses mint a fresh build ID and upload under a new prefix.
+Explicit `--build-id --resume` runs may reuse a local build prefix only when
+`run.json` matches; R2 upload is still gated by the manifest-last single-gate
+strategy.
 
 ### Worker usage
 

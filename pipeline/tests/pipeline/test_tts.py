@@ -736,7 +736,7 @@ class TestSynthesizeChapterWords(unittest.TestCase):
         self.assertEqual(aligner.texts, ["yes"])
 
     @patch("openshelf.pipeline.tts.sf.write")
-    def test_internal_heading_breaks_insert_controlled_silence(self, mock_sf_write):
+    def test_internal_heading_breaks_merge_into_opening_unit(self, mock_sf_write):
         def make_iter(text, voice=None):
             return iter([_FakeResult("g", "p", _fake_audio(1000), [
                 _FakeToken("Down", 0.0, 0.1),
@@ -749,11 +749,10 @@ class TestSynthesizeChapterWords(unittest.TestCase):
 
         self.assertEqual(
             [call.args[0] for call in pipeline.call_args_list],
-            ["Chapter 6.", "Pig and Pepper", "For a minute."],
+            ["Chapter 6. Pig and Pepper. For a minute."],
         )
         written = mock_sf_write.call_args[0][1]
-        internal_gap = int(TTS_SAMPLE_RATE * SILENCE_INTERNAL_PARAGRAPH_BREAK_MS / 1000)
-        self.assertEqual(len(written), _LEAD_IN_SAMPLES + 3000 + internal_gap * 2)
+        self.assertEqual(len(written), _LEAD_IN_SAMPLES + 1000)
 
     @patch("openshelf.pipeline.tts.sf.write")
     def test_internal_paragraph_break_in_chunk_inserts_controlled_silence(self, mock_sf_write):
@@ -876,6 +875,7 @@ class TestSynthesizeChapterWords(unittest.TestCase):
         self.assertGreaterEqual(words[1].start, words[0].end)
         self.assertGreater(words[1].end, words[1].start)
 
+    @patch.dict(os.environ, {"OPENSHELF_TTS_ROLLING_CONTEXT": "1"})
     @patch("openshelf.pipeline.tts.sf.write")
     def test_rolling_context_is_synthesized_and_trimmed(self, mock_sf_write):
         class FakeEngine:

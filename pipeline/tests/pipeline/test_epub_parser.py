@@ -284,6 +284,27 @@ class TestParseEpubFiltering(unittest.TestCase):
         self.assertEqual(chapters[0].number, 1)
         self.assertEqual(chapters[1].number, 2)
 
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_skips_project_gutenberg_license_document(self, mock_read):
+        license_words = " ".join(f"license{i}" for i in range(80))
+        items = [
+            _make_item("chapter-1.xhtml", _chapter_html("h2", "I", 60)),
+            _make_item(
+                "license.xhtml",
+                (
+                    "<html><body><h1>THE FULL PROJECT GUTENBERG LICENSE</h1>"
+                    f"<p>Project Gutenberg License {license_words}</p></body></html>"
+                ),
+            ),
+        ]
+        mock_read.return_value = _make_book(items)
+
+        chapters = parse_epub("f.epub")
+
+        self.assertEqual(len(chapters), 1)
+        self.assertEqual(chapters[0].number, 1)
+        self.assertEqual(chapters[0].title, "I")
+
 
 class TestParseEpubHtmlCleaning(unittest.TestCase):
 

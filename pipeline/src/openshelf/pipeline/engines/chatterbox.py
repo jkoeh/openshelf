@@ -209,6 +209,7 @@ class ChatterboxAdapter:
             raise FileNotFoundError(f"Chatterbox reference audio not found: {ref_audio}")
 
         controls = self._controls_for_segment(segment)
+        _patch_chatterbox_progress_bars()
         wav = self._runtime().generate(
             text=segment.text,
             audio_prompt_path=ref_audio,
@@ -227,6 +228,24 @@ def _to_numpy_audio(wav: Any) -> np.ndarray:
         wav = wav.detach().cpu().numpy()
     audio = np.asarray(wav, dtype=np.float32)
     return np.squeeze(audio)
+
+
+def _quiet_tqdm(iterable: Any = None, *args: Any, **kwargs: Any) -> Any:
+    return iterable if iterable is not None else ()
+
+
+def _patch_chatterbox_progress_bars() -> None:
+    module_names = [
+        "chatterbox.models.t3.t3",
+        "chatterbox.models.s3gen.flow_matching",
+    ]
+    for module_name in module_names:
+        try:
+            module = __import__(module_name, fromlist=["tqdm"])
+        except ImportError:
+            continue
+        if hasattr(module, "tqdm"):
+            module.tqdm = _quiet_tqdm
 
 
 def _patch_missing_perth_watermarker() -> None:

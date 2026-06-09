@@ -79,6 +79,7 @@ def upload_rendition_build(
     rendition_manifest_path: str,
     character_registry_path: str | None = None,
     voice_direction_path: str | None = None,
+    run_context_path: str | None = None,
     force: bool = False,
 ) -> list[str]:
     """Upload every per-build artifact for one (rendition, build).
@@ -159,6 +160,20 @@ def upload_rendition_build(
         )
         logger.info("Uploaded: %s", direction_key)
         uploaded.append(direction_key)
+
+    if run_context_path and os.path.exists(run_context_path):
+        run_key = r2_keys.run_context_key(author_slug, title_slug, rendition, build_id)
+        client.upload_file(
+            run_context_path,
+            bucket,
+            run_key,
+            ExtraArgs={
+                "ContentType": "application/json",
+                "CacheControl": R2_CACHE_CONTROL_IMMUTABLE,
+            },
+        )
+        logger.info("Uploaded: %s", run_key)
+        uploaded.append(run_key)
 
     # 4. rendition-manifest.json LAST: completion signal.
     client.upload_file(

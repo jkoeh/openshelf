@@ -6,6 +6,7 @@ import dataclasses
 import json
 import logging
 import os
+import math
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -111,6 +112,19 @@ def align_chapter(
         List of WordEntry with word timestamps and chunk_idx.
         Returns empty list on failure (graceful degradation).
     """
+    if not any(start_s >= 0.0 for start_s in chunk_audio_starts):
+        return []
+
+    import whisperx  # lazy import — heavy dep; ImportError means it's not installed
+
+    try:
+        audio = whisperx.load_audio(audio_path)
+        # WhisperX load_audio returns 16kHz mono samples.
+        audio_duration_s = len(audio) / 16000
+    except Exception:
+        logger.exception("WhisperX alignment failed for %s", audio_path)
+        return []
+
     # Build segments from known chunk start times (skip failed chunks).
     # Split each chunk into sentences for better WhisperX alignment accuracy.
     segments = []
@@ -119,6 +133,11 @@ def align_chapter(
         if start_s < 0.0:
             continue
         end_s = _next_start(chunk_audio_starts, i)
+        if math.isinf(end_s):
+            end_s = audio_duration_s
+        end_s = min(end_s, audio_duration_s)
+        if end_s <= start_s:
+            continue
         # Split chunk into sentences; distribute time proportionally by word count
         sentences = _split_into_sentences(text)
         if len(sentences) <= 1:
@@ -139,27 +158,7 @@ def align_chapter(
     if not segments:
         return []
 
-    import whisperx  # lazy import — heavy dep; ImportError means it's not installed
-
     try:
-        audio = whisperx.load_audio(audio_path)
-
-        # Cap segment times to actual audio duration (WhisperX resamples to 16kHz).
-        # Drop segments that start beyond the audio and clamp end times.
-        audio_duration_s = len(audio) / 16000
-        valid = [(seg, cidx) for seg, cidx in zip(segments, chunk_idx_map)
-                 if seg["start"] < audio_duration_s]
-        if valid:
-            segments, chunk_idx_map = zip(*valid)
-            segments = list(segments)
-            chunk_idx_map = list(chunk_idx_map)
-        else:
-            segments = []
-            chunk_idx_map = []
-        for seg in segments:
-            if seg["end"] > audio_duration_s:
-                seg["end"] = audio_duration_s
-
         model_a, metadata = whisperx.load_align_model(language_code=language, device=device)
         result = whisperx.align(segments, model_a, metadata, audio, device)
     except Exception:

@@ -55,6 +55,12 @@ def _make_direction_artifacts(tmp_dir: str) -> tuple[str, str]:
     return character_registry_path, voice_direction_path
 
 
+def _make_run_context(tmp_dir: str) -> str:
+    run_context_path = os.path.join(tmp_dir, "run.json")
+    open(run_context_path, "w").close()
+    return run_context_path
+
+
 # ---------------------------------------------------------------------------
 # make_client / key_exists — basic plumbing
 # ---------------------------------------------------------------------------
@@ -210,6 +216,23 @@ class TestUploadRenditionBuildKeys(unittest.TestCase):
             keys,
         )
         self.assertEqual(client.upload_file.call_count, 5)
+
+    @patch("openshelf.pipeline.r2.key_exists", return_value=False)
+    def test_uploads_run_context_when_provided(self, _exists):
+        client = MagicMock()
+        with tempfile.TemporaryDirectory() as tmp:
+            audio_dir, cd, rm = _make_build_dir(tmp, n_chapters=1)
+            run_context = _make_run_context(tmp)
+            keys = upload_rendition_build(
+                client, BUCKET, AUTHOR, TITLE, RENDITION, BUILD,
+                audio_dir, cd, rm,
+                run_context_path=run_context,
+            )
+        self.assertIn(
+            "books/kafka/the-trial/audio/kokoro-af-heart/builds/2a4f9c1/run.json",
+            keys,
+        )
+        self.assertEqual(client.upload_file.call_count, 4)
 
 
 class TestUploadRenditionBuildOrdering(unittest.TestCase):

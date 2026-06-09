@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 from openshelf.pipeline.engines import create_engine  # noqa: E402
 from openshelf.pipeline.engines.chatterbox import (  # noqa: E402
     ChatterboxAdapter,
+    _patch_chatterbox_progress_bars,
     _patch_missing_perth_watermarker,
 )
 from openshelf.pipeline.tts_engine import DirectedSegment, VoiceSpec  # noqa: E402
@@ -107,6 +108,22 @@ class TestChatterboxAdapter(unittest.TestCase):
             _patch_missing_perth_watermarker()
 
         self.assertIs(fake_perth.PerthImplicitWatermarker, DummyWatermarker)
+
+    def test_patches_chatterbox_progress_bars(self):
+        def noisy_tqdm(iterable, *args, **kwargs):
+            raise OSError("bad stderr")
+
+        fake_t3 = types.SimpleNamespace(tqdm=noisy_tqdm)
+        fake_flow = types.SimpleNamespace(tqdm=noisy_tqdm)
+
+        with mock.patch.dict(sys.modules, {
+            "chatterbox.models.t3.t3": fake_t3,
+            "chatterbox.models.s3gen.flow_matching": fake_flow,
+        }):
+            _patch_chatterbox_progress_bars()
+
+        self.assertEqual(list(fake_t3.tqdm(range(3))), [0, 1, 2])
+        self.assertEqual(list(fake_flow.tqdm(range(2))), [0, 1])
 
 
 if __name__ == "__main__":

@@ -23,6 +23,7 @@ flowchart LR
         P5 --> P7[rendition-manifest.json<br/>per-build chapter list]
         P2 --> P8[annotated EPUB<br/>+ cover]
         P9[new_build_id<br/>fresh random 16-hex per run] --> P5
+        P9 --> P0[run.json<br/>per-build resume context]
         P9 --> P6
         P9 --> P7
         P7 --> P10[book manifest.json<br/>renditions[].current_build]
@@ -35,6 +36,7 @@ flowchart LR
         R_BOOKMAN[manifest.json<br/>book-level pointer · MUTABLE]
         R_REG[audio/{rendition}/builds/{build}/<br/>character_registry.json]
         R_DIR[audio/{rendition}/builds/{build}/<br/>voice_direction.json]
+        R_RUN[audio/{rendition}/builds/{build}/<br/>run.json]
         R_RMAN[audio/{rendition}/builds/{build}/<br/>rendition-manifest.json]
         R_M4A[audio/{rendition}/builds/{build}/<br/>chapter-NN.m4a]
         R_CD[audio/{rendition}/builds/{build}/<br/>chapter_data.json]
@@ -45,6 +47,7 @@ flowchart LR
     P6 --> R_CD
     P6A --> R_REG
     P6B --> R_DIR
+    P0 --> R_RUN
     P7 --> R_RMAN
     P10 --> R_BOOKMAN
     P8 --> R_EPUB
@@ -104,9 +107,14 @@ Notes:
 OpenShelf separates two orthogonal concepts that used to be conflated:
 
 - **Rendition** is a user-facing artistic identity (a narrator voice + engine). Examples: `kokoro-af-heart`, `kokoro-bf-emma`, `f5tts-custom`, `chatterbox-custom`. Stable across pipeline changes. The user picks a rendition.
-- **Build** is an internal pipeline-output identity. It is a fresh random 16-hex string minted once per pipeline run. The user never sees it.
+- **Build** is an internal pipeline-output identity. It is a fresh random 16-hex string by default, or a caller-provided 16-hex string when resuming a targeted build. The user never sees it in the client UI.
 
 Storage and HTTP URLs include **both**: `audio/{rendition}/builds/{build}/...` on R2; `?rendition=...&build=...` on every immutable HTTP route. The book-level `manifest.json` is the single mutable pointer that names the `current_build` per rendition. This makes audio + chapter_data + rendition-manifest a coherent atomic snapshot per (rendition, build), so a client can never mix bytes from different builds mid-session.
+
+Each build prefix may include `run.json`, the local/resumable context artifact
+that records the EPUB hash and immutable invocation settings for that build.
+When `--build-id --resume` targets an existing local build, `run.json` must match
+the current invocation before expensive downstream work continues.
 
 This is the contract that lets every per-build URL set `Cache-Control: immutable` honestly. Only the book manifest carries a short cache.
 

@@ -170,6 +170,26 @@ class TestAlignChapter(unittest.TestCase):
         self.assertEqual(result, [])
         mock_wx.load_audio.assert_not_called()
 
+    def test_final_multi_sentence_chunk_uses_audio_duration_boundary(self):
+        mock_wx = self._make_whisperx_mock([], audio_samples=160000)
+
+        with patch.dict("sys.modules", {"whisperx": mock_wx}):
+            align_chapter(
+                "/tmp/ch.m4a",
+                ["First sentence. Second sentence. Third sentence."],
+                [0.0],
+            )
+
+        segments_arg = mock_wx.align.call_args[0][0]
+        self.assertEqual(
+            [seg["text"] for seg in segments_arg],
+            ["First sentence.", "Second sentence.", "Third sentence."],
+        )
+        for seg in segments_arg:
+            self.assertGreaterEqual(seg["start"], 0.0)
+            self.assertLessEqual(seg["end"], 10.0)
+            self.assertGreater(seg["end"], seg["start"])
+
     def test_whisperx_runtime_failure_returns_empty(self):
         mock_wx = MagicMock()
         mock_wx.load_audio.side_effect = RuntimeError("model load failed")

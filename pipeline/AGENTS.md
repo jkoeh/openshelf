@@ -14,6 +14,7 @@ Documentation is the spec. Before changing pipeline behavior, update and read
 the relevant docs first:
 
 - `pipeline/docs/step1-epub-parser.md`
+- `pipeline/docs/step0-run-context.md`
 - `pipeline/docs/step2-text-chunker.md`
 - `pipeline/docs/step2b-voice-director.md`
 - `pipeline/docs/step3-tts.md`
@@ -32,6 +33,7 @@ under `pipeline/src/openshelf/pipeline/engines/`.
 - `TTSEngine` in `pipeline/src/openshelf/pipeline/tts_engine.py` is the shared adapter contract.
 - Kokoro, F5-TTS, and Chatterbox adapters must preserve the same public output: `.m4a` audio plus `chapter_data.json` with original reader text and WhisperX word timestamps.
 - `voice_direction.json` is audit metadata. It may include synthesis-only text, emotion labels, pace, pauses, and engine-specific control decisions. It must not replace reader text.
+- `run.json` is the per-build resume contract. Any resumability change must keep it aligned with `pipeline/docs/step0-run-context.md`.
 - WhisperX is the canonical final sync source for every current engine.
 - Engine-native timestamps, prompt markers, and paralinguistic tags must not be serialized to `chapter_data.json` unless the public contract is explicitly changed in the docs first.
 

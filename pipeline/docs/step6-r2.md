@@ -5,7 +5,7 @@
 
 ## Purpose
 
-Upload all pipeline artifacts to Cloudflare R2 (S3-compatible object storage) under a build-versioned key layout. Per-build artifacts (audio, chapter_data, character_registry, voice_direction, rendition-manifest) live under `audio/{rendition}/builds/{build}/...` and are immutable once written. The per-book `manifest.json` is the single mutable pointer that names the `current_build` per rendition and is always overwritten on upload.
+Upload all pipeline artifacts to Cloudflare R2 (S3-compatible object storage) under a build-versioned key layout. Per-build artifacts (audio, chapter_data, character_registry, voice_direction, run context, rendition-manifest) live under `audio/{rendition}/builds/{build}/...` and are immutable once written. The per-book `manifest.json` is the single mutable pointer that names the `current_build` per rendition and is always overwritten on upload.
 
 ```mermaid
 graph TD
@@ -25,7 +25,8 @@ graph TD
     E3 --> E4[PUT chapter_data.json]
     E4 --> E4A[PUT character_registry.json]
     E4A --> E4B[PUT voice_direction.json]
-    E4B --> E5[PUT rendition-manifest.json last]
+    E4B --> E4C[PUT run.json]
+    E4C --> E5[PUT rendition-manifest.json last]
 
     H --> H1[Always overwrite book manifest]
 ```
@@ -50,6 +51,7 @@ def upload_rendition_build(
     rendition_manifest_path: str,
     character_registry_path: str | None = None,
     voice_direction_path: str | None = None,
+    run_context_path: str | None = None,
     force: bool = False,
 ) -> list[str]
     # Writes all per-build artifacts under audio/{rendition}/builds/{build}/.
@@ -91,16 +93,17 @@ books/{author_slug}/{title_slug}/
   audio/
     {rendition}/                                         # e.g. kokoro-af-heart
       builds/
-        {build_id}/                                      # 16-hex random, fresh per pipeline run
+        {build_id}/                                      # 16-hex build ID
           chapter-01.m4a                                 # immutable
           chapter-02.m4a
           chapter_data.json                              # immutable
           character_registry.json                        # immutable
           voice_direction.json                           # immutable
+          run.json                                       # immutable resume context
           rendition-manifest.json                        # immutable; written last
 ```
 
-Every key under a `builds/{build_id}/` prefix is part of a coherent atomic snapshot: the audio bytes, the chapter_data word timestamps, the character registry, the voice direction audit, and the rendition-manifest's chapter durations all describe the same build. A client that pins to a build hash for a chapter session is guaranteed not to see a mid-listen mismatch.
+Every key under a `builds/{build_id}/` prefix is part of a coherent atomic snapshot: the audio bytes, the chapter_data word timestamps, the character registry, the voice direction audit, the run context, and the rendition-manifest's chapter durations all describe the same build. A client that pins to a build hash for a chapter session is guaranteed not to see a mid-listen mismatch.
 
 For local quality checks, `convert-book.py --chapters` may restrict generation to
 one chapter or a comma/range list such as `2` or `2,4-5`. This writes the same
@@ -152,6 +155,10 @@ per-chunk speaker and performance-direction plan used for synthesis. In default
 they may switch voices by character. It preserves original reader text
 separately from synthesis-only text, so steering cues never become reader text.
 
+`run.json` records the EPUB hash and immutable invocation settings used for a
+local resumable build. It is uploaded before `rendition-manifest.json` when
+present, but the worker does not need it for playback.
+
 ## Behavior
 
 ### Idempotency Strategy
@@ -162,7 +169,7 @@ separately from synthesis-only text, so steering cues never become reader text.
 
 **Book manifest** is always overwritten — no existence check.
 
-Every pipeline run assigns a fresh random `build_id`, so a reprocess always uploads under a new build prefix and rewrites the book manifest to point there. The single-gate idempotency is for resuming a partially-failed *same-process* run (e.g. network blip mid-upload), not for cross-run deduplication.
+Default pipeline runs assign a fresh random `build_id`, so a reprocess uploads under a new build prefix and rewrites the book manifest to point there. A caller may provide `--build-id --resume` for local resumability; `run.json` validates the local build context before upload. R2 still treats `rendition-manifest.json` as the completion signal for a build prefix.
 
 ### Cache Headers
 

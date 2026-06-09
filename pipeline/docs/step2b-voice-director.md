@@ -86,7 +86,7 @@ class SpeakerSpan:
 
 ## Registry
 
-`AudioDirector.build_registry(ctx)` makes one LLM call per book unless `--voice` provides a narrator override. The registry prompt includes:
+`AudioDirector.build_registry(ctx)` makes one LLM call per book unless `--voice` provides a narrator override. With an explicit narrator override, code creates a narrator-only `CharacterRegistry` immediately and does not call the registry LLM. The registry prompt, when used, includes:
 
 - title, author, language, opening text
 - engine voice pool description
@@ -96,7 +96,7 @@ class SpeakerSpan:
 
 The LLM returns a strict registry shape. Each character item includes `canonical`, `aliases`, `description`, `gender`, `age`, `persona_of`, `voice_id`, and `first_evidence_quote`. `first_evidence_quote` is an audit field that explains why the character belongs in the registry and helps catch empty or hallucinated registries. If the opening sample contains quoted speech/self-talk, an empty character list is invalid and the registry call is retried with an explicit correction prompt before failing.
 
-The LLM may suggest `narrator_voice_id` and character `voice_id` values, but code remains authoritative. Narrator choice is either an explicit `--voice`/override, which skips LLM narrator selection, or a valid engine voice ID chosen from the engine's voice-pool description. If the LLM returns an invalid narrator ID, code falls back to the engine's first available voice. For Kokoro, the voice-pool description must include enough qualitative guidance for narrator selection; whimsical children's fiction should prefer warm, expressive, approachable voices and avoid overly grave/deep narrator voices unless the book tone asks for that. F5-TTS bootstraps its initial voice choices from the same Kokoro preset catalog, exposed as `f5tts-{kokoro_preset}` IDs, and its voice-pool description must preserve the Kokoro qualitative casting guidance while making clear that the selected F5 voice clones the matching local reference clip.
+The LLM may suggest `narrator_voice_id` and character `voice_id` values, but code remains authoritative. Narrator choice is either an explicit `--voice`/override, which bypasses the registry LLM entirely and starts with an empty character registry, or a valid engine voice ID chosen from the engine's voice-pool description. If the LLM returns an invalid narrator ID, code falls back to the engine's first available voice. For Kokoro, the voice-pool description must include enough qualitative guidance for narrator selection; whimsical children's fiction should prefer warm, expressive, approachable voices and avoid overly grave/deep narrator voices unless the book tone asks for that. F5-TTS bootstraps its initial voice choices from the same Kokoro preset catalog, exposed as `f5tts-{kokoro_preset}` IDs, and its voice-pool description must preserve the Kokoro qualitative casting guidance while making clear that the selected F5 voice clones the matching local reference clip.
 
 `assign_voices()` validates character voice IDs against `engine.available_voices()`, fills gaps deterministically, uses gender/age hints where possible, and wraps the pool if more characters exist than voices.
 

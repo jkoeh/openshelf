@@ -61,6 +61,11 @@ def voice_direction_key(author: str, title: str, rendition: str, build: str) -> 
     return f"{build_prefix(author, title, rendition, build)}/voice_direction.json"
 
 
+def run_context_key(author: str, title: str, rendition: str, build: str) -> str:
+    """The run context used to validate local resume for one (rendition, build)."""
+    return f"{build_prefix(author, title, rendition, build)}/run.json"
+
+
 def rendition_manifest_key(author: str, title: str, rendition: str, build: str) -> str:
     """The per-build manifest describing chapter durations and word counts.
 

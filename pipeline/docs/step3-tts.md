@@ -85,6 +85,9 @@ Chatterbox synthesis uses `chatterbox.tts.ChatterboxTTS` lazily at the first
 synthesis call. `ChatterboxAdapter.synthesize(...)` passes the sanitized segment
 text as `text`, the selected `VoiceSpec.ref_audio_path` as `audio_prompt_path`,
 and adapter-owned expression controls as `exaggeration` and `cfg_weight`.
+Before generation, the adapter disables upstream `tqdm` progress bars inside
+Chatterbox model modules so unattended pipeline runs cannot fail because a
+caller-owned stderr stream was closed or invalidated while synthesis continues.
 Chatterbox output is watermarked by the upstream model when `perth` exposes its
 implicit watermarker. On Windows installs where the optional compiled
 watermarker is unavailable, the adapter substitutes `perth.DummyWatermarker`
@@ -199,9 +202,11 @@ For each segment:
    synthesis silence. The original chunk text remains available for alignment
    and reader output.
 2. Optionally prepend the previous spoken sentence as synthesis-only rolling
-   context. The context may help Kokoro and F5 pronounce the first words of a
-   chunk/segment naturally, but it must never be audible in the final reader
-   audio.
+   context when `OPENSHELF_TTS_ROLLING_CONTEXT=1`. The context may help some
+   engines pronounce the first words of a chunk/segment naturally, but it must
+   never be audible in the final reader audio. It is disabled by default because
+   real WhisperX trim boundaries can be missed, causing duplicate synthesis
+   attempts without improving the public sync contract.
 3. Call `engine.synthesize(segment)` with the sanitized/contextualized text.
 4. If contextual synthesis succeeds and the aligner declares context-trim
    support, align the generated audio against
@@ -251,10 +256,13 @@ Voice-transition silence is internal to a chunk and configured by the engine.
 F5-TTS also clamps generated boundary padding to keep stitched quote/tag/quote
 phrases such as `"..." she thought "..."` from sounding like separate clips.
 Synthesis-only line breaks are normalized before engine calls. Single line
-breaks collapse to spaces. Double line breaks inside a packed chunk, including
-chapter heading/title/prose boundaries, are rendered as explicit silence
-between synthesized units, using a shorter pause than cross-chunk paragraph
-spacing.
+breaks collapse to spaces. Double line breaks inside a packed chunk render as
+explicit silence only when they are true internal prose paragraph breaks.
+Short chapter labels and title fragments at the front of a chunk, such as
+`Chapter 6.\n\nPig and Pepper\n\nFor a minute...`, are merged into the following
+synthesis unit. They must not be synthesized as tiny standalone calls because
+some engines, notably Chatterbox, can produce clipped onset audio for those
+short opening fragments.
 Engine-specific pause direction can also insert silence inside a chunk without
 changing reader text.
 
@@ -270,7 +278,14 @@ Directed segment speed is already normalized by `voice_director.py` before TTS s
 
 Kokoro may emit token timestamps. `_extract_words` remains available for tests and debugging, but Kokoro token timestamps are not serialized into `chapter_data.json`.
 
-All engines use `WhisperXAligner` for final sync. The aligner wraps `word_aligner.py` and converts `WordEntry(word, start, end, chunk_idx)` to `WordTimestamp(word, start, end)` at its return boundary. `WhisperXAligner` also declares support for context trimming, so rolling synthesis context is enabled only on the real forced-alignment path or on tests that explicitly opt in. WhisperX is lazy-imported and fully mocked in tests.
+All engines use `WhisperXAligner` for final sync. The aligner wraps `word_aligner.py` and converts `WordEntry(word, start, end, chunk_idx)` to `WordTimestamp(word, start, end)` at its return boundary. `WhisperXAligner` also declares support for context trimming, but rolling synthesis context is used only when `OPENSHELF_TTS_ROLLING_CONTEXT=1` and the aligner supports context trim. WhisperX is lazy-imported and fully mocked in tests.
+
+When `word_aligner.py` splits an alignment chunk into sentence-sized WhisperX
+segments, it first loads the audio and resolves every segment window to a
+finite `[start, end]` range. The final chunk/unit uses the actual audio duration
+as its end boundary. Sentence windows must never be distributed across
+`inf`, because later audio-duration clipping would drop every sentence whose
+derived start moved past the real file end.
 
 After each chunk is synthesized, `synthesize_chapter` stores the accumulated
 absolute chapter-relative word timestamps in `chunk_words[i]`. Directed

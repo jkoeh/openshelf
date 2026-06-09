@@ -43,6 +43,11 @@ _MIN_WORD_COUNT = 50
 _CONTENT_TAGS = ("p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "li", "figcaption")
 _HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 _SKIP_EPUB_TYPES = frozenset({"footnote", "endnote", "toc", "pagebreak"})
+_GUTENBERG_BOILERPLATE_MARKERS = (
+    "license",
+    "start of the project gutenberg ebook",
+    "end of the project gutenberg ebook",
+)
 _FILENAME_TITLES = {
     "epigraph": "Epigraph",
 }
@@ -243,6 +248,15 @@ def _item_word_count(soup: BeautifulSoup) -> int:
     return words
 
 
+def _is_project_gutenberg_boilerplate(soup: BeautifulSoup) -> bool:
+    """Return true for Gutenberg legal/header/footer documents, not book text."""
+    text = clean_extracted_text(soup.get_text(separator=" "))
+    lowered = text.casefold()
+    if "project gutenberg" not in lowered:
+        return False
+    return any(marker in lowered for marker in _GUTENBERG_BOILERPLATE_MARKERS)
+
+
 def extract_cover_image(epub_path: str) -> tuple[bytes, str] | None:
     """Extract the cover image from an EPUB. Returns (image_bytes, media_type) or None.
 
@@ -313,6 +327,9 @@ def parse_epub(epub_path: str) -> list[Chapter]:
 
         content = item.get_content()
         soup = BeautifulSoup(content, "html.parser")
+
+        if _is_project_gutenberg_boilerplate(soup):
+            continue
 
         # Pre-check word count before assigning chapter number (avoids ID gaps)
         if _item_word_count(soup) < _MIN_WORD_COUNT:

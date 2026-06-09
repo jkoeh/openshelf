@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass, replace
 from typing import Any
@@ -65,6 +66,7 @@ _BRACKET_CUE_RE = re.compile(
 _TAG_RE = re.compile(r"<[^>]+>")
 _PARAGRAPH_BREAK_RE = re.compile(r"\n\s*\n+")
 _SENTENCE_END_RE = re.compile(r"[.!?][\"'\u201d\u2019)\]]*\s*$")
+_CHAPTER_LABEL_RE = re.compile(r"^(?:chapter\s+)?(?:[ivxlcdm]+|\d+)\.?$", re.IGNORECASE)
 
 # Lazy-loaded at first use — torch and kokoro are heavy deps
 torch: Any = None
@@ -285,6 +287,8 @@ def _is_true_internal_paragraph_break(left: str, right: str) -> bool:
     right_clean = _sanitize_synthesis_text(right)
     if not left_clean or not right_clean:
         return False
+    if _CHAPTER_LABEL_RE.fullmatch(left_clean):
+        return False
     if not _SENTENCE_END_RE.search(left_clean):
         return False
     # Short title/subtitle fragments should flow into the following prose.
@@ -293,14 +297,36 @@ def _is_true_internal_paragraph_break(left: str, right: str) -> bool:
     return True
 
 
+def _join_synthesis_fragments(left: str, right: str) -> str:
+    left_clean = _sanitize_synthesis_text(left)
+    right_clean = _sanitize_synthesis_text(right)
+    if not left_clean:
+        return right_clean
+    if not right_clean:
+        return left_clean
+    if (
+        not _SENTENCE_END_RE.search(left_clean)
+        and _word_count(left_clean) <= 8
+        and not left_clean.endswith((",", ";", ":", "-", "\u2014"))
+    ):
+        left_clean = f"{left_clean}."
+    return f"{left_clean} {right_clean}".strip()
+
+
 def _split_synthesis_units(text: str) -> list[tuple[str, int]]:
     parts = [part.strip() for part in _PARAGRAPH_BREAK_RE.split(text) if part.strip()]
     if len(parts) <= 1:
         return [(text, 0)]
-    return [
-        (part, SILENCE_INTERNAL_PARAGRAPH_BREAK_MS if index < len(parts) - 1 else 0)
-        for index, part in enumerate(parts)
-    ]
+    units: list[tuple[str, int]] = []
+    current = parts[0]
+    for part in parts[1:]:
+        if _is_true_internal_paragraph_break(current, part):
+            units.append((current, SILENCE_INTERNAL_PARAGRAPH_BREAK_MS))
+            current = part
+        else:
+            current = _join_synthesis_fragments(current, part)
+    units.append((current, 0))
+    return units
 
 
 def _word_count(text: str) -> int:
@@ -369,7 +395,8 @@ def _synthesize_segment_with_fallback(engine: Any, segment: DirectedSegment) -> 
 
 def _can_use_rolling_context(aligner: WordAligner, post_cfg: PostProcessingConfig) -> bool:
     return (
-        post_cfg.needs_forced_alignment
+        os.environ.get("OPENSHELF_TTS_ROLLING_CONTEXT") == "1"
+        and post_cfg.needs_forced_alignment
         and not isinstance(aligner, NullAligner)
         and bool(getattr(aligner, "supports_context_trim", False))
     )

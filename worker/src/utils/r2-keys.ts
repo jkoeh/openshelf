@@ -30,6 +30,9 @@ export const r2Key = {
 	chapterData: (author: string, title: string, rendition: string, build: string) =>
 		`${r2Key.buildPrefix(author, title, rendition, build)}/chapter_data.json`,
 
+	runContext: (author: string, title: string, rendition: string, build: string) =>
+		`${r2Key.buildPrefix(author, title, rendition, build)}/run.json`,
+
 	renditionManifest: (author: string, title: string, rendition: string, build: string) =>
 		`${r2Key.buildPrefix(author, title, rendition, build)}/rendition-manifest.json`,
 };
