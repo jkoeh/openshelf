@@ -297,7 +297,17 @@ chapter-02.voice_direction.json
 ...
 ```
 
-Each chapter snapshot uses the same top-level shape as the final aggregate but contains only the completed chapter. These partial files are for auditing and troubleshooting while generation is still running. They are not uploaded to R2 and are not part of the public playback contract. The log also records a speed summary for each chapter before synthesis begins, including total segment count, counts by numeric speed, and whether any narrator segment exceeds `1.0`.
+Each chapter snapshot uses the same top-level shape as the final aggregate but
+contains only the completed chapter. The chapter snapshot is the canonical local
+input to synthesis for that chapter: after direction succeeds, audio generation
+reconstructs `DirectedSegment`s from `chapter-NN.voice_direction.json` rather
+than relying on transient in-memory LLM output. This lets an audio repair rerun
+avoid another LLM call as long as the directive artifact is present and valid.
+
+The chapter snapshots are not part of the public playback contract. The log
+also records a speed summary for each chapter before synthesis begins, including
+total segment count, counts by numeric speed, and whether any narrator segment
+exceeds `1.0`.
 
 The final aggregate shape is:
 

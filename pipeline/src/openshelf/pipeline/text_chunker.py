@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import re
+import dataclasses
+import hashlib
+import json
+import os
 from dataclasses import dataclass
 
 from openshelf.config import CHUNK_MAX_WORDS
@@ -23,6 +27,56 @@ class Chunk:
     para_end: int     # index of last spoken element covered (inclusive)
     el_start: str = ""  # element ID of first spoken element in chunk
     el_end: str = ""    # element ID of last spoken element in chunk
+
+
+def _chunk_text_hash(text: str) -> str:
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def build_chapter_chunks_artifact(
+    chapter_number: int,
+    title: str,
+    chunks: list[Chunk],
+) -> dict:
+    return {
+        "version": 1,
+        "number": chapter_number,
+        "title": title,
+        "chunks": [
+            {
+                "index": index,
+                **dataclasses.asdict(chunk),
+                "text_hash": _chunk_text_hash(chunk.text),
+            }
+            for index, chunk in enumerate(chunks)
+        ],
+    }
+
+
+def read_chapter_chunks_artifact(path: str) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def write_chapter_chunks_artifact(
+    path: str,
+    chapter_number: int,
+    title: str,
+    chunks: list[Chunk],
+    force: bool = False,
+) -> str:
+    payload = build_chapter_chunks_artifact(chapter_number, title, chunks)
+    if os.path.exists(path) and not force:
+        existing = read_chapter_chunks_artifact(path)
+        if existing == payload:
+            return path
+        raise FileExistsError(f"chunk artifact already exists with different payload: {path}")
+
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    return path
 
 
 def _protect_abbreviations(text: str) -> str:

@@ -11,6 +11,7 @@ Generate chapter audio from directed text segments. The public output contract i
 - chapter WAV, later encoded to `.m4a`
 - `chunk_audio_starts`
 - `chunk_words: list[list[WordTimestamp]]`
+- `chapter-NN.sync.json` as the durable per-chapter word timing artifact
 
 The client, worker, R2 key layout, `chapter_data.json`, `manifest.json`, and `rendition-manifest.json` schemas do not change when the TTS engine changes.
 
@@ -147,6 +148,65 @@ class SynthesisResult:
 ```
 
 `ChunkInfo.directed_segments` is optional for backward compatibility. If absent, `synthesize_chapter` wraps `ChunkInfo.text` in a single narrator segment using the legacy Kokoro voice path so existing tests and scripts keep working.
+
+Production chapter audio generation should populate `ChunkInfo.directed_segments`
+by loading `chapter-NN.voice_direction.json`. The directive artifact, not
+transient in-memory LLM output, is the boundary between direction and synthesis.
+This preserves repairability: regenerating audio from an existing directive must
+not call the LLM again.
+
+## Chapter Sync Artifact
+
+After chapter audio is synthesized/aligned and encoded, the pipeline writes one
+local sync artifact beside the audio:
+
+```text
+audio/{rendition}/builds/{build}/chapter-NN.sync.json
+```
+
+The artifact is the canonical chapter-level timing input for `chapter_data.json`
+assembly and sync repair:
+
+```json
+{
+  "version": 1,
+  "number": 1,
+  "audio_filename": "chapter-01.m4a",
+  "chunk_audio_starts": [0.0, 12.34],
+  "coverage": {
+    "reader_word_count": 42,
+    "aligned_word_count": 40,
+    "coverage_ratio": 0.9524,
+    "first_missing_word_offset": 40,
+    "chunks": [
+      {
+        "index": 0,
+        "reader_word_count": 20,
+        "aligned_word_count": 20,
+        "coverage_ratio": 1.0,
+        "first_missing_word_offset": null
+      }
+    ]
+  },
+  "chunks": [
+    {
+      "index": 0,
+      "words": [
+        {"word": "Alice", "start": 0.0, "end": 0.42}
+      ]
+    }
+  ]
+}
+```
+
+`chapter_data.json` is assembled from `chapter-NN.chunks.json` plus
+`chapter-NN.sync.json`. In-memory `chunk_words` remains available as a runtime
+result for backward-compatible helpers, but production assembly should prefer
+the sync artifact when present.
+
+Coverage metrics are diagnostics only. They help identify partial WhisperX
+alignment during development and repair, but they do not block upload and do
+not create a separate build health state.
 
 The default cast mode also supplies a single narrator `DirectedSegment` per
 chunk. This is distinct from a fallback: the character registry may still exist

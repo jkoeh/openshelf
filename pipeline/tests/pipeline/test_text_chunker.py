@@ -2,12 +2,19 @@
 
 import os
 import sys
+import tempfile
 import unittest
 
 # Allow running without pip install
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from openshelf.pipeline.text_chunker import Chunk, chunk_text
+from openshelf.pipeline.text_chunker import (
+    Chunk,
+    build_chapter_chunks_artifact,
+    chunk_text,
+    read_chapter_chunks_artifact,
+    write_chapter_chunks_artifact,
+)
 from openshelf.config import CHUNK_MAX_WORDS
 
 
@@ -323,6 +330,67 @@ class TestChunkTextElementIds(unittest.TestCase):
     def test_element_ids_length_mismatch_raises(self):
         with self.assertRaises(ValueError):
             chunk_text([_words(50), _words(50)], element_ids=["ch1-el0000"])
+
+
+class TestChapterChunksArtifact(unittest.TestCase):
+
+    def test_builds_indexed_chunk_artifact_with_text_hashes(self):
+        chunks = [
+            Chunk("First paragraph.", 0, 0, "ch1-el0000", "ch1-el0000"),
+            Chunk("Second paragraph.", 1, 1, "ch1-el0001", "ch1-el0001"),
+        ]
+
+        artifact = build_chapter_chunks_artifact(1, "Chapter One", chunks)
+
+        self.assertEqual(
+            artifact,
+            {
+                "version": 1,
+                "number": 1,
+                "title": "Chapter One",
+                "chunks": [
+                    {
+                        "index": 0,
+                        "text": "First paragraph.",
+                        "para_start": 0,
+                        "para_end": 0,
+                        "el_start": "ch1-el0000",
+                        "el_end": "ch1-el0000",
+                        "text_hash": (
+                            "sha256:"
+                            "98ea01bc109a52fdf7145c10c648e8b27b8ebc877aaa79405f20b044ecfcacaa"
+                        ),
+                    },
+                    {
+                        "index": 1,
+                        "text": "Second paragraph.",
+                        "para_start": 1,
+                        "para_end": 1,
+                        "el_start": "ch1-el0001",
+                        "el_end": "ch1-el0001",
+                        "text_hash": (
+                            "sha256:"
+                            "3fc3deaa2b3609eb7d096478e4e522fc071348be1b8e116ce204cff63c08af80"
+                        ),
+                    },
+                ],
+            },
+        )
+
+    def test_write_is_idempotent_and_rejects_different_existing_payload(self):
+        chunks = [Chunk("First paragraph.", 0, 0)]
+        changed_chunks = [Chunk("Changed paragraph.", 0, 0)]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "chapter-01.chunks.json")
+
+            write_chapter_chunks_artifact(path, 1, "Chapter One", chunks)
+            write_chapter_chunks_artifact(path, 1, "Chapter One", chunks)
+            persisted = read_chapter_chunks_artifact(path)
+
+            self.assertEqual(persisted["chunks"][0]["text"], "First paragraph.")
+            with self.assertRaises(FileExistsError):
+                write_chapter_chunks_artifact(path, 1, "Chapter One", changed_chunks)
 
 
 if __name__ == "__main__":

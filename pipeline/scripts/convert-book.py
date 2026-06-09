@@ -20,7 +20,9 @@ pipeline/docs/step6-r2.md:
       audio/{rendition}/builds/{build}/
         character_registry.json                  ← voice registry audit/client artifact
         voice_direction.json                     ← speaker + performance audit artifact
+        chapter-NN.chunks.json                   <- canonical reader-text chunks
         chapter-NN.m4a
+        chapter-NN.sync.json                     <- canonical word timings
         chapter_data.json                        ← inline word timestamps
         rendition-manifest.json                  ← chapter durations + word counts
 """
@@ -70,7 +72,11 @@ from openshelf.pipeline.run_context import (
     run_context_path as build_run_context_path,
     validate_build_id,
 )
-from openshelf.pipeline.text_chunker import chunk_text
+from openshelf.pipeline.text_chunker import (
+    chunk_text,
+    read_chapter_chunks_artifact,
+    write_chapter_chunks_artifact,
+)
 from openshelf.pipeline.tts import ChunkInfo, WordTimestamp, load_pipeline, synthesize_chapter
 from openshelf.pipeline.tts_engine import DirectedSegment, VoiceSpec
 from openshelf.pipeline.voice_director import AudioDirector, BookContext, ChunkWindow
@@ -166,22 +172,166 @@ def _build_chapter_data(
     }
     for ch_data in chunked_chapters:
         ch_num = ch_data["number"]
-        chunks = ch_data["chunks"]
-        words_per_chunk = chapter_chunk_words.get(ch_num, [[] for _ in chunks])
+        chunk_source = _chapter_chunks_for_chapter_data(ch_data)
+        chunks = chunk_source["chunks"]
+        fallback_words = chapter_chunk_words.get(ch_num, [[] for _ in chunks])
+        words_per_chunk = _chapter_words_for_chapter_data(ch_data, fallback_words)
         entry = {
             "number": ch_num,
-            "title": ch_data["title"],
-            "word_count": sum(len(c.text.split()) for c in chunks),
+            "title": chunk_source["title"],
+            "word_count": sum(len(c["text"].split()) for c in chunks),
             "chunks": [],
         }
         for ci, c in enumerate(chunks):
             words = words_per_chunk[ci] if ci < len(words_per_chunk) else []
             entry["chunks"].append({
-                "text": c.text,
-                "words": [dataclasses.asdict(w) for w in words],
+                "text": c["text"],
+                "words": words,
             })
         payload["chapters"].append(entry)
     return payload
+
+
+def _chapter_chunks_for_chapter_data(ch_data: dict) -> dict:
+    if "chunks_artifact_path" in ch_data:
+        return read_chapter_chunks_artifact(ch_data["chunks_artifact_path"])
+
+    return {
+        "number": ch_data["number"],
+        "title": ch_data["title"],
+        "chunks": [
+            {
+                "index": index,
+                "text": chunk.text,
+                "para_start": chunk.para_start,
+                "para_end": chunk.para_end,
+                "el_start": chunk.el_start,
+                "el_end": chunk.el_end,
+            }
+            for index, chunk in enumerate(ch_data["chunks"])
+        ],
+    }
+
+
+def _build_chapter_sync_artifact(
+    chapter_number: int,
+    audio_filename: str,
+    chunk_audio_starts: list[float],
+    chunk_words: list[list[WordTimestamp]],
+    chunk_texts: list[str] | None = None,
+) -> dict:
+    return {
+        "version": 1,
+        "number": chapter_number,
+        "audio_filename": audio_filename,
+        "chunk_audio_starts": chunk_audio_starts,
+        "coverage": _sync_coverage_metrics(chunk_words, chunk_texts),
+        "chunks": [
+            {
+                "index": index,
+                "words": [dataclasses.asdict(word) for word in words],
+            }
+            for index, words in enumerate(chunk_words)
+        ],
+    }
+
+
+def _coverage_ratio(aligned_word_count: int, reader_word_count: int) -> float:
+    if reader_word_count == 0:
+        return 1.0 if aligned_word_count == 0 else 0.0
+    return round(aligned_word_count / reader_word_count, 4)
+
+
+def _sync_coverage_metrics(
+    chunk_words: list[list[WordTimestamp]],
+    chunk_texts: list[str] | None = None,
+) -> dict:
+    if chunk_texts is None:
+        chunk_texts = [" ".join(word.word for word in words) for words in chunk_words]
+
+    chunk_summaries = []
+    total_reader_words = 0
+    total_aligned_words = 0
+    first_missing_word_offset = None
+
+    for index, words in enumerate(chunk_words):
+        text = chunk_texts[index] if index < len(chunk_texts) else ""
+        reader_word_count = len(text.split())
+        aligned_word_count = len(words)
+        chunk_first_missing = (
+            aligned_word_count
+            if aligned_word_count < reader_word_count
+            else None
+        )
+        if first_missing_word_offset is None and chunk_first_missing is not None:
+            first_missing_word_offset = total_reader_words + chunk_first_missing
+
+        chunk_summaries.append({
+            "index": index,
+            "reader_word_count": reader_word_count,
+            "aligned_word_count": aligned_word_count,
+            "coverage_ratio": _coverage_ratio(aligned_word_count, reader_word_count),
+            "first_missing_word_offset": chunk_first_missing,
+        })
+        total_reader_words += reader_word_count
+        total_aligned_words += aligned_word_count
+
+    return {
+        "reader_word_count": total_reader_words,
+        "aligned_word_count": total_aligned_words,
+        "coverage_ratio": _coverage_ratio(total_aligned_words, total_reader_words),
+        "first_missing_word_offset": first_missing_word_offset,
+        "chunks": chunk_summaries,
+    }
+
+
+def _read_chapter_sync_artifact(path: str) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _write_chapter_sync_artifact(
+    path: str,
+    chapter_number: int,
+    audio_filename: str,
+    chunk_audio_starts: list[float],
+    chunk_words: list[list[WordTimestamp]],
+    chunk_texts: list[str] | None = None,
+    force: bool = False,
+) -> str:
+    payload = _build_chapter_sync_artifact(
+        chapter_number,
+        audio_filename,
+        chunk_audio_starts,
+        chunk_words,
+        chunk_texts=chunk_texts,
+    )
+    if os.path.exists(path) and not force:
+        existing = _read_chapter_sync_artifact(path)
+        if existing == payload:
+            return path
+        raise FileExistsError(f"sync artifact already exists with different payload: {path}")
+
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    _write_json(path, payload)
+    return path
+
+
+def _chapter_words_for_chapter_data(
+    ch_data: dict,
+    fallback_words: list[list[WordTimestamp]],
+) -> list[list[dict]]:
+    if "sync_artifact_path" in ch_data:
+        sync_payload = _read_chapter_sync_artifact(ch_data["sync_artifact_path"])
+        return [
+            chunk.get("words", [])
+            for chunk in sync_payload.get("chunks", [])
+        ]
+
+    return [
+        [dataclasses.asdict(word) for word in words]
+        for words in fallback_words
+    ]
 
 
 def _directed_segment_to_dict(segment: DirectedSegment) -> dict:
@@ -199,6 +349,47 @@ def _directed_segment_to_dict(segment: DirectedSegment) -> dict:
         "join_policy": segment.join_policy,
         "engine_controls": segment.engine_controls,
     }
+
+
+def _voice_spec_from_dict(data: dict) -> VoiceSpec:
+    return VoiceSpec(
+        id=data["id"],
+        preset_name=data.get("preset_name"),
+        ref_audio_path=data.get("ref_audio_path"),
+        ref_text=data.get("ref_text"),
+        style_ref_audio_paths=data.get("style_ref_audio_paths") or {},
+        style_ref_texts=data.get("style_ref_texts") or {},
+    )
+
+
+def _directed_segment_from_dict(data: dict) -> DirectedSegment:
+    return DirectedSegment(
+        text=data["synthesis_text"],
+        voice=_voice_spec_from_dict(data["voice"]),
+        speaker=data["speaker"],
+        emotion=data.get("emotion"),
+        speed=float(data.get("speed", 1.0) or 1.0),
+        pause_after_ms=int(data.get("pause_after_ms", 0) or 0),
+        original_text=data.get("original_text"),
+        delivery_type=data.get("delivery_type", "narration"),
+        voice_policy=data.get("voice_policy", "narrator"),
+        join_policy=data.get("join_policy", "normal"),
+        engine_controls=data.get("engine_controls") or {},
+    )
+
+
+def _directed_chunks_from_chapter_direction_artifact(path: str) -> list[list[DirectedSegment]]:
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    chapters = payload.get("chapters", [])
+    if len(chapters) != 1:
+        raise ValueError(f"chapter direction artifact must contain exactly one chapter: {path}")
+
+    chunks = chapters[0].get("chunks", [])
+    return [
+        [_directed_segment_from_dict(segment) for segment in chunk.get("segments", [])]
+        for chunk in chunks
+    ]
 
 
 def _build_direction_chapter(
@@ -243,6 +434,14 @@ def _build_voice_direction_payload(
 
 def _chapter_direction_path(build_dir: str, chapter_number: int) -> str:
     return os.path.join(build_dir, f"chapter-{chapter_number:02d}.voice_direction.json")
+
+
+def _chapter_chunks_path(build_dir: str, chapter_number: int) -> str:
+    return os.path.join(build_dir, f"chapter-{chapter_number:02d}.chunks.json")
+
+
+def _chapter_sync_path(build_dir: str, chapter_number: int) -> str:
+    return os.path.join(build_dir, f"chapter-{chapter_number:02d}.sync.json")
 
 
 def _direction_speed_summary(chapter_payload: dict) -> dict:
@@ -555,6 +754,19 @@ def main() -> None:
 
     # Step 3+4: TTS → m4a (per build)
     os.makedirs(build_dir, exist_ok=True)
+    for ch_data in chunked_chapters:
+        chunks_path = _chapter_chunks_path(build_dir, ch_data["number"])
+        write_chapter_chunks_artifact(
+            chunks_path,
+            ch_data["number"],
+            ch_data["title"],
+            ch_data["chunks"],
+            force=args.force,
+        )
+        ch_data["chunks_artifact_path"] = chunks_path
+    print(f"Chapter chunks: {build_dir}/chapter-NN.chunks.json")
+    logger.info("Chapter chunk artifacts written under: %s", build_dir)
+
     character_registry_path = os.path.join(build_dir, "character_registry.json")
     _write_json(character_registry_path, registry.to_dict())
     print(f"Character registry: {character_registry_path}")
@@ -594,7 +806,6 @@ def main() -> None:
         print(f"  [{ch_num:>2}/{len(chapters)}] {ch_title} ({len(chunks)} chunks)")
         logger.info("Chapter %d/%d direction started: %s (%d chunks)", ch_num, len(chapters), ch_title, len(chunks))
 
-        chunk_infos = []
         with Heartbeat(logger, f"Directing chapter {ch_num}") as heartbeat:
             heartbeat.update(f"Attributing speakers for chapter {ch_num} ({len(chunks)} chunks)")
             windows = [
@@ -607,13 +818,6 @@ def main() -> None:
             ]
             registry, directed_chunks = director.direct_chapter(ch_title, windows, registry)
             heartbeat.update(f"Preparing directed chunk metadata for chapter {ch_num}")
-            for ci, c in enumerate(chunks):
-                ends_para = (ci == len(chunks) - 1) or (c.para_end != chunks[ci + 1].para_start)
-                chunk_infos.append(ChunkInfo(
-                    text=c.text,
-                    ends_paragraph=ends_para,
-                    directed_segments=directed_chunks[ci],
-                ))
             direction_chapter = _build_direction_chapter(
                 ch_data,
                 directed_chunks,
@@ -650,6 +854,18 @@ def main() -> None:
             )
         logger.info("Chapter %d direction complete", ch_num)
 
+        directed_chunks_for_synthesis = _directed_chunks_from_chapter_direction_artifact(
+            chapter_direction_path
+        )
+        chunk_infos = []
+        for ci, c in enumerate(chunks):
+            ends_para = (ci == len(chunks) - 1) or (c.para_end != chunks[ci + 1].para_start)
+            chunk_infos.append(ChunkInfo(
+                text=c.text,
+                ends_paragraph=ends_para,
+                directed_segments=directed_chunks_for_synthesis[ci],
+            ))
+
         m4a_path = os.path.join(build_dir, f"chapter-{ch_num:02d}.m4a")
         wav_path = os.path.join(build_dir, f"chapter-{ch_num:02d}.wav")
 
@@ -676,6 +892,17 @@ def main() -> None:
         chapter_durations[ch_num] = duration
         chapter_chunk_starts[ch_num] = result.chunk_audio_starts
         chapter_chunk_words[ch_num] = result.chunk_words
+        sync_path = _chapter_sync_path(build_dir, ch_num)
+        _write_chapter_sync_artifact(
+            sync_path,
+            ch_num,
+            os.path.basename(m4a_path),
+            result.chunk_audio_starts,
+            result.chunk_words,
+            chunk_texts=[c.text for c in chunks],
+            force=args.force,
+        )
+        ch_data["sync_artifact_path"] = sync_path
         total_duration += duration
         total_skipped += result.skipped_chunks
 
@@ -689,6 +916,7 @@ def main() -> None:
             result.skipped_chunks,
             m4a_path,
         )
+        logger.info("Chapter %d sync artifact written: %s", ch_num, sync_path)
 
     elapsed = time.time() - start
     print(f"\nDone. {total_duration / 60:.1f} min of audio in {elapsed:.0f}s.")
