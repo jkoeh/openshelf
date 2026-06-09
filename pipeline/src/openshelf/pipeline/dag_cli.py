@@ -14,6 +14,7 @@ from openshelf.pipeline.text_chunker import read_chapter_chunks_artifact
 
 CHAPTER_DATA_VERSION = 1
 _CHUNKS_RE = re.compile(r"chapter-(\d+)\.chunks\.json$")
+_SYNC_RE = re.compile(r"chapter-(\d+)\.sync\.json$")
 
 
 def _read_json(path: str) -> dict:
@@ -44,6 +45,91 @@ def _chapter_number_from_chunks_path(path: str) -> int:
 
 def _sync_path_for_chunks_path(chunks_path: str) -> str:
     return chunks_path.replace(".chunks.json", ".sync.json")
+
+
+def _chapter_number_from_sync_path(path: str) -> int:
+    match = _SYNC_RE.search(os.path.basename(path))
+    if not match:
+        raise ValueError(f"not a chapter sync artifact: {path}")
+    return int(match.group(1))
+
+
+def _coverage_ratio(aligned_word_count: int, reader_word_count: int) -> float:
+    if reader_word_count == 0:
+        return 1.0 if aligned_word_count == 0 else 0.0
+    return round(aligned_word_count / reader_word_count, 4)
+
+
+def collect_coverage(build_dir: str) -> dict:
+    """Aggregate per-chapter coverage from chapter-NN.sync.json into a book report.
+
+    Diagnostic only: this reads the `coverage` block already recorded in each sync
+    artifact and rolls it up. It does not judge whether coverage is acceptable.
+    """
+    sync_paths = sorted(
+        glob.glob(os.path.join(build_dir, "chapter-*.sync.json")),
+        key=_chapter_number_from_sync_path,
+    )
+    if not sync_paths:
+        raise FileNotFoundError(f"no chapter sync artifacts found in {build_dir}")
+
+    chapters: list[dict] = []
+    total_reader_words = 0
+    total_aligned_words = 0
+    first_missing_word_offset: int | None = None
+
+    for sync_path in sync_paths:
+        sync_payload = _read_json(sync_path)
+        number = sync_payload["number"]
+        coverage = sync_payload.get("coverage", {})
+        reader_words = coverage.get("reader_word_count", 0)
+        aligned_words = coverage.get("aligned_word_count", 0)
+        chapter_missing = coverage.get("first_missing_word_offset")
+
+        if first_missing_word_offset is None and chapter_missing is not None:
+            first_missing_word_offset = total_reader_words + chapter_missing
+
+        chapters.append({
+            "number": number,
+            "reader_word_count": reader_words,
+            "aligned_word_count": aligned_words,
+            "coverage_ratio": coverage.get(
+                "coverage_ratio", _coverage_ratio(aligned_words, reader_words)
+            ),
+            "first_missing_word_offset": chapter_missing,
+        })
+        total_reader_words += reader_words
+        total_aligned_words += aligned_words
+
+    return {
+        "build_dir": build_dir,
+        "reader_word_count": total_reader_words,
+        "aligned_word_count": total_aligned_words,
+        "coverage_ratio": _coverage_ratio(total_aligned_words, total_reader_words),
+        "first_missing_word_offset": first_missing_word_offset,
+        "chapters": chapters,
+    }
+
+
+def _format_coverage_report(report: dict) -> str:
+    lines = [f"Coverage report for {report['build_dir']}"]
+    lines.append(
+        f"  Book total: {report['aligned_word_count']}/{report['reader_word_count']} "
+        f"words aligned (ratio {report['coverage_ratio']})"
+    )
+    if report["first_missing_word_offset"] is not None:
+        lines.append(
+            f"  First missing word offset: {report['first_missing_word_offset']}"
+        )
+    for chapter in report["chapters"]:
+        missing = chapter["first_missing_word_offset"]
+        missing_label = "" if missing is None else f"  first missing @ {missing}"
+        lines.append(
+            f"  Chapter {chapter['number']:>2}: "
+            f"{chapter['aligned_word_count']}/{chapter['reader_word_count']} "
+            f"(ratio {chapter['coverage_ratio']}){missing_label}"
+        )
+    return "\n".join(lines)
 
 
 def assemble_chapter_data(
@@ -107,6 +193,10 @@ def _build_parser() -> argparse.ArgumentParser:
     assemble.add_argument("--output")
     assemble.add_argument("--force", action="store_true")
 
+    coverage = subparsers.add_parser("coverage")
+    coverage.add_argument("--build-dir", required=True)
+    coverage.add_argument("--json", action="store_true")
+
     return parser
 
 
@@ -123,6 +213,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             force=args.force,
         )
         print(path)
+        return 0
+
+    if args.command == "coverage":
+        report = collect_coverage(build_dir=args.build_dir)
+        if args.json:
+            print(json.dumps(report, indent=2, ensure_ascii=False))
+        else:
+            print(_format_coverage_report(report))
         return 0
 
     parser.error(f"unknown command: {args.command}")

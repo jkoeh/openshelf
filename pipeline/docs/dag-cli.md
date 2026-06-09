@@ -45,6 +45,37 @@ Behavior:
   `--force` is provided.
 - The command does not call the LLM, TTS, WhisperX, ffmpeg, or R2.
 
+### `coverage`
+
+```bash
+python -m openshelf.pipeline.dag_cli coverage \
+  --build-dir audio/{rendition}/builds/{build}
+python -m openshelf.pipeline.dag_cli coverage \
+  --build-dir audio/{rendition}/builds/{build} --json
+```
+
+Input:
+
+- `chapter-NN.sync.json` for every chapter in the build
+
+Output:
+
+- A human-readable coverage report on stdout (default), or a JSON report with
+  `--json`.
+
+Behavior:
+
+- Reads the `coverage` block already recorded inside each `chapter-NN.sync.json`
+  and aggregates it into book-level totals: reader word count, aligned word
+  count, coverage ratio, and the first missing word offset when detectable.
+- Chapters are ordered by chapter number from the sync artifact filenames.
+- This command is **diagnostic only**. It never fails on low or missing
+  coverage and never blocks upload. Per the Sync Coverage Policy, sync gaps are
+  a pipeline bug to detect and fix, not a policy gate or a separate build health
+  state. The command exits non-zero only on real I/O errors (e.g. no sync
+  artifacts found).
+- The command does not call the LLM, TTS, WhisperX, ffmpeg, or R2.
+
 Later DAG commands (`parse`, `chunk`, `direct`, `synth`, `sync`, `upload`) should
 follow the same idempotency rule: identical output skips, different output fails
 unless forced.

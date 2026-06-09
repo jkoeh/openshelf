@@ -10,8 +10,26 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from openshelf.pipeline.dag_cli import main  # noqa: E402
+import contextlib  # noqa: E402
+import io  # noqa: E402
+
+from openshelf.pipeline.dag_cli import collect_coverage, main  # noqa: E402
 from openshelf.pipeline.text_chunker import Chunk, write_chapter_chunks_artifact  # noqa: E402
+
+
+def _write_sync(path: str, number: int, coverage: dict, chunks=None) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "version": 1,
+                "number": number,
+                "audio_filename": f"chapter-{number:02d}.m4a",
+                "chunk_audio_starts": [0.0],
+                "coverage": coverage,
+                "chunks": chunks or [],
+            },
+            f,
+        )
 
 
 class TestDagCliAssemble(unittest.TestCase):
@@ -71,6 +89,86 @@ class TestDagCliAssemble(unittest.TestCase):
             payload["chapters"][0]["chunks"][0]["words"],
             [{"word": "Reader", "start": 0.0, "end": 0.4}],
         )
+
+
+class TestDagCliCoverage(unittest.TestCase):
+    def test_collect_coverage_aggregates_book_totals(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_sync(
+                os.path.join(tmp, "chapter-01.sync.json"),
+                1,
+                {
+                    "reader_word_count": 10,
+                    "aligned_word_count": 10,
+                    "coverage_ratio": 1.0,
+                    "first_missing_word_offset": None,
+                },
+            )
+            _write_sync(
+                os.path.join(tmp, "chapter-02.sync.json"),
+                2,
+                {
+                    "reader_word_count": 10,
+                    "aligned_word_count": 6,
+                    "coverage_ratio": 0.6,
+                    "first_missing_word_offset": 6,
+                },
+            )
+
+            report = collect_coverage(tmp)
+
+        self.assertEqual(report["reader_word_count"], 20)
+        self.assertEqual(report["aligned_word_count"], 16)
+        self.assertEqual(report["coverage_ratio"], 0.8)
+        # First gap is in chapter 2 at chapter-local offset 6, after 10 chapter-1 words.
+        self.assertEqual(report["first_missing_word_offset"], 16)
+        self.assertEqual([c["number"] for c in report["chapters"]], [1, 2])
+
+    def test_coverage_command_exits_zero_on_low_coverage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_sync(
+                os.path.join(tmp, "chapter-01.sync.json"),
+                1,
+                {
+                    "reader_word_count": 10,
+                    "aligned_word_count": 0,
+                    "coverage_ratio": 0.0,
+                    "first_missing_word_offset": 0,
+                },
+            )
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                exit_code = main(["coverage", "--build-dir", tmp])
+
+        # Diagnostic only: low coverage never fails the command.
+        self.assertEqual(exit_code, 0)
+        self.assertIn("0/10", buffer.getvalue())
+
+    def test_coverage_command_json_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_sync(
+                os.path.join(tmp, "chapter-01.sync.json"),
+                1,
+                {
+                    "reader_word_count": 4,
+                    "aligned_word_count": 4,
+                    "coverage_ratio": 1.0,
+                    "first_missing_word_offset": None,
+                },
+            )
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                exit_code = main(["coverage", "--build-dir", tmp, "--json"])
+
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["coverage_ratio"], 1.0)
+        self.assertEqual(payload["chapters"][0]["number"], 1)
+
+    def test_coverage_command_errors_when_no_sync_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(FileNotFoundError):
+                collect_coverage(tmp)
 
 
 if __name__ == "__main__":
