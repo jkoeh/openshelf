@@ -6,6 +6,35 @@ import urllib.parse
 from openshelf.scrapers.http import make_request, matches_filter
 
 
+def _iter_downloadable_ebook_paths(text):
+    """Yield Standard Ebooks detail paths that are available for download."""
+    saw_schema_entries = False
+    for match in re.finditer(r"<li\b(?P<attrs>[^>]*)>", text, flags=re.IGNORECASE):
+        attrs = match.group("attrs")
+        about_match = re.search(
+            r'\babout=(["\'])(?P<path>/ebooks/[a-z0-9][a-z0-9/_-]*)\1',
+            attrs,
+        )
+        if not about_match:
+            continue
+
+        saw_schema_entries = True
+        class_match = re.search(r'\bclass=(["\'])(?P<class>.*?)\1', attrs)
+        classes = set((class_match.group("class") if class_match else "").split())
+        if "not-pd" in classes:
+            continue
+
+        yield about_match.group("path")
+
+    if saw_schema_entries:
+        return
+
+    yield from re.findall(
+        r'href="(/ebooks/[a-z][a-z0-9-]*/[a-z][a-z0-9-]*(?:/[a-z][a-z0-9-]*)*)"',
+        text,
+    )
+
+
 def se_search(author=None, language=None, delay=2):
     """Yield (author_name, title, epub_url) from Standard Ebooks.
 
@@ -37,15 +66,10 @@ def se_search(author=None, language=None, delay=2):
                 print("  Standard Ebooks: no results found.")
             break
 
-        # Find ebook page links from about= attributes on schema:Book elements
-        ebook_paths = re.findall(
-            r'about="(/ebooks/[a-z0-9][a-z0-9/_-]*)"', text
-        )
-        if not ebook_paths:
-            ebook_paths = re.findall(
-                r'href="(/ebooks/[a-z][a-z0-9-]*/[a-z][a-z0-9-]*(?:/[a-z][a-z0-9-]*)*)"',
-                text,
-            )
+        # Find ebook page links from schema:Book list entries. Search results
+        # also include not-yet-public-domain placeholders, which do not have
+        # downloadable EPUB files.
+        ebook_paths = list(_iter_downloadable_ebook_paths(text))
 
         if not ebook_paths:
             break

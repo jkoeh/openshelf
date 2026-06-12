@@ -99,18 +99,11 @@ Canonical chapter directive:
 This should be the boundary between LLM work and audio work. Once this file
 exists, audio regeneration should not require another LLM call.
 
-### `chapter-NN.audio_plan.json`
-
-Engine-ready synthesis plan derived from voice direction:
-
-- ordered synthesis units
-- silence policy inputs
-- title/paragraph/line/chunk boundary labels
-- engine controls after normalization
-- reference voice assets
-- source directive hash
-
-This separates "what to say and how" from "how to stitch this engine's audio".
+> **Note (implemented):** an intermediate `chapter-NN.audio_plan.json` was
+> considered as a separate engine-ready plan between direction and synthesis,
+> but it was dropped — it had no second consumer. `synth` reads
+> `chapter-NN.voice_direction.json` directly and builds engine input
+> (`ChunkInfo`) in memory.
 
 ### `chapter-NN.m4a`
 
@@ -168,11 +161,12 @@ Input:
 
 Output:
 
-- `chapter-NN.audio_plan.json`
 - `chapter-NN.m4a`
+- `chapter-NN.sync.json`
 
-Use when TTS engine behavior changes, a directive was manually edited, or a
-chapter needs to be regenerated from known direction.
+Implemented as the `synth` DAG command. Use when TTS engine behavior changes, a
+directive was manually edited, or a chapter needs to be regenerated from known
+direction.
 
 ### Pause/Stitch Policy Repair
 
@@ -183,14 +177,15 @@ Input:
 
 Output:
 
-- `chapter-NN.audio_plan.json`
 - `chapter-NN.m4a`
+- `chapter-NN.sync.json`
 
 Use when pause policy, boundary fades, generated silence trimming, title breaks,
 paragraph breaks, or chunk joins change. Because WAV/unit intermediates are not
 durable build artifacts, this repair regenerates chapter audio from the existing
-directive instead of restitching old persisted parts. It should avoid LLM, but
-it does not avoid TTS.
+directive instead of restitching old persisted parts. It is the same `synth`
+command as Audio Regeneration (no separate `restitch` verb). It avoids LLM but
+does not avoid TTS.
 
 ### Sync Repair
 
@@ -198,7 +193,8 @@ Input:
 
 - `chapter-NN.m4a`
 - `chapter-NN.chunks.json`
-- optional `chapter-NN.audio_plan.json`
+- `chapter-NN.sync.json` (prior — for the per-chunk `chunk_audio_starts`, which
+  are produced at synthesis time and not recoverable from the m4a alone)
 
 Output:
 
@@ -284,26 +280,36 @@ build state.
 ## Incremental Migration
 
 1. Persist `chapter-NN.chunks.json` and teach `chapter_data.json` assembly to
-   read it.
+   read it. ✅
 2. Treat `chapter-NN.voice_direction.json` as the canonical input to audio
-   generation.
-3. Add `chapter-NN.sync.json` and move sync repair to chapter-level artifacts.
-4. Add sync coverage diagnostics for development/debugging.
-5. Add repair commands for `direction`, `audio`, `sync`, and `assemble`.
+   generation. ✅
+3. Add `chapter-NN.sync.json` and move sync repair to chapter-level artifacts. ✅
+4. Add sync coverage diagnostics for development/debugging. ✅
+5. Add repair commands for `direction`, `audio`, `sync`, and `assemble`. ✅
+
+**Status: implemented.** The stage commands live in
+`src/openshelf/pipeline/dag_cli.py` (`parse`, `chunk`, `direct`, `synth`,
+`sync`, `assemble`, `coverage`, `upload`) — see `docs/dag-cli.md`. The
+per-chapter logic is shared between the standalone commands and the
+`convert-book.py` orchestrator (one code path): `build_chunk_windows` and
+`build_direction_chapter`/`build_voice_direction_payload` (direction),
+`build_chunk_infos` + `synthesize_chapter_to_files` (audio), and
+`build_chapter_data_payload` (assembly). `book_parse.json` was added as a
+durable local parse artifact (`docs/step1b-book-parse.md`).
 
 ## CLI Shape
 
-The exact CLI can evolve, but it should express stages directly:
+Implemented as `python -m openshelf.pipeline.dag_cli <command>` (see
+`docs/dag-cli.md` for full flags):
 
 ```bash
-pipeline parse book.epub --build-id ...
-pipeline chunk --build-id ...
-pipeline direct --chapter 2 --build-id ...
-pipeline synth --chapter 2 --from-direction --build-id ...
-pipeline restitch --chapter 2 --build-id ...
-pipeline sync --chapter 2 --build-id ...
-pipeline assemble --build-id ...
-pipeline upload --build-id ...
+pipeline parse   --epub book.epub --out book_parse.json --source gutenberg
+pipeline chunk   --book-parse book_parse.json --build-dir {build_dir}
+pipeline direct  --build-dir {build_dir} --chapter 2 --engine kokoro
+pipeline synth   --build-dir {build_dir} --chapter 2 --engine kokoro   # covers restitch
+pipeline sync    --build-dir {build_dir} --chapter 2 --force           # re-align only
+pipeline assemble --build-dir {build_dir} --rendition {r} --build-id {b}
+pipeline upload  --book-dir {book_dir} --rendition {r} --build-id {b}
 ```
 
 Each command should be runnable on one chapter, many chapters, or all chapters

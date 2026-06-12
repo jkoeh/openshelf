@@ -13,6 +13,10 @@ from openshelf.pipeline.epub_parser import (
     Chapter,
     ContentElement,
     normalize_heading_for_tts,
+    build_book_parse_artifact,
+    write_book_parse_artifact,
+    read_book_metadata,
+    epub_sha256,
 )
 
 
@@ -510,6 +514,81 @@ class TestParseEpubContentElements(unittest.TestCase):
         ch = parse_epub("f.epub")[0]
         heading_el = next(el for el in ch.elements if el.tag == "h2")
         self.assertTrue(heading_el.spoken)
+
+
+class TestBookParseArtifact(unittest.TestCase):
+    def _chapter(self) -> Chapter:
+        elements = [
+            ContentElement(id="ch1-el0000", tag="h2", html="<h2>T</h2>", text="T", spoken=True),
+            ContentElement(id="ch1-el0001", tag="p", html="<p>hello world</p>", text="hello world", spoken=True),
+            ContentElement(id="ch1-el0002", tag="figcaption", html="<figcaption>x</figcaption>", text="x", spoken=False),
+        ]
+        spoken = [el.text for el in elements if el.spoken]
+        return Chapter(
+            number=1,
+            title="T",
+            elements=elements,
+            paragraphs=spoken,
+            text="\n\n".join(spoken),
+            word_count=3,
+            epub_item_name="ch1.xhtml",
+        )
+
+    def test_build_round_trips(self):
+        payload = build_book_parse_artifact(
+            [self._chapter()], "sha256:abc", {"title": "T", "author": "A", "source": "gutenberg"}
+        )
+        self.assertEqual(payload["version"], 1)
+        self.assertEqual(payload["epub_hash"], "sha256:abc")
+        self.assertEqual(payload["metadata"]["source"], "gutenberg")
+        ch = payload["chapters"][0]
+        self.assertEqual(ch["number"], 1)
+        self.assertEqual(ch["epub_item_name"], "ch1.xhtml")
+        self.assertEqual(len(ch["elements"]), 3)
+        self.assertEqual(ch["elements"][1]["text"], "hello world")
+
+    def test_write_is_idempotent_and_force_aware(self):
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "book_parse.json")
+            payload = build_book_parse_artifact([self._chapter()], "sha256:abc", {})
+
+            write_book_parse_artifact(path, payload)
+            # Identical payload: no error, returns path.
+            write_book_parse_artifact(path, payload)
+
+            different = build_book_parse_artifact([self._chapter()], "sha256:different", {})
+            with self.assertRaises(FileExistsError):
+                write_book_parse_artifact(path, different)
+            # --force overwrites.
+            write_book_parse_artifact(path, different, force=True)
+            with open(path, "r", encoding="utf-8") as f:
+                on_disk = json.load(f)
+            self.assertEqual(on_disk["epub_hash"], "sha256:different")
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_read_book_metadata(self, mock_read):
+        book = MagicMock()
+        book.get_metadata.side_effect = lambda ns, name: {
+            "title": [("Metamorphosis", {})],
+            "creator": [("Franz Kafka", {})],
+        }[name]
+        mock_read.return_value = book
+        meta = read_book_metadata("f.epub")
+        self.assertEqual(meta, {"title": "Metamorphosis", "author": "Franz Kafka"})
+
+    def test_epub_sha256(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "f.epub")
+            with open(path, "wb") as f:
+                f.write(b"epub-bytes")
+            digest = epub_sha256(path)
+            self.assertTrue(digest.startswith("sha256:"))
+            self.assertEqual(digest, epub_sha256(path))
 
     @patch("openshelf.pipeline.epub_parser.epub.read_epub")
     def test_epub_type_footnote_spoken_false(self, mock_read):

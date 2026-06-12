@@ -183,6 +183,17 @@ class TestSeSearch(unittest.TestCase):
         self.assertEqual(url, expected)
 
     @patch.object(standard_ebooks, "make_request")
+    def test_skips_not_public_domain_placeholders(self, mock_req):
+        html = (
+            '<li typeof="schema:Book" '
+            'about="/ebooks/franz-kafka/the-metamorphosis/willa-muir_edwin-muir" '
+            'class="ribbon not-pd">'
+        )
+        mock_req.return_value = html.encode()
+        results = list(standard_ebooks.se_search(author="Franz Kafka", delay=0))
+        self.assertEqual(results, [])
+
+    @patch.object(standard_ebooks, "make_request")
     def test_no_ebooks_matched(self, mock_req):
         mock_req.return_value = b"<p>No ebooks matched your filter.</p>"
         results = list(standard_ebooks.se_search(delay=0))
@@ -349,6 +360,82 @@ class TestProcessBooksFiltering(unittest.TestCase):
             downloaded = module.search_and_download(args)
 
         self.assertEqual(len(downloaded), 1)
+
+    def test_main_exits_nonzero_when_no_books_downloaded(self):
+        module = self._load_process_books()
+
+        argv = ["process-books.py", "--author", "No Such Author"]
+        with (
+            patch.object(sys, "argv", argv),
+            patch.object(module, "configure_console_output"),
+            patch.object(module, "configure_pipeline_logging", return_value="test.log"),
+            patch.object(module, "search_and_download", return_value=[]),
+        ):
+            with self.assertRaises(SystemExit) as raised:
+                module.main()
+
+        self.assertEqual(raised.exception.code, 1)
+
+    def test_main_exits_nonzero_when_convert_fails(self):
+        module = self._load_process_books()
+
+        argv = ["process-books.py", "--epub", __file__]
+        with (
+            patch.object(sys, "argv", argv),
+            patch.object(module, "configure_console_output"),
+            patch.object(module, "configure_pipeline_logging", return_value="test.log"),
+            patch.object(module, "convert_book", return_value=1),
+        ):
+            with self.assertRaises(SystemExit) as raised:
+                module.main()
+
+        self.assertEqual(raised.exception.code, 1)
+
+    def test_main_refreshes_catalog_after_successful_upload(self):
+        module = self._load_process_books()
+
+        argv = ["process-books.py", "--epub", __file__, "--upload"]
+        with (
+            patch.object(sys, "argv", argv),
+            patch.object(module, "configure_console_output"),
+            patch.object(module, "configure_pipeline_logging", return_value="test.log"),
+            patch.object(module, "convert_book", return_value=0),
+            patch.object(module, "refresh_catalog", return_value=0) as refresh,
+        ):
+            module.main()
+
+        refresh.assert_called_once()
+
+    def test_main_skips_catalog_refresh_without_upload(self):
+        module = self._load_process_books()
+
+        argv = ["process-books.py", "--epub", __file__]
+        with (
+            patch.object(sys, "argv", argv),
+            patch.object(module, "configure_console_output"),
+            patch.object(module, "configure_pipeline_logging", return_value="test.log"),
+            patch.object(module, "convert_book", return_value=0),
+            patch.object(module, "refresh_catalog") as refresh,
+        ):
+            module.main()
+
+        refresh.assert_not_called()
+
+    def test_main_exits_nonzero_when_catalog_refresh_fails(self):
+        module = self._load_process_books()
+
+        argv = ["process-books.py", "--epub", __file__, "--upload"]
+        with (
+            patch.object(sys, "argv", argv),
+            patch.object(module, "configure_console_output"),
+            patch.object(module, "configure_pipeline_logging", return_value="test.log"),
+            patch.object(module, "convert_book", return_value=0),
+            patch.object(module, "refresh_catalog", return_value=2),
+        ):
+            with self.assertRaises(SystemExit) as raised:
+                module.main()
+
+        self.assertEqual(raised.exception.code, 2)
 
 
 if __name__ == "__main__":

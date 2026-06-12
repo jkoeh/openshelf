@@ -7,6 +7,21 @@
 
 Parse an EPUB file into a list of chapters, each containing structured content elements with stable IDs. These IDs are the foundation for text/audio synchronization — they become DOM anchors in the annotated EPUB and let downstream chunks reference specific paragraphs by ID.
 
+`process-books.py` may acquire the EPUB before this stage by searching Project
+Gutenberg and Standard Ebooks. Standard Ebooks catalog results are only treated
+as downloadable source EPUBs when the listing represents an available
+public-domain edition; placeholder / not-yet-public-domain results are skipped
+instead of producing guessed download URLs that 404.
+
+The end-to-end CLI must propagate conversion failure with a non-zero process
+exit. Its progress output is Unicode-safe on Windows consoles so source chapter
+titles cannot crash the run before parsing/chunking finishes.
+
+When `process-books.py --upload` completes at least one conversion and all
+conversions succeeded, it refreshes the root R2 `catalog.json` once at the end
+so the public catalog fast path sees newly uploaded book manifests without a
+separate operator step.
+
 ```mermaid
 graph TD
     A[EPUB file] --> B[ebooklib.read_epub]
