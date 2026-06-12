@@ -740,6 +740,33 @@ class TestBuildCharacterRegistry(unittest.TestCase):
         self.assertIn("Alice", registry.characters)
         self.assertEqual(registry.characters["Alice"].voice.id, "alice")
 
+    def test_empty_registry_is_allowed_for_narrative_thought_prose(self):
+        voices = [VoiceSpec(id="narrator", preset_name="af_heart")]
+        llm = StubLLM([
+            {"narrator_voice_id": "narrator", "characters": []},
+        ])
+
+        registry = build_character_registry(
+            BookContext(
+                title="The War of the Worlds",
+                author="H. G. Wells",
+                language="en",
+                opening_text=(
+                    "No one gave a thought to the older worlds of space as "
+                    "sources of human danger, or thought of them only to "
+                    "dismiss the idea of life upon them as impossible."
+                ),
+            ),
+            llm,
+            prompt_cfg=type("Cfg", (), {
+                "voice_pool_description": "Voices: narrator",
+            })(),
+            voice_pool=voices,
+        )
+
+        self.assertEqual(len(llm.calls), 1)
+        self.assertEqual(registry.characters, {})
+
     def test_empty_registry_for_dialogue_sample_fails_after_retry(self):
         voices = [VoiceSpec(id="narrator", preset_name="af_heart")]
         llm = StubLLM([

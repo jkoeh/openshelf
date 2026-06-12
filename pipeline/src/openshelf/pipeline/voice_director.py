@@ -843,7 +843,11 @@ def _voice_from_id(voice_id: str | None, pool: list[VoiceSpec]) -> VoiceSpec:
 
 def _registry_requires_characters(text: str) -> bool:
     lowered = text.casefold()
-    return needs_annotation(text) or "said aloud" in lowered or "thought" in lowered
+    spoken_aloud = re.search(
+        r"\b(?:said|spoke|spoken|called|cried|shouted|whispered|muttered)\s+aloud\b",
+        lowered,
+    )
+    return needs_annotation(text) or spoken_aloud is not None
 
 
 def _clean_registry_characters(raw_characters: Any) -> list[dict[str, Any]]:

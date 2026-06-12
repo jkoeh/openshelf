@@ -63,7 +63,11 @@ from openshelf.pipeline.epub_parser import (
     write_book_parse_artifact,
 )
 from openshelf.pipeline.llm import create_llm
-from openshelf.pipeline.logging_utils import Heartbeat, configure_pipeline_logging
+from openshelf.pipeline.logging_utils import (
+    Heartbeat,
+    configure_console_output,
+    configure_pipeline_logging,
+)
 from openshelf.pipeline.manifest import (
     ChapterMeta,
     generate_book_manifest,
@@ -241,6 +245,8 @@ def _parse_chapter_filter(value: str | None) -> set[int] | None:
 
 
 def main() -> None:
+    configure_console_output()
+
     parser = argparse.ArgumentParser(description="Convert EPUB to AAC audiobook")
     parser.add_argument("epub", help="Path to EPUB file")
     parser.add_argument("--output", "-o", default="audio", help="Output directory (default: audio/)")

@@ -19,7 +19,11 @@ import sys
 # Allow running from the scripts/ directory without pip install
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from openshelf.pipeline.logging_utils import Heartbeat, configure_pipeline_logging
+from openshelf.pipeline.logging_utils import (
+    Heartbeat,
+    configure_console_output,
+    configure_pipeline_logging,
+)
 from openshelf.scrapers.gutenberg import gutenberg_search
 from openshelf.scrapers.http import download_book, matches_filter, sanitize
 from openshelf.scrapers.standard_ebooks import se_search
@@ -111,7 +115,17 @@ def convert_book(epub_path, source_name, args):
     return subprocess.run(cmd).returncode
 
 
+def refresh_catalog(args):
+    """Run build-catalog.py after successful uploads."""
+    script = os.path.join(os.path.dirname(__file__), "build-catalog.py")
+    cmd = [sys.executable, script]
+    logger.info("Starting build-catalog subprocess: %s", " ".join(cmd))
+    return subprocess.run(cmd).returncode
+
+
 def main():
+    configure_console_output()
+
     parser = argparse.ArgumentParser(description="Download and convert books to audio")
     parser.add_argument("--author", help="Filter by author name")
     parser.add_argument("--book", help="Filter by book title")
@@ -170,7 +184,7 @@ def main():
         if not downloaded:
             print("\nNo books downloaded.")
             logger.warning("No books downloaded")
-            return
+            sys.exit(1)
 
         print(f"\n{len(downloaded)} book(s) downloaded.\n")
 
@@ -195,6 +209,18 @@ def main():
     print(f"\n{'=' * 60}")
     print(f"Done. {succeeded} succeeded, {failed} failed out of {len(downloaded)} book(s).")
     logger.info("process-books complete: %d succeeded, %d failed", succeeded, failed)
+    if failed:
+        sys.exit(1)
+
+    if args.upload and succeeded:
+        print("\nRefreshing catalog.json ...")
+        rc = refresh_catalog(args)
+        if rc != 0:
+            logger.error("build-catalog.py failed rc=%s", rc)
+            print(f"Error: build-catalog.py exited with code {rc}")
+            sys.exit(rc)
+        logger.info("catalog refresh succeeded")
+        print("Catalog refreshed.")
 
 
 if __name__ == "__main__":
