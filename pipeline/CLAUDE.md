@@ -14,7 +14,7 @@ src/openshelf/
     gutenberg.py            # Gutendex API search
     standard_ebooks.py      # HTML catalog scraping
   pipeline/                 # EPUB -> audio conversion
-    epub_parser.py          # Step 1:  EPUB -> chapters with ContentElements
+    epub_parser.py          # Step 1:  EPUB -> chapters with ContentElements; book_parse.json durable artifact
     epub_annotator.py       # Step 1b: inject stable element IDs into EPUB HTML
     text_chunker.py         # Step 2:  paragraphs -> TTS-sized Chunks
     voice_director.py       # Step 2b: registry, speaker spans, emotion/pace direction; voice_direction artifact (de)serialization
@@ -32,6 +32,7 @@ src/openshelf/
     build.py                # new_build_id() — fresh random 16-hex per pipeline run
     r2_keys.py              # Pure-string R2 key constructors (mirrored in worker/src/utils/r2-keys.ts)
     r2.py                   # Step 6:  upload to Cloudflare R2 under build-versioned keys
+    dag_cli.py              # File-to-file stage commands (parse/chunk/direct/synth/sync/assemble/coverage/upload); see docs/dag-cli.md
     runner.py               # orchestrator (stub)
 
 scripts/

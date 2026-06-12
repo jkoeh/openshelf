@@ -16,6 +16,7 @@ pipeline/docs/step6-r2.md:
     {output}/{author}/{title}/
       book-annotated.epub
       cover.{jpg|png}
+      book_parse.json                            ← durable parse artifact (local only)
       manifest.json                              ← book-level (mutable pointer)
       audio/{rendition}/builds/{build}/
         character_registry.json                  ← voice registry audit/client artifact
@@ -30,7 +31,6 @@ pipeline/docs/step6-r2.md:
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import json
 import logging
 import os
@@ -52,10 +52,16 @@ from openshelf.config import (
     TTS_LANGUAGE,
 )
 from openshelf.pipeline.build import new_build_id
-from openshelf.pipeline.encoder import encode_to_aac
+from openshelf.pipeline.dag_cli import build_chapter_data_payload, upload_build
 from openshelf.pipeline.engines import create_aligner, create_engine
 from openshelf.pipeline.epub_annotator import annotate_epub
-from openshelf.pipeline.epub_parser import extract_cover_image, parse_epub
+from openshelf.pipeline.epub_parser import (
+    build_book_parse_artifact,
+    epub_sha256,
+    extract_cover_image,
+    parse_epub,
+    write_book_parse_artifact,
+)
 from openshelf.pipeline.llm import create_llm
 from openshelf.pipeline.logging_utils import Heartbeat, configure_pipeline_logging
 from openshelf.pipeline.manifest import (
@@ -63,7 +69,6 @@ from openshelf.pipeline.manifest import (
     generate_book_manifest,
     generate_rendition_entry,
     generate_rendition_manifest,
-    merge_book_manifest,
 )
 from openshelf.pipeline.run_context import (
     RunContextError,
@@ -74,27 +79,25 @@ from openshelf.pipeline.run_context import (
 )
 from openshelf.pipeline.text_chunker import (
     chunk_text,
-    read_chapter_chunks_artifact,
     write_chapter_chunks_artifact,
 )
-from openshelf.pipeline.tts import ChunkInfo, WordTimestamp, load_pipeline, synthesize_chapter
+from openshelf.pipeline.tts import (
+    build_chunk_infos,
+    load_pipeline,
+    synthesize_chapter_to_files,
+)
 from openshelf.pipeline.tts_engine import VoiceSpec
 from openshelf.pipeline.voice_director import (
     AudioDirector,
     BookContext,
-    ChunkWindow,
+    build_chunk_windows,
     build_direction_chapter,
     build_voice_direction_payload,
     directed_chunks_from_chapter_direction_artifact,
 )
-from openshelf.pipeline.word_aligner import (
-    read_chapter_sync_artifact,
-    write_chapter_sync_artifact,
-)
 from openshelf.scrapers.http import sanitize
 
 
-CHAPTER_DATA_VERSION = 1
 logger = logging.getLogger("openshelf.convert_book")
 
 
@@ -166,79 +169,6 @@ def _derive_rendition(engine_name: str, voice: VoiceSpec) -> str:
     if voice_id.startswith(prefix):
         return voice_id
     return f"{engine_name}-{voice_id}"
-
-
-def _build_chapter_data(
-    chunked_chapters: list[dict],
-    chapter_chunk_words: dict[int, list[list[WordTimestamp]]],
-    rendition: str,
-    build_id: str,
-) -> dict:
-    """Assemble the chapter_data.json payload (chunks + flat words)."""
-    payload: dict = {
-        "version": CHAPTER_DATA_VERSION,
-        "rendition": rendition,
-        "build": build_id,
-        "chapters": [],
-    }
-    for ch_data in chunked_chapters:
-        ch_num = ch_data["number"]
-        chunk_source = _chapter_chunks_for_chapter_data(ch_data)
-        chunks = chunk_source["chunks"]
-        fallback_words = chapter_chunk_words.get(ch_num, [[] for _ in chunks])
-        words_per_chunk = _chapter_words_for_chapter_data(ch_data, fallback_words)
-        entry = {
-            "number": ch_num,
-            "title": chunk_source["title"],
-            "word_count": sum(len(c["text"].split()) for c in chunks),
-            "chunks": [],
-        }
-        for ci, c in enumerate(chunks):
-            words = words_per_chunk[ci] if ci < len(words_per_chunk) else []
-            entry["chunks"].append({
-                "text": c["text"],
-                "words": words,
-            })
-        payload["chapters"].append(entry)
-    return payload
-
-
-def _chapter_chunks_for_chapter_data(ch_data: dict) -> dict:
-    if "chunks_artifact_path" in ch_data:
-        return read_chapter_chunks_artifact(ch_data["chunks_artifact_path"])
-
-    return {
-        "number": ch_data["number"],
-        "title": ch_data["title"],
-        "chunks": [
-            {
-                "index": index,
-                "text": chunk.text,
-                "para_start": chunk.para_start,
-                "para_end": chunk.para_end,
-                "el_start": chunk.el_start,
-                "el_end": chunk.el_end,
-            }
-            for index, chunk in enumerate(ch_data["chunks"])
-        ],
-    }
-
-
-def _chapter_words_for_chapter_data(
-    ch_data: dict,
-    fallback_words: list[list[WordTimestamp]],
-) -> list[list[dict]]:
-    if "sync_artifact_path" in ch_data:
-        sync_payload = read_chapter_sync_artifact(ch_data["sync_artifact_path"])
-        return [
-            chunk.get("words", [])
-            for chunk in sync_payload.get("chunks", [])
-        ]
-
-    return [
-        [dataclasses.asdict(word) for word in words]
-        for words in fallback_words
-    ]
 
 
 def _chapter_direction_path(build_dir: str, chapter_number: int) -> str:
@@ -514,6 +444,21 @@ def main() -> None:
 
     # Annotated EPUB (book-level, immutable, no rendition/build scope)
     os.makedirs(book_dir, exist_ok=True)
+
+    # book_parse.json (book-level, durable parse artifact for resume; local only,
+    # not part of the public R2 contract). Deterministic for a given EPUB+parser.
+    book_parse_path = os.path.join(book_dir, "book_parse.json")
+    write_book_parse_artifact(
+        book_parse_path,
+        build_book_parse_artifact(
+            chapters,
+            epub_sha256(args.epub),
+            {"title": book_title, "author": book_author, "source": args.source},
+        ),
+        force=True,
+    )
+    logger.info("Book parse artifact written: %s", book_parse_path)
+
     annotated_epub_path = os.path.join(book_dir, "book-annotated.epub")
     if args.force or not os.path.exists(annotated_epub_path):
         annotated_bytes = annotate_epub(args.epub, chapters)
@@ -587,8 +532,6 @@ def main() -> None:
     total_duration = 0.0
     total_skipped = 0
     chapter_durations: dict[int, float] = {}
-    chapter_chunk_starts: dict[int, list[float]] = {}
-    chapter_chunk_words: dict[int, list[list[WordTimestamp]]] = {}
     start = time.time()
 
     for ch_data in generation_chapters:
@@ -601,14 +544,7 @@ def main() -> None:
 
         with Heartbeat(logger, f"Directing chapter {ch_num}") as heartbeat:
             heartbeat.update(f"Attributing speakers for chapter {ch_num} ({len(chunks)} chunks)")
-            windows = [
-                ChunkWindow(
-                    prev=chunks[ci - 1].text if ci > 0 else "",
-                    text=c.text,
-                    next=chunks[ci + 1].text if ci < len(chunks) - 1 else "",
-                )
-                for ci, c in enumerate(chunks)
-            ]
+            windows = build_chunk_windows([c.text for c in chunks])
             registry, directed_chunks = director.direct_chapter(ch_title, windows, registry)
             heartbeat.update(f"Preparing directed chunk metadata for chapter {ch_num}")
             direction_chapter = build_direction_chapter(
@@ -652,51 +588,40 @@ def main() -> None:
         directed_chunks_for_synthesis = directed_chunks_from_chapter_direction_artifact(
             chapter_direction_path
         )
-        chunk_infos = []
-        for ci, c in enumerate(chunks):
-            ends_para = (ci == len(chunks) - 1) or (c.para_end != chunks[ci + 1].para_start)
-            chunk_infos.append(ChunkInfo(
-                text=c.text,
-                ends_paragraph=ends_para,
-                directed_segments=directed_chunks_for_synthesis[ci],
-            ))
+        chunk_texts = [c.text for c in chunks]
+        ends_paragraph = [
+            (ci == len(chunks) - 1) or (chunks[ci].para_end != chunks[ci + 1].para_start)
+            for ci in range(len(chunks))
+        ]
+        chunk_infos = build_chunk_infos(
+            chunk_texts, ends_paragraph, directed_chunks_for_synthesis
+        )
 
         m4a_path = os.path.join(build_dir, f"chapter-{ch_num:02d}.m4a")
         wav_path = os.path.join(build_dir, f"chapter-{ch_num:02d}.wav")
-
-        # Each pipeline run gets a fresh random build_dir, so any existing
-        # m4a here is leftover from an aborted prior attempt against this same
-        # ID — regenerate unconditionally rather than risk pairing stale audio
-        # with freshly-generated chapter_data word timestamps.
-        if os.path.exists(m4a_path):
-            os.remove(m4a_path)
+        sync_path = _chapter_sync_path(build_dir, ch_num)
 
         print("    synthesizing + aligning ...", end=" ", flush=True)
 
+        # Shared audio path (also used by the `synth` DAG command): remove any
+        # stale m4a, synthesize + align, encode to AAC, and write the sync
+        # artifact. Returns the synthesis result + encoded duration.
         with Heartbeat(logger, f"Synthesizing and aligning chapter {ch_num}"):
-            result = synthesize_chapter(
+            result, duration = synthesize_chapter_to_files(
                 engine,
                 chunk_infos,
                 wav_path,
+                m4a_path,
+                sync_path,
+                ch_num,
+                chunk_texts,
                 voice=narrator_voice_id,
                 aligner=aligner,
+                keep_wav=args.keep_wav,
+                force=args.force,
             )
-        with Heartbeat(logger, f"Encoding chapter {ch_num} to AAC"):
-            duration = encode_to_aac(wav_path, m4a_path, delete_wav=not args.keep_wav)
 
         chapter_durations[ch_num] = duration
-        chapter_chunk_starts[ch_num] = result.chunk_audio_starts
-        chapter_chunk_words[ch_num] = result.chunk_words
-        sync_path = _chapter_sync_path(build_dir, ch_num)
-        write_chapter_sync_artifact(
-            sync_path,
-            ch_num,
-            os.path.basename(m4a_path),
-            result.chunk_audio_starts,
-            result.chunk_words,
-            chunk_texts=[c.text for c in chunks],
-            force=args.force,
-        )
         ch_data["sync_artifact_path"] = sync_path
         total_duration += duration
         total_skipped += result.skipped_chunks
@@ -754,9 +679,15 @@ def main() -> None:
     print(f"Rendition manifest: {rendition_manifest_path}")
     logger.info("Rendition manifest written: %s", rendition_manifest_path)
 
+    # Assemble chapter_data.json from the per-chapter chunk + sync artifacts via
+    # the same builder the `assemble` DAG command uses (filtered to the chapters
+    # generated this run).
     chapter_data_path = os.path.join(build_dir, "chapter_data.json")
-    payload = _build_chapter_data(
-        generation_chapters, chapter_chunk_words, rendition, build_id,
+    payload = build_chapter_data_payload(
+        build_dir,
+        rendition,
+        build_id,
+        selected_chapters={ch_data["number"] for ch_data in generation_chapters},
     )
     _write_json(chapter_data_path, payload)
     print(f"Chapter data: {chapter_data_path}")
@@ -781,56 +712,20 @@ def main() -> None:
     print(f"Book manifest (local): {book_manifest_path}")
     logger.info("Book manifest written: %s", book_manifest_path)
 
-    # Step 6: Upload to R2
+    # Step 6: Upload to R2 — shared with the `upload` DAG command. upload_build
+    # uploads cover/EPUB + every per-(rendition, build) artifact, then merges this
+    # rendition into the prior R2 book manifest so other renditions survive.
     if args.upload:
-        from openshelf.pipeline.r2 import (
-            fetch_prior_book_manifest,
-            make_client,
-            upload_book_manifest,
-            upload_cover,
-            upload_epub,
-            upload_rendition_build,
-        )
-
         print("\nUploading to R2 ...")
         logger.info("Uploading to R2 bucket=%s prefix=books/%s/%s/", R2_BUCKET, author_slug, title_slug)
-        with Heartbeat(logger, "Creating R2 client"):
-            client = make_client()
-
-        if cover_path:
-            with Heartbeat(logger, "Uploading cover to R2"):
-                upload_cover(client, R2_BUCKET, author_slug, title_slug,
-                             cover_path, cover_content_type, force=args.force)
-        with Heartbeat(logger, "Uploading annotated EPUB to R2"):
-            upload_epub(client, R2_BUCKET, author_slug, title_slug,
-                        annotated_epub_path, force=args.force)
-        with Heartbeat(logger, "Uploading rendition build to R2"):
-            upload_rendition_build(
-                client, R2_BUCKET, author_slug, title_slug,
-                rendition, build_id,
-                audio_dir=build_dir,
-                chapter_data_path=chapter_data_path,
-                rendition_manifest_path=rendition_manifest_path,
-                character_registry_path=character_registry_path,
-                voice_direction_path=voice_direction_path,
-                run_context_path=run_context_path,
+        with Heartbeat(logger, "Uploading build to R2"):
+            upload_build(
+                book_dir=book_dir,
+                rendition=rendition,
+                build_id=build_id,
+                source=args.source,
                 force=args.force,
             )
-
-        # Merge with prior R2 manifest so other renditions survive.
-        with Heartbeat(logger, "Fetching prior book manifest from R2"):
-            prior = fetch_prior_book_manifest(client, R2_BUCKET, author_slug, title_slug)
-        if prior:
-            merged = merge_book_manifest(prior, rendition, new_entry)
-            merged["title"] = book_title
-            merged["author"] = book_author
-            merged["source"] = args.source
-            _write_json(book_manifest_path, merged)
-            logger.info("Merged prior R2 manifest with new rendition entry")
-
-        with Heartbeat(logger, "Uploading book manifest to R2"):
-            upload_book_manifest(client, R2_BUCKET, author_slug, title_slug, book_manifest_path)
-
         print("Upload complete.")
         print(f"R2 prefix: books/{author_slug}/{title_slug}/")
         logger.info("Upload complete: books/%s/%s/", author_slug, title_slug)

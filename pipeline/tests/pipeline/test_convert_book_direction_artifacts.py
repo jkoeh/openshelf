@@ -5,19 +5,15 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
-import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 from openshelf.pipeline.tts_engine import DirectedSegment, VoiceSpec  # noqa: E402
-from openshelf.pipeline.text_chunker import Chunk, write_chapter_chunks_artifact  # noqa: E402
-from openshelf.pipeline.tts import WordTimestamp  # noqa: E402
 from openshelf.pipeline.voice_director import (  # noqa: E402
     build_direction_chapter,
     build_voice_direction_payload,
 )
-from openshelf.pipeline.word_aligner import write_chapter_sync_artifact  # noqa: E402
 
 SCRIPT_PATH = os.path.join(
     os.path.dirname(__file__),
@@ -33,65 +29,6 @@ spec.loader.exec_module(convert_book_script)
 
 
 class TestConvertBookDirectionArtifacts(unittest.TestCase):
-    def test_build_chapter_data_reads_chunk_artifact_path(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            artifact_path = os.path.join(tmp, "chapter-01.chunks.json")
-            write_chapter_chunks_artifact(
-                artifact_path,
-                1,
-                "Chapter One",
-                [Chunk("Reader text.", 0, 0, "ch1-el0000", "ch1-el0000")],
-            )
-
-            payload = convert_book_script._build_chapter_data(
-                [{"number": 1, "chunks_artifact_path": artifact_path}],
-                {1: [[WordTimestamp("Reader", 0.0, 0.4)]]},
-                "kokoro-af-heart",
-                "abc123",
-            )
-
-        self.assertEqual(payload["chapters"][0]["title"], "Chapter One")
-        self.assertEqual(payload["chapters"][0]["word_count"], 2)
-        self.assertEqual(payload["chapters"][0]["chunks"][0]["text"], "Reader text.")
-        self.assertEqual(
-            payload["chapters"][0]["chunks"][0]["words"][0],
-            {"word": "Reader", "start": 0.0, "end": 0.4},
-        )
-
-    def test_build_chapter_data_reads_sync_artifact_path(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            chunks_path = os.path.join(tmp, "chapter-01.chunks.json")
-            sync_path = os.path.join(tmp, "chapter-01.sync.json")
-            write_chapter_chunks_artifact(
-                chunks_path,
-                1,
-                "Chapter One",
-                [Chunk("Reader text.", 0, 0, "ch1-el0000", "ch1-el0000")],
-            )
-            write_chapter_sync_artifact(
-                sync_path,
-                1,
-                "chapter-01.m4a",
-                [0.0],
-                [[WordTimestamp("Reader", 0.0, 0.4)]],
-            )
-
-            payload = convert_book_script._build_chapter_data(
-                [{
-                    "number": 1,
-                    "chunks_artifact_path": chunks_path,
-                    "sync_artifact_path": sync_path,
-                }],
-                {},
-                "kokoro-af-heart",
-                "abc123",
-            )
-
-        self.assertEqual(
-            payload["chapters"][0]["chunks"][0]["words"],
-            [{"word": "Reader", "start": 0.0, "end": 0.4}],
-        )
-
     def test_chapter_direction_payload_and_speed_summary(self):
         directed_chunks = [[
             DirectedSegment(

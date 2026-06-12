@@ -144,13 +144,18 @@ def _format_coverage_report(report: dict) -> str:
     return "\n".join(lines)
 
 
-def assemble_chapter_data(
+def build_chapter_data_payload(
     build_dir: str,
     rendition: str,
     build_id: str,
-    output_path: str | None = None,
-    force: bool = False,
-) -> str:
+    selected_chapters: set[int] | None = None,
+) -> dict:
+    """Assemble the public chapter_data.json payload from chunk + sync artifacts.
+
+    Shared by the `assemble` DAG command and the convert-book orchestrator.
+    ``selected_chapters`` restricts assembly to a subset (e.g. a local
+    --chapters sample run); None assembles every chapter present.
+    """
     chunks_paths = sorted(
         glob.glob(os.path.join(build_dir, "chapter-*.chunks.json")),
         key=_chapter_number_from_chunks_path,
@@ -166,6 +171,9 @@ def assemble_chapter_data(
     }
 
     for chunks_path in chunks_paths:
+        number = _chapter_number_from_chunks_path(chunks_path)
+        if selected_chapters is not None and number not in selected_chapters:
+            continue
         chunk_payload = read_chapter_chunks_artifact(chunks_path)
         sync_path = _sync_path_for_chunks_path(chunks_path)
         if not os.path.exists(sync_path):
@@ -190,6 +198,20 @@ def assemble_chapter_data(
             })
         payload["chapters"].append(entry)
 
+    return payload
+
+
+def assemble_chapter_data(
+    build_dir: str,
+    rendition: str,
+    build_id: str,
+    output_path: str | None = None,
+    selected_chapters: set[int] | None = None,
+    force: bool = False,
+) -> str:
+    payload = build_chapter_data_payload(
+        build_dir, rendition, build_id, selected_chapters=selected_chapters
+    )
     destination = output_path or os.path.join(build_dir, "chapter_data.json")
     return _write_json_idempotent(destination, payload, force=force)
 
@@ -298,7 +320,7 @@ def direct_chapter(
     from openshelf.pipeline.voice_director import (
         AudioDirector,
         CharacterRegistry,
-        ChunkWindow,
+        build_chunk_windows,
         build_direction_chapter,
         build_voice_direction_payload,
         voice_spec_from_dict,
@@ -327,14 +349,7 @@ def direct_chapter(
         characters={},
     )
 
-    windows = [
-        ChunkWindow(
-            prev=chunk_texts[i - 1] if i > 0 else "",
-            text=text,
-            next=chunk_texts[i + 1] if i < len(chunk_texts) - 1 else "",
-        )
-        for i, text in enumerate(chunk_texts)
-    ]
+    windows = build_chunk_windows(chunk_texts)
 
     if director is None:
         from openshelf.config import TTS_ENGINE
@@ -387,12 +402,10 @@ def synth_chapter(
     skips unless ``force=True`` (TTS is expensive and not deterministic, so the
     file-exists gate stands in for an input fingerprint).
     """
-    from openshelf.pipeline.encoder import encode_to_aac
-    from openshelf.pipeline.tts import ChunkInfo, synthesize_chapter
+    from openshelf.pipeline.tts import build_chunk_infos, synthesize_chapter_to_files
     from openshelf.pipeline.voice_director import (
         directed_chunks_from_chapter_direction_artifact,
     )
-    from openshelf.pipeline.word_aligner import write_chapter_sync_artifact
 
     chunks_path = os.path.join(build_dir, f"chapter-{chapter_number:02d}.chunks.json")
     direction_path = os.path.join(
@@ -413,16 +426,12 @@ def synth_chapter(
     chunks = chunk_payload.get("chunks", [])
     directed_chunks = directed_chunks_from_chapter_direction_artifact(direction_path)
 
-    chunk_infos = []
-    for ci, chunk in enumerate(chunks):
-        ends_para = (ci == len(chunks) - 1) or (
-            chunk["para_end"] != chunks[ci + 1]["para_start"]
-        )
-        chunk_infos.append(ChunkInfo(
-            text=chunk["text"],
-            ends_paragraph=ends_para,
-            directed_segments=directed_chunks[ci] if ci < len(directed_chunks) else None,
-        ))
+    chunk_texts = [chunk["text"] for chunk in chunks]
+    ends_paragraph = [
+        (ci == len(chunks) - 1) or (chunk["para_end"] != chunks[ci + 1]["para_start"])
+        for ci, chunk in enumerate(chunks)
+    ]
+    chunk_infos = build_chunk_infos(chunk_texts, ends_paragraph, directed_chunks)
 
     if voice is None:
         registry_path = os.path.join(build_dir, "character_registry.json")
@@ -442,25 +451,20 @@ def synth_chapter(
         if aligner is None:
             aligner = create_aligner(engine, device=device)
 
-    # Any existing m4a is leftover from an aborted attempt; regenerate cleanly.
-    if os.path.exists(m4a_path):
-        os.remove(m4a_path)
-
-    synth_kwargs = {"aligner": aligner}
-    if voice is not None:
-        synth_kwargs["voice"] = voice
-    result = synthesize_chapter(engine, chunk_infos, wav_path, **synth_kwargs)
-    encode_to_aac(wav_path, m4a_path, delete_wav=not keep_wav)
-
-    return write_chapter_sync_artifact(
+    synthesize_chapter_to_files(
+        engine,
+        chunk_infos,
+        wav_path,
+        m4a_path,
         sync_path,
         chapter_number,
-        os.path.basename(m4a_path),
-        result.chunk_audio_starts,
-        result.chunk_words,
-        chunk_texts=[chunk["text"] for chunk in chunks],
+        chunk_texts,
+        voice=voice,
+        aligner=aligner,
+        keep_wav=keep_wav,
         force=force,
     )
+    return sync_path
 
 
 def sync_chapter(

@@ -1977,3 +1977,18 @@ def build_voice_direction_payload(
         "cast_mode": cast_mode,
         "chapters": chapters,
     }
+
+
+def build_chunk_windows(chunk_texts: list[str]) -> list[ChunkWindow]:
+    """Build prev/text/next direction windows for a chapter's chunks.
+
+    Shared by the convert-book orchestrator and the `direct` DAG command.
+    """
+    return [
+        ChunkWindow(
+            prev=chunk_texts[i - 1] if i > 0 else "",
+            text=text,
+            next=chunk_texts[i + 1] if i < len(chunk_texts) - 1 else "",
+        )
+        for i, text in enumerate(chunk_texts)
+    ]

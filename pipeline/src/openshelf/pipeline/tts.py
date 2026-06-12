@@ -684,3 +684,72 @@ def synthesize_chapter(
         chunk_audio_starts=chunk_audio_starts,
         chunk_words=chunk_words,
     )
+
+
+def build_chunk_infos(
+    chunk_texts: list[str],
+    ends_paragraph: list[bool],
+    directed_chunks: list[list[DirectedSegment]] | None = None,
+) -> list[ChunkInfo]:
+    """Assemble the per-chunk ChunkInfo list for synthesis.
+
+    Shared by the convert-book orchestrator and the `synth` DAG command so both
+    build synthesis input the same way.
+    """
+    infos: list[ChunkInfo] = []
+    for i, text in enumerate(chunk_texts):
+        directed = None
+        if directed_chunks is not None and i < len(directed_chunks):
+            directed = directed_chunks[i]
+        infos.append(ChunkInfo(
+            text=text,
+            ends_paragraph=ends_paragraph[i],
+            directed_segments=directed,
+        ))
+    return infos
+
+
+def synthesize_chapter_to_files(
+    engine: Any,
+    chunk_infos: list[ChunkInfo],
+    wav_path: str,
+    m4a_path: str,
+    sync_path: str,
+    chapter_number: int,
+    chunk_texts: list[str],
+    voice: str | None = None,
+    aligner: Any = None,
+    keep_wav: bool = False,
+    force: bool = False,
+) -> tuple[SynthesisResult, float]:
+    """Synthesize one chapter to its m4a + sync artifacts. Returns (result, encoded_duration).
+
+    This is the single audio-generation path shared by the convert-book
+    orchestrator and the `synth` DAG command: remove any stale m4a, synthesize +
+    align, encode to AAC, and write chapter-NN.sync.json. The encoded duration is
+    returned for manifest accounting.
+    """
+    from openshelf.pipeline.encoder import encode_to_aac
+    from openshelf.pipeline.word_aligner import write_chapter_sync_artifact
+
+    # Any existing m4a is leftover from an aborted attempt; regenerate cleanly so
+    # stale audio is never paired with freshly-generated word timestamps.
+    if os.path.exists(m4a_path):
+        os.remove(m4a_path)
+
+    synth_kwargs: dict = {"aligner": aligner}
+    if voice is not None:
+        synth_kwargs["voice"] = voice
+    result = synthesize_chapter(engine, chunk_infos, wav_path, **synth_kwargs)
+    duration = encode_to_aac(wav_path, m4a_path, delete_wav=not keep_wav)
+
+    write_chapter_sync_artifact(
+        sync_path,
+        chapter_number,
+        os.path.basename(m4a_path),
+        result.chunk_audio_starts,
+        result.chunk_words,
+        chunk_texts=chunk_texts,
+        force=force,
+    )
+    return result, duration
