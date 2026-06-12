@@ -29,6 +29,10 @@ from openshelf.pipeline.voice_director import (  # noqa: E402
     annotate_with_fallback,
     assign_voices,
     build_character_registry,
+    build_direction_chapter,
+    build_voice_direction_payload,
+    directed_chunks_from_chapter_direction_artifact,
+    directed_segment_to_dict,
     extract_quote_spans,
     group_performance_units,
     merge_adjacent_segments,
@@ -1167,6 +1171,77 @@ class TestAnnotateWithFallback(unittest.TestCase):
         cfg = AnnotationPromptConfig(speaker_rules="")
         segments = annotate_with_fallback(ChunkWindow("", text, ""), _registry(), llm, cfg)
         self.assertEqual("".join(s.text for s in segments), text)
+
+
+class TestVoiceDirectionArtifact(unittest.TestCase):
+    def test_directed_chunks_round_trip_through_artifact(self):
+        import json
+        import tempfile
+
+        chapter = build_direction_chapter(
+            3,
+            "Chapter",
+            ["Narrator. Quote."],
+            [[
+                DirectedSegment(
+                    text="Directed narrator.",
+                    voice=VoiceSpec(id="narrator", preset_name="af_heart"),
+                    speaker="narrator",
+                    emotion="gentle",
+                    speed=0.95,
+                    pause_after_ms=120,
+                    original_text="Narrator.",
+                    delivery_type="narration",
+                    voice_policy="narrator",
+                    join_policy="tight",
+                    engine_controls={"style": "soft"},
+                ),
+            ]],
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "chapter-03.voice_direction.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(
+                    build_voice_direction_payload(
+                        "kokoro-af-heart", "abc123", "kokoro", "solo", [chapter]
+                    ),
+                    f,
+                )
+            directed_chunks = directed_chunks_from_chapter_direction_artifact(path)
+
+        self.assertEqual(len(directed_chunks), 1)
+        segment = directed_chunks[0][0]
+        self.assertEqual(segment.text, "Directed narrator.")
+        self.assertEqual(segment.voice.preset_name, "af_heart")
+        self.assertEqual(segment.emotion, "gentle")
+        self.assertEqual(segment.speed, 0.95)
+        self.assertEqual(segment.pause_after_ms, 120)
+        self.assertEqual(segment.original_text, "Narrator.")
+        self.assertEqual(segment.join_policy, "tight")
+        self.assertEqual(segment.engine_controls, {"style": "soft"})
+
+    def test_directed_segment_to_dict_keeps_original_and_synthesis_text(self):
+        segment = DirectedSegment(
+            text="Synth.",
+            voice=VoiceSpec(id="narrator"),
+            speaker="narrator",
+            original_text="Original.",
+        )
+        payload = directed_segment_to_dict(segment)
+        self.assertEqual(payload["original_text"], "Original.")
+        self.assertEqual(payload["synthesis_text"], "Synth.")
+
+    def test_directed_chunks_artifact_rejects_multi_chapter(self):
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "bad.voice_direction.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"chapters": [{"chunks": []}, {"chunks": []}]}, f)
+            with self.assertRaises(ValueError):
+                directed_chunks_from_chapter_direction_artifact(path)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ Key invariants enforced here:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 
@@ -60,6 +61,18 @@ def key_exists(client, bucket: str, key: str) -> bool:
         if e.response["Error"]["Code"] == "404":
             return False
         raise
+
+
+def fetch_prior_book_manifest(client, bucket: str, author_slug: str, title_slug: str) -> dict:
+    """Return the prior book manifest on R2 (parsed), or {} if it does not exist."""
+    key = r2_keys.book_manifest_key(author_slug, title_slug)
+    try:
+        obj = client.get_object(Bucket=bucket, Key=key)
+    except ClientError as e:
+        if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
+            return {}
+        raise
+    return json.loads(obj["Body"].read().decode("utf-8"))
 
 
 # ---------------------------------------------------------------------------

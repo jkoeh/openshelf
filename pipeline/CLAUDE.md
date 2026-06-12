@@ -17,7 +17,7 @@ src/openshelf/
     epub_parser.py          # Step 1:  EPUB -> chapters with ContentElements
     epub_annotator.py       # Step 1b: inject stable element IDs into EPUB HTML
     text_chunker.py         # Step 2:  paragraphs -> TTS-sized Chunks
-    voice_director.py       # Step 2b: registry, speaker spans, emotion/pace direction
+    voice_director.py       # Step 2b: registry, speaker spans, emotion/pace direction; voice_direction artifact (de)serialization
     llm.py                  # LLM adapters: stub, replay, recording, Anthropic, OpenAI
     tts_engine.py           # Engine protocols, voice specs, directed segments, aligners
     engines/                # TTSEngine adapters and factories
@@ -27,7 +27,7 @@ src/openshelf/
     tts.py                  # Step 3:  directed segments -> WAV + per-chunk word timestamps
     encoder.py              # Step 4:  WAV -> AAC (.m4a) via ffmpeg
     manifest.py             # Step 5a/c: book + per-build rendition manifests
-    word_aligner.py         # WhisperX forced alignment for non-native timestamp engines + QA
+    word_aligner.py         # WhisperX forced alignment for non-native timestamp engines + QA; chapter sync artifact + coverage metrics
     transcriber.py          # WhisperX ASR + WER — internal QA only, used by test-audio-quality
     build.py                # new_build_id() — fresh random 16-hex per pipeline run
     r2_keys.py              # Pure-string R2 key constructors (mirrored in worker/src/utils/r2-keys.ts)

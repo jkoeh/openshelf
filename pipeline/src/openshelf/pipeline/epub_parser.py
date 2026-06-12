@@ -1,11 +1,17 @@
 """Step 1: Parse EPUB files into chapters of clean plain text."""
 
+import dataclasses
+import hashlib
+import json
+import os
 import re
 from dataclasses import dataclass
 
 import ebooklib
 from ebooklib import epub
 from bs4 import BeautifulSoup
+
+from openshelf.config import PIPELINE_VERSION
 
 
 @dataclass
@@ -354,3 +360,72 @@ def parse_epub(epub_path: str) -> list[Chapter]:
         ))
 
     return chapters
+
+
+# --- book_parse.json durable artifact (see docs/step1b-book-parse.md) ---------
+
+
+BOOK_PARSE_VERSION = 1
+
+
+def epub_sha256(epub_path: str) -> str:
+    """Return the content hash of an EPUB file as ``sha256:<hex>``."""
+    digest = hashlib.sha256()
+    with open(epub_path, "rb") as f:
+        for block in iter(lambda: f.read(65536), b""):
+            digest.update(block)
+    return "sha256:" + digest.hexdigest()
+
+
+def read_book_metadata(epub_path: str) -> dict:
+    """Read title/author from the EPUB's Dublin Core metadata."""
+    book = epub.read_epub(epub_path)
+    title_meta = book.get_metadata("DC", "title")
+    author_meta = book.get_metadata("DC", "creator")
+    return {
+        "title": title_meta[0][0] if title_meta else "",
+        "author": author_meta[0][0] if author_meta else "",
+    }
+
+
+def build_book_parse_artifact(
+    chapters: list[Chapter], epub_hash: str, metadata: dict
+) -> dict:
+    """Serialize parsed chapters into the durable ``book_parse.json`` payload."""
+    return {
+        "version": BOOK_PARSE_VERSION,
+        "epub_hash": epub_hash,
+        "parser_version": PIPELINE_VERSION,
+        "metadata": dict(metadata),
+        "chapters": [
+            {
+                "number": ch.number,
+                "title": ch.title,
+                "epub_item_name": ch.epub_item_name,
+                "word_count": ch.word_count,
+                "elements": [dataclasses.asdict(el) for el in ch.elements],
+            }
+            for ch in chapters
+        ],
+    }
+
+
+def read_book_parse_artifact(path: str) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def write_book_parse_artifact(path: str, payload: dict, force: bool = False) -> str:
+    if os.path.exists(path) and not force:
+        existing = read_book_parse_artifact(path)
+        if existing == payload:
+            return path
+        raise FileExistsError(
+            f"book_parse artifact already exists with different payload: {path}"
+        )
+
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    return path

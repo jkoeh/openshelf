@@ -78,8 +78,19 @@ from openshelf.pipeline.text_chunker import (
     write_chapter_chunks_artifact,
 )
 from openshelf.pipeline.tts import ChunkInfo, WordTimestamp, load_pipeline, synthesize_chapter
-from openshelf.pipeline.tts_engine import DirectedSegment, VoiceSpec
-from openshelf.pipeline.voice_director import AudioDirector, BookContext, ChunkWindow
+from openshelf.pipeline.tts_engine import VoiceSpec
+from openshelf.pipeline.voice_director import (
+    AudioDirector,
+    BookContext,
+    ChunkWindow,
+    build_direction_chapter,
+    build_voice_direction_payload,
+    directed_chunks_from_chapter_direction_artifact,
+)
+from openshelf.pipeline.word_aligner import (
+    read_chapter_sync_artifact,
+    write_chapter_sync_artifact,
+)
 from openshelf.scrapers.http import sanitize
 
 
@@ -213,116 +224,12 @@ def _chapter_chunks_for_chapter_data(ch_data: dict) -> dict:
     }
 
 
-def _build_chapter_sync_artifact(
-    chapter_number: int,
-    audio_filename: str,
-    chunk_audio_starts: list[float],
-    chunk_words: list[list[WordTimestamp]],
-    chunk_texts: list[str] | None = None,
-) -> dict:
-    return {
-        "version": 1,
-        "number": chapter_number,
-        "audio_filename": audio_filename,
-        "chunk_audio_starts": chunk_audio_starts,
-        "coverage": _sync_coverage_metrics(chunk_words, chunk_texts),
-        "chunks": [
-            {
-                "index": index,
-                "words": [dataclasses.asdict(word) for word in words],
-            }
-            for index, words in enumerate(chunk_words)
-        ],
-    }
-
-
-def _coverage_ratio(aligned_word_count: int, reader_word_count: int) -> float:
-    if reader_word_count == 0:
-        return 1.0 if aligned_word_count == 0 else 0.0
-    return round(aligned_word_count / reader_word_count, 4)
-
-
-def _sync_coverage_metrics(
-    chunk_words: list[list[WordTimestamp]],
-    chunk_texts: list[str] | None = None,
-) -> dict:
-    if chunk_texts is None:
-        chunk_texts = [" ".join(word.word for word in words) for words in chunk_words]
-
-    chunk_summaries = []
-    total_reader_words = 0
-    total_aligned_words = 0
-    first_missing_word_offset = None
-
-    for index, words in enumerate(chunk_words):
-        text = chunk_texts[index] if index < len(chunk_texts) else ""
-        reader_word_count = len(text.split())
-        aligned_word_count = len(words)
-        chunk_first_missing = (
-            aligned_word_count
-            if aligned_word_count < reader_word_count
-            else None
-        )
-        if first_missing_word_offset is None and chunk_first_missing is not None:
-            first_missing_word_offset = total_reader_words + chunk_first_missing
-
-        chunk_summaries.append({
-            "index": index,
-            "reader_word_count": reader_word_count,
-            "aligned_word_count": aligned_word_count,
-            "coverage_ratio": _coverage_ratio(aligned_word_count, reader_word_count),
-            "first_missing_word_offset": chunk_first_missing,
-        })
-        total_reader_words += reader_word_count
-        total_aligned_words += aligned_word_count
-
-    return {
-        "reader_word_count": total_reader_words,
-        "aligned_word_count": total_aligned_words,
-        "coverage_ratio": _coverage_ratio(total_aligned_words, total_reader_words),
-        "first_missing_word_offset": first_missing_word_offset,
-        "chunks": chunk_summaries,
-    }
-
-
-def _read_chapter_sync_artifact(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def _write_chapter_sync_artifact(
-    path: str,
-    chapter_number: int,
-    audio_filename: str,
-    chunk_audio_starts: list[float],
-    chunk_words: list[list[WordTimestamp]],
-    chunk_texts: list[str] | None = None,
-    force: bool = False,
-) -> str:
-    payload = _build_chapter_sync_artifact(
-        chapter_number,
-        audio_filename,
-        chunk_audio_starts,
-        chunk_words,
-        chunk_texts=chunk_texts,
-    )
-    if os.path.exists(path) and not force:
-        existing = _read_chapter_sync_artifact(path)
-        if existing == payload:
-            return path
-        raise FileExistsError(f"sync artifact already exists with different payload: {path}")
-
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    _write_json(path, payload)
-    return path
-
-
 def _chapter_words_for_chapter_data(
     ch_data: dict,
     fallback_words: list[list[WordTimestamp]],
 ) -> list[list[dict]]:
     if "sync_artifact_path" in ch_data:
-        sync_payload = _read_chapter_sync_artifact(ch_data["sync_artifact_path"])
+        sync_payload = read_chapter_sync_artifact(ch_data["sync_artifact_path"])
         return [
             chunk.get("words", [])
             for chunk in sync_payload.get("chunks", [])
@@ -332,104 +239,6 @@ def _chapter_words_for_chapter_data(
         [dataclasses.asdict(word) for word in words]
         for words in fallback_words
     ]
-
-
-def _directed_segment_to_dict(segment: DirectedSegment) -> dict:
-    original_text = segment.original_text if segment.original_text is not None else segment.text
-    return {
-        "speaker": segment.speaker,
-        "voice": dataclasses.asdict(segment.voice),
-        "original_text": original_text,
-        "synthesis_text": segment.text,
-        "emotion": segment.emotion,
-        "speed": segment.speed,
-        "pause_after_ms": segment.pause_after_ms,
-        "delivery_type": segment.delivery_type,
-        "voice_policy": segment.voice_policy,
-        "join_policy": segment.join_policy,
-        "engine_controls": segment.engine_controls,
-    }
-
-
-def _voice_spec_from_dict(data: dict) -> VoiceSpec:
-    return VoiceSpec(
-        id=data["id"],
-        preset_name=data.get("preset_name"),
-        ref_audio_path=data.get("ref_audio_path"),
-        ref_text=data.get("ref_text"),
-        style_ref_audio_paths=data.get("style_ref_audio_paths") or {},
-        style_ref_texts=data.get("style_ref_texts") or {},
-    )
-
-
-def _directed_segment_from_dict(data: dict) -> DirectedSegment:
-    return DirectedSegment(
-        text=data["synthesis_text"],
-        voice=_voice_spec_from_dict(data["voice"]),
-        speaker=data["speaker"],
-        emotion=data.get("emotion"),
-        speed=float(data.get("speed", 1.0) or 1.0),
-        pause_after_ms=int(data.get("pause_after_ms", 0) or 0),
-        original_text=data.get("original_text"),
-        delivery_type=data.get("delivery_type", "narration"),
-        voice_policy=data.get("voice_policy", "narrator"),
-        join_policy=data.get("join_policy", "normal"),
-        engine_controls=data.get("engine_controls") or {},
-    )
-
-
-def _directed_chunks_from_chapter_direction_artifact(path: str) -> list[list[DirectedSegment]]:
-    with open(path, "r", encoding="utf-8") as f:
-        payload = json.load(f)
-    chapters = payload.get("chapters", [])
-    if len(chapters) != 1:
-        raise ValueError(f"chapter direction artifact must contain exactly one chapter: {path}")
-
-    chunks = chapters[0].get("chunks", [])
-    return [
-        [_directed_segment_from_dict(segment) for segment in chunk.get("segments", [])]
-        for chunk in chunks
-    ]
-
-
-def _build_direction_chapter(
-    ch_data: dict,
-    directed_chunks: list[list[DirectedSegment]],
-    fallback_used: bool = False,
-    fallback_error: str | None = None,
-) -> dict:
-    payload = {
-        "number": ch_data["number"],
-        "title": ch_data["title"],
-        "fallback_used": fallback_used,
-        "fallback_error": fallback_error,
-        "chunks": [],
-    }
-    for ci, c in enumerate(ch_data["chunks"]):
-        segments = directed_chunks[ci] if ci < len(directed_chunks) else []
-        payload["chunks"].append({
-            "index": ci,
-            "text": c.text,
-            "segments": [_directed_segment_to_dict(segment) for segment in segments],
-        })
-    return payload
-
-
-def _build_voice_direction_payload(
-    rendition: str,
-    build_id: str,
-    engine_name: str,
-    cast_mode: str,
-    chapters: list[dict],
-) -> dict:
-    return {
-        "version": 1,
-        "rendition": rendition,
-        "build": build_id,
-        "engine": engine_name,
-        "cast_mode": cast_mode,
-        "chapters": chapters,
-    }
 
 
 def _chapter_direction_path(build_dir: str, chapter_number: int) -> str:
@@ -468,22 +277,6 @@ def _direction_speed_summary(chapter_payload: dict) -> dict:
         "narrator_above_1x": narrator_above_1x,
         "max_speed": max_speed,
     }
-
-
-def _fetch_prior_book_manifest(client, bucket: str, author_slug: str, title_slug: str) -> dict:
-    """Return the prior book manifest on R2 (parsed), or {} if it does not exist."""
-    from botocore.exceptions import ClientError
-
-    from openshelf.pipeline import r2_keys
-
-    key = r2_keys.book_manifest_key(author_slug, title_slug)
-    try:
-        obj = client.get_object(Bucket=bucket, Key=key)
-    except ClientError as e:
-        if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
-            return {}
-        raise
-    return json.loads(obj["Body"].read().decode("utf-8"))
 
 
 def _write_json(path: str, payload: dict) -> None:
@@ -773,7 +566,7 @@ def main() -> None:
     logger.info("Character registry written: %s", character_registry_path)
 
     voice_direction_path = os.path.join(build_dir, "voice_direction.json")
-    voice_direction_payload: dict = _build_voice_direction_payload(
+    voice_direction_payload: dict = build_voice_direction_payload(
         rendition,
         build_id,
         engine.name,
@@ -818,8 +611,10 @@ def main() -> None:
             ]
             registry, directed_chunks = director.direct_chapter(ch_title, windows, registry)
             heartbeat.update(f"Preparing directed chunk metadata for chapter {ch_num}")
-            direction_chapter = _build_direction_chapter(
-                ch_data,
+            direction_chapter = build_direction_chapter(
+                ch_data["number"],
+                ch_data["title"],
+                [c.text for c in chunks],
                 directed_chunks,
                 fallback_used=director.last_chapter_fallback_used,
                 fallback_error=director.last_chapter_error,
@@ -828,7 +623,7 @@ def main() -> None:
             chapter_direction_path = _chapter_direction_path(build_dir, ch_num)
             _write_json(
                 chapter_direction_path,
-                _build_voice_direction_payload(
+                build_voice_direction_payload(
                     rendition,
                     build_id,
                     engine.name,
@@ -854,7 +649,7 @@ def main() -> None:
             )
         logger.info("Chapter %d direction complete", ch_num)
 
-        directed_chunks_for_synthesis = _directed_chunks_from_chapter_direction_artifact(
+        directed_chunks_for_synthesis = directed_chunks_from_chapter_direction_artifact(
             chapter_direction_path
         )
         chunk_infos = []
@@ -893,7 +688,7 @@ def main() -> None:
         chapter_chunk_starts[ch_num] = result.chunk_audio_starts
         chapter_chunk_words[ch_num] = result.chunk_words
         sync_path = _chapter_sync_path(build_dir, ch_num)
-        _write_chapter_sync_artifact(
+        write_chapter_sync_artifact(
             sync_path,
             ch_num,
             os.path.basename(m4a_path),
@@ -989,6 +784,7 @@ def main() -> None:
     # Step 6: Upload to R2
     if args.upload:
         from openshelf.pipeline.r2 import (
+            fetch_prior_book_manifest,
             make_client,
             upload_book_manifest,
             upload_cover,
@@ -1023,7 +819,7 @@ def main() -> None:
 
         # Merge with prior R2 manifest so other renditions survive.
         with Heartbeat(logger, "Fetching prior book manifest from R2"):
-            prior = _fetch_prior_book_manifest(client, R2_BUCKET, author_slug, title_slug)
+            prior = fetch_prior_book_manifest(client, R2_BUCKET, author_slug, title_slug)
         if prior:
             merged = merge_book_manifest(prior, rendition, new_entry)
             merged["title"] = book_title

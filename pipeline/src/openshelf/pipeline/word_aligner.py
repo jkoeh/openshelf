@@ -9,6 +9,8 @@ import os
 import math
 from dataclasses import dataclass
 
+from openshelf.pipeline.tts_engine import WordTimestamp
+
 logger = logging.getLogger(__name__)
 
 
@@ -186,6 +188,115 @@ def align_chapter(
         ))
 
     return words
+
+
+# --- chapter-NN.sync.json durable artifact (see plans/pipeline-resumable-repair-plan.md) ---
+
+
+def coverage_ratio(aligned_word_count: int, reader_word_count: int) -> float:
+    if reader_word_count == 0:
+        return 1.0 if aligned_word_count == 0 else 0.0
+    return round(aligned_word_count / reader_word_count, 4)
+
+
+def sync_coverage_metrics(
+    chunk_words: list[list[WordTimestamp]],
+    chunk_texts: list[str] | None = None,
+) -> dict:
+    """Diagnostic coverage: reader vs aligned word counts per chunk and total."""
+    if chunk_texts is None:
+        chunk_texts = [" ".join(word.word for word in words) for words in chunk_words]
+
+    chunk_summaries = []
+    total_reader_words = 0
+    total_aligned_words = 0
+    first_missing_word_offset = None
+
+    for index, words in enumerate(chunk_words):
+        text = chunk_texts[index] if index < len(chunk_texts) else ""
+        reader_word_count = len(text.split())
+        aligned_word_count = len(words)
+        chunk_first_missing = (
+            aligned_word_count
+            if aligned_word_count < reader_word_count
+            else None
+        )
+        if first_missing_word_offset is None and chunk_first_missing is not None:
+            first_missing_word_offset = total_reader_words + chunk_first_missing
+
+        chunk_summaries.append({
+            "index": index,
+            "reader_word_count": reader_word_count,
+            "aligned_word_count": aligned_word_count,
+            "coverage_ratio": coverage_ratio(aligned_word_count, reader_word_count),
+            "first_missing_word_offset": chunk_first_missing,
+        })
+        total_reader_words += reader_word_count
+        total_aligned_words += aligned_word_count
+
+    return {
+        "reader_word_count": total_reader_words,
+        "aligned_word_count": total_aligned_words,
+        "coverage_ratio": coverage_ratio(total_aligned_words, total_reader_words),
+        "first_missing_word_offset": first_missing_word_offset,
+        "chunks": chunk_summaries,
+    }
+
+
+def build_chapter_sync_artifact(
+    chapter_number: int,
+    audio_filename: str,
+    chunk_audio_starts: list[float],
+    chunk_words: list[list[WordTimestamp]],
+    chunk_texts: list[str] | None = None,
+) -> dict:
+    return {
+        "version": 1,
+        "number": chapter_number,
+        "audio_filename": audio_filename,
+        "chunk_audio_starts": chunk_audio_starts,
+        "coverage": sync_coverage_metrics(chunk_words, chunk_texts),
+        "chunks": [
+            {
+                "index": index,
+                "words": [dataclasses.asdict(word) for word in words],
+            }
+            for index, words in enumerate(chunk_words)
+        ],
+    }
+
+
+def read_chapter_sync_artifact(path: str) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def write_chapter_sync_artifact(
+    path: str,
+    chapter_number: int,
+    audio_filename: str,
+    chunk_audio_starts: list[float],
+    chunk_words: list[list[WordTimestamp]],
+    chunk_texts: list[str] | None = None,
+    force: bool = False,
+) -> str:
+    payload = build_chapter_sync_artifact(
+        chapter_number,
+        audio_filename,
+        chunk_audio_starts,
+        chunk_words,
+        chunk_texts=chunk_texts,
+    )
+    if os.path.exists(path) and not force:
+        existing = read_chapter_sync_artifact(path)
+        if existing == payload:
+            return path
+        raise FileExistsError(f"sync artifact already exists with different payload: {path}")
+
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False, sort_keys=True)
+    return path
 
 
 def write_word_alignment(

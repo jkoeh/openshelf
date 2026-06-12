@@ -1874,3 +1874,106 @@ class AudioDirector:
             sample_rate,
             prior_frames,
         )
+
+
+# --- chapter-NN.voice_direction.json artifact (LLM <-> audio boundary) -------
+
+
+def directed_segment_to_dict(segment: DirectedSegment) -> dict:
+    original_text = segment.original_text if segment.original_text is not None else segment.text
+    return {
+        "speaker": segment.speaker,
+        "voice": asdict(segment.voice),
+        "original_text": original_text,
+        "synthesis_text": segment.text,
+        "emotion": segment.emotion,
+        "speed": segment.speed,
+        "pause_after_ms": segment.pause_after_ms,
+        "delivery_type": segment.delivery_type,
+        "voice_policy": segment.voice_policy,
+        "join_policy": segment.join_policy,
+        "engine_controls": segment.engine_controls,
+    }
+
+
+def voice_spec_from_dict(data: dict) -> VoiceSpec:
+    return VoiceSpec(
+        id=data["id"],
+        preset_name=data.get("preset_name"),
+        ref_audio_path=data.get("ref_audio_path"),
+        ref_text=data.get("ref_text"),
+        style_ref_audio_paths=data.get("style_ref_audio_paths") or {},
+        style_ref_texts=data.get("style_ref_texts") or {},
+    )
+
+
+def directed_segment_from_dict(data: dict) -> DirectedSegment:
+    return DirectedSegment(
+        text=data["synthesis_text"],
+        voice=voice_spec_from_dict(data["voice"]),
+        speaker=data["speaker"],
+        emotion=data.get("emotion"),
+        speed=float(data.get("speed", 1.0) or 1.0),
+        pause_after_ms=int(data.get("pause_after_ms", 0) or 0),
+        original_text=data.get("original_text"),
+        delivery_type=data.get("delivery_type", "narration"),
+        voice_policy=data.get("voice_policy", "narrator"),
+        join_policy=data.get("join_policy", "normal"),
+        engine_controls=data.get("engine_controls") or {},
+    )
+
+
+def directed_chunks_from_chapter_direction_artifact(path: str) -> list[list[DirectedSegment]]:
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    chapters = payload.get("chapters", [])
+    if len(chapters) != 1:
+        raise ValueError(f"chapter direction artifact must contain exactly one chapter: {path}")
+
+    chunks = chapters[0].get("chunks", [])
+    return [
+        [directed_segment_from_dict(segment) for segment in chunk.get("segments", [])]
+        for chunk in chunks
+    ]
+
+
+def build_direction_chapter(
+    number: int,
+    title: str,
+    chunk_texts: list[str],
+    directed_chunks: list[list[DirectedSegment]],
+    fallback_used: bool = False,
+    fallback_error: str | None = None,
+) -> dict:
+    payload = {
+        "number": number,
+        "title": title,
+        "fallback_used": fallback_used,
+        "fallback_error": fallback_error,
+        "chunks": [],
+    }
+    for ci, text in enumerate(chunk_texts):
+        segments = directed_chunks[ci] if ci < len(directed_chunks) else []
+        payload["chunks"].append({
+            "index": ci,
+            "text": text,
+            "segments": [directed_segment_to_dict(segment) for segment in segments],
+        })
+    return payload
+
+
+def build_voice_direction_payload(
+    rendition: str,
+    build_id: str,
+    engine_name: str,
+    cast_mode: str,
+    chapters: list[dict],
+) -> dict:
+    return {
+        "version": 1,
+        "rendition": rendition,
+        "build": build_id,
+        "engine": engine_name,
+        "cast_mode": cast_mode,
+        "chapters": chapters,
+    }
