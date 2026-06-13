@@ -216,6 +216,22 @@ controls such as `exaggeration` and `cfg_weight`; higher exaggeration can make
 speech more dramatic and may also speed up delivery, so pair it with lower
 `cfg_weight` for more deliberate audiobook pacing. Chatterbox Turbo advertises
 native paralinguistic tags such as `[laugh]`, `[chuckle]`, and `[cough]`.
+OpenShelf's classic Chatterbox adapter keeps CFG/exaggeration enabled. To avoid
+turning every segment into a fresh reference-cloning setup, it prepares upstream
+conditionals once for the current reference clip with `prepare_conditionals(...)`
+and reuses them for consecutive same-voice segments. When a multicast run
+switches to a different reference clip, the adapter prepares that clip before
+the next `generate(...)` call.
+The adapter also owns prompt-length control for classic Chatterbox. Long
+paragraph-sized synthesis units are packed into sentence-sized units with short
+internal pauses before calling `generate(...)`; this avoids needless runs toward
+the upstream `max_new_tokens=1000` ceiling while preserving reader text and
+WhisperX as the final sync source.
+For English classic Chatterbox runs, the adapter patches the upstream
+`T3HuggingfaceBackend.forward(...)` call path to request only the transformer
+outputs needed for speech logits. It disables attention tensors and full
+hidden-state lists because OpenShelf does not use upstream attentions for sync
+or reader data.
 
 ### Direction Implications
 
@@ -246,7 +262,6 @@ The default adapter maps `emotion` and `intensity` to Chatterbox's documented
 ```python
 wav = model.generate(
     text=segment.text,
-    audio_prompt_path=segment.voice.ref_audio_path,
     exaggeration=exaggeration,
     cfg_weight=cfg_weight,
 )

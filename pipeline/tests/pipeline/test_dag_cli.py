@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import tempfile
+import types
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
@@ -16,10 +17,12 @@ import io  # noqa: E402
 from unittest.mock import MagicMock, patch  # noqa: E402
 
 from openshelf.pipeline.dag_cli import (  # noqa: E402
+    build_registry,
     chunk_chapters,
     collect_coverage,
     direct_chapter,
     main,
+    run_book,
     sync_chapter,
     synth_chapter,
     upload_build,
@@ -387,6 +390,16 @@ class _StubDirector:
         ]
         return registry, directed
 
+    def build_registry(self, ctx, narrator_voice_override=None):
+        from openshelf.pipeline.tts_engine import VoiceSpec
+        from openshelf.pipeline.voice_director import CharacterRegistry
+
+        return CharacterRegistry(
+            narrator_voice=narrator_voice_override
+            or VoiceSpec(id="af_heart", preset_name="af_heart"),
+            characters={},
+        )
+
 
 class TestDagCliDirect(unittest.TestCase):
     def _setup(self, tmp: str) -> str:
@@ -422,6 +435,24 @@ class TestDagCliDirect(unittest.TestCase):
             self.assertEqual(segment["speaker"], "narrator")
             self.assertEqual(segment["voice"]["preset_name"], "af_heart")
 
+    def test_direct_via_main_accepts_performance_direction_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build_dir = self._setup(tmp)
+            with patch("openshelf.pipeline.dag_cli.direct_chapter") as mocked:
+                mocked.return_value = os.path.join(build_dir, "chapter-01.voice_direction.json")
+                exit_code = main([
+                    "direct",
+                    "--build-dir",
+                    build_dir,
+                    "--chapter",
+                    "1",
+                    "--performance-direction",
+                    "off",
+                ])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(mocked.call_args.kwargs["performance_direction_mode"], "off")
+
     def test_direct_is_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:
             build_dir = self._setup(tmp)
@@ -446,6 +477,153 @@ class TestDagCliDirect(unittest.TestCase):
             )
             with self.assertRaises(FileNotFoundError):
                 direct_chapter(build_dir, 1, director=_StubDirector())
+
+
+class TestDagCliRegistry(unittest.TestCase):
+    def _write_book_parse(self, tmp: str) -> str:
+        path = os.path.join(tmp, "book_parse.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(_book_parse_payload(), f)
+        return path
+
+    def test_registry_writes_character_registry_from_book_parse(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            book_parse_path = self._write_book_parse(tmp)
+            build_dir = os.path.join(tmp, "audio", "kokoro-af-heart", "builds", "abc123")
+            path = build_registry(book_parse_path, build_dir, director=_StubDirector())
+
+            with open(path, encoding="utf-8") as f:
+                payload = json.load(f)
+
+        self.assertEqual(payload["narrator_voice"]["preset_name"], "af_heart")
+        self.assertEqual(payload["characters"], {})
+
+    def test_registry_via_main_forwards_voice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            book_parse_path = self._write_book_parse(tmp)
+            build_dir = os.path.join(tmp, "audio", "kokoro-af-heart", "builds", "abc123")
+            with patch("openshelf.pipeline.dag_cli.build_registry") as mocked:
+                mocked.return_value = os.path.join(build_dir, "character_registry.json")
+                exit_code = main([
+                    "registry",
+                    "--book-parse",
+                    book_parse_path,
+                    "--build-dir",
+                    build_dir,
+                    "--engine",
+                    "kokoro",
+                    "--voice",
+                    "af_heart",
+                ])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(mocked.call_args.kwargs["voice"], "af_heart")
+
+
+class TestDagCliRun(unittest.TestCase):
+    def test_run_book_dry_run_parses_and_skips_engine(self):
+        from openshelf.pipeline.epub_parser import Chapter, ContentElement
+        from openshelf.pipeline.logging_utils import close_pipeline_logging
+
+        chapter = Chapter(
+            number=1,
+            title="Chapter One",
+            elements=[
+                ContentElement(
+                    id="ch1-el0000",
+                    tag="p",
+                    html="<p>Hello world</p>",
+                    text="Hello world",
+                    spoken=True,
+                )
+            ],
+            paragraphs=["Hello world"],
+            text="Hello world",
+            word_count=2,
+            epub_item_name="chapter.xhtml",
+        )
+        args = types.SimpleNamespace(
+            epub="",
+            output="audio",
+            source="local",
+            engine="kokoro",
+            voice=None,
+            cast_mode="solo",
+            performance_direction="off",
+            rendition=None,
+            device=None,
+            chapters="1",
+            dry_run=True,
+            keep_wav=False,
+            upload=False,
+            log_dir="logs",
+            build_id="1234567890abcdef",
+            resume=False,
+            force=False,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            epub_path = os.path.join(tmp, "book.epub")
+            open(epub_path, "wb").close()
+            args.epub = epub_path
+            args.output = tmp
+            args.log_dir = tmp
+
+            with patch("openshelf.pipeline.dag_cli.parse_epub", return_value=[chapter]), \
+                    patch(
+                        "openshelf.pipeline.dag_cli.read_book_metadata",
+                        return_value={"title": "Book", "author": "Author"},
+                    ), \
+                    patch("openshelf.pipeline.engines.create_engine") as create_engine:
+                try:
+                    result = run_book(args)
+                finally:
+                    close_pipeline_logging()
+
+        self.assertTrue(result["dry_run"])
+        self.assertEqual(result["chapters"], [1])
+        create_engine.assert_not_called()
+
+    def test_run_via_main_forwards_full_book_flags(self):
+        with patch("openshelf.pipeline.dag_cli.run_book") as mocked:
+            mocked.return_value = {"build_id": "abc123"}
+            exit_code = main([
+                "run",
+                "--epub",
+                "book.epub",
+                "--source",
+                "standard-ebooks",
+                "--output",
+                "audio",
+                "--engine",
+                "chatterbox",
+                "--voice",
+                "chatterbox-bf_emma",
+                "--rendition",
+                "chatterbox-bf-emma",
+                "--cast-mode",
+                "solo",
+                "--performance-direction",
+                "batched",
+                "--device",
+                "cuda",
+                "--chapters",
+                "1",
+                "--upload",
+                "--force",
+            ])
+
+        self.assertEqual(exit_code, 0)
+        args = mocked.call_args.args[0]
+        self.assertEqual(args.epub, "book.epub")
+        self.assertEqual(args.source, "standard-ebooks")
+        self.assertEqual(args.engine, "chatterbox")
+        self.assertEqual(args.voice, "chatterbox-bf_emma")
+        self.assertEqual(args.performance_direction, "batched")
+        self.assertEqual(args.device, "cuda")
+        self.assertEqual(args.chapters, "1")
+        self.assertTrue(args.upload)
+        self.assertTrue(args.force)
 
 
 class TestDagCliSynth(unittest.TestCase):

@@ -17,6 +17,7 @@ from openshelf.pipeline.llm import LLMError, StubLLM  # noqa: E402
 from openshelf.pipeline.tts_engine import (  # noqa: E402
     AnnotationPromptConfig,
     DirectedSegment,
+    EmotionPromptConfig,
     NullAligner,
     PostProcessingConfig,
     RegistryPromptConfig,
@@ -79,6 +80,25 @@ class FakeEngine:
                 )
                 for i, w in enumerate(words)
             ],
+        )
+
+
+class FakePerformanceEngine(FakeEngine):
+    capabilities = TTSCapabilities(
+        emotion_control=True,
+        paralinguistic_markers=False,
+        speed_control=True,
+        provides_timestamps=True,
+        voice_cloning=False,
+        performance_direction=True,
+    )
+
+    def emotion_prompt_config(self):
+        return EmotionPromptConfig(
+            emotion_vocabulary=["neutral", "anxious", "sad"],
+            marker_format=None,
+            injection_rules="Use safe pacing.",
+            speed_labels=["slow", "normal", "fast"],
         )
 
 
@@ -222,6 +242,64 @@ class TestAudioDirector(unittest.TestCase):
         self.assertEqual(segments[0].speaker, "narrator")
         self.assertEqual(segments[0].voice.id, "narrator")
         self.assertEqual(segments[0].text, text)
+
+    def test_default_batched_performance_direction_uses_one_chapter_call(self):
+        windows = [
+            ChunkWindow("", "First chunk.", "Second chunk."),
+            ChunkWindow("First chunk.", "Second chunk.", ""),
+        ]
+        llm = StubLLM([{"annotations": [
+            {"chunk_index": 0, "segment_index": 0, "emotion": "anxious", "speed": "normal"},
+            {"chunk_index": 1, "segment_index": 0, "emotion": "sad", "speed": "slow"},
+        ]}])
+        director = AudioDirector(FakePerformanceEngine(), llm, NullAligner())
+
+        _registry_after, directed = director.direct_chapter("I", windows, _registry())
+
+        self.assertEqual(len(llm.calls), 1)
+        self.assertEqual(directed[0][0].emotion, "anxious")
+        self.assertEqual(directed[1][0].emotion, "sad")
+        self.assertIn("chunk_index", llm.calls[0]["user"])
+
+    def test_chunk_performance_direction_preserves_per_chunk_calls(self):
+        windows = [
+            ChunkWindow("", "First chunk.", "Second chunk."),
+            ChunkWindow("First chunk.", "Second chunk.", ""),
+        ]
+        llm = StubLLM([
+            {"annotations": [{"index": 0, "emotion": "anxious", "speed": "normal"}]},
+            {"annotations": [{"index": 0, "emotion": "sad", "speed": "slow"}]},
+        ])
+        director = AudioDirector(
+            FakePerformanceEngine(),
+            llm,
+            NullAligner(),
+            performance_direction_mode="chunk",
+        )
+
+        _registry_after, directed = director.direct_chapter("I", windows, _registry())
+
+        self.assertEqual(len(llm.calls), 2)
+        self.assertEqual(directed[0][0].emotion, "anxious")
+        self.assertEqual(directed[1][0].emotion, "sad")
+        self.assertIn('"index": 0', llm.calls[0]["user"])
+
+    def test_off_performance_direction_uses_neutral_without_llm_calls(self):
+        windows = [ChunkWindow("", "Plain narration.", "")]
+        llm = StubLLM([])
+        director = AudioDirector(
+            FakePerformanceEngine(),
+            llm,
+            NullAligner(),
+            performance_direction_mode="off",
+        )
+
+        _registry_after, directed = director.direct_chapter("I", windows, _registry())
+
+        self.assertEqual(len(llm.calls), 0)
+        self.assertEqual(directed[0][0].emotion, "neutral")
+        self.assertEqual(directed[0][0].speed, 0.95)
+        self.assertEqual(directed[0][0].engine_controls["intensity"], 0.5)
 
 
 if __name__ == "__main__":

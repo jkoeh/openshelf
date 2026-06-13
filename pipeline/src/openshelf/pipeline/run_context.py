@@ -24,6 +24,7 @@ _MATCH_FIELDS = (
     "voice",
     "rendition",
     "cast_mode",
+    "performance_direction_mode",
     "language",
     "chapters",
 )
@@ -47,6 +48,7 @@ class RunContext:
     voice: str
     rendition: str
     cast_mode: str
+    performance_direction_mode: str
     language: str
     chapters: list[int]
     version: int = RUN_CONTEXT_VERSION
@@ -66,6 +68,7 @@ class RunContext:
             "voice": self.voice,
             "rendition": self.rendition,
             "cast_mode": self.cast_mode,
+            "performance_direction_mode": self.performance_direction_mode,
             "language": self.language,
             "chapters": list(self.chapters),
         }
@@ -103,6 +106,7 @@ def make_run_context(
     voice: str,
     rendition: str,
     cast_mode: str,
+    performance_direction_mode: str,
     language: str,
     chapters: list[int],
 ) -> RunContext:
@@ -119,6 +123,7 @@ def make_run_context(
         voice=voice,
         rendition=rendition,
         cast_mode=cast_mode,
+        performance_direction_mode=performance_direction_mode,
         language=language,
         chapters=sorted(chapters),
     )

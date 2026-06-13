@@ -361,6 +361,43 @@ class TestProcessBooksFiltering(unittest.TestCase):
 
         self.assertEqual(len(downloaded), 1)
 
+    def test_convert_book_forwards_performance_direction(self):
+        module = self._load_process_books()
+        args = types.SimpleNamespace(
+            output="audio",
+            engine="chatterbox",
+            voice=None,
+            rendition=None,
+            cast_mode=None,
+            performance_direction="batched",
+            device="cuda",
+            chapters=None,
+            keep_wav=False,
+            upload=False,
+            dry_run=False,
+            build_id=None,
+            resume=False,
+            force=False,
+            log_dir="logs",
+        )
+
+        with patch.object(
+            module.subprocess,
+            "run",
+            return_value=types.SimpleNamespace(returncode=0),
+        ) as run:
+            rc = module.convert_book("book.epub", "local", args)
+
+        self.assertEqual(rc, 0)
+        cmd = run.call_args[0][0]
+        self.assertIn("-m", cmd)
+        self.assertIn("openshelf.pipeline.dag_cli", cmd)
+        self.assertIn("run", cmd)
+        self.assertNotIn("convert-book.py", " ".join(cmd))
+        self.assertIn("--performance-direction", cmd)
+        self.assertIn("batched", cmd)
+        self.assertIn("PYTHONPATH", run.call_args.kwargs["env"])
+
     def test_main_exits_nonzero_when_no_books_downloaded(self):
         module = self._load_process_books()
 

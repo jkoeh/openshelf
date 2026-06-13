@@ -481,6 +481,17 @@ def _synthesize_segments(
 
     for segment in segments:
         units = _split_synthesis_units(segment.text)
+        split_units = getattr(engine, "split_synthesis_units", None)
+        if callable(split_units):
+            expanded_units: list[tuple[str, int]] = []
+            for unit_text, unit_pause_ms in units:
+                engine_units = split_units(unit_text)
+                if not engine_units:
+                    continue
+                for split_index, (split_text, split_pause_ms) in enumerate(engine_units):
+                    pause_ms = unit_pause_ms if split_index == len(engine_units) - 1 else split_pause_ms
+                    expanded_units.append((split_text, pause_ms))
+            units = expanded_units
         for unit_index, (unit_text, unit_pause_ms) in enumerate(units):
             unit_segment = replace(segment, text=unit_text)
             synth_segment = _segment_for_synthesis(unit_segment)
