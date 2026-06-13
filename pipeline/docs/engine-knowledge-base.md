@@ -203,6 +203,11 @@ wav = model.generate(
 )
 ```
 
+Pipeline CLIs that accept `--device` must pass the selected device into
+`ChatterboxAdapter` before lazy model load. Passing the device only to WhisperX
+or only to Kokoro leaves classic Chatterbox at the upstream default, which is
+effectively CPU on Windows.
+
 The upstream package initializes `perth.PerthImplicitWatermarker` during model
 construction. Some Windows installs expose that symbol as `None` because the
 optional compiled watermarker is unavailable. The OpenShelf adapter may patch

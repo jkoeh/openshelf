@@ -624,8 +624,8 @@ def synth_chapter(
         from openshelf.pipeline.engines import create_aligner, create_engine
         from openshelf.pipeline.tts import load_pipeline
 
-        engine = create_engine(engine_name or TTS_ENGINE)
         device = device or "cpu"
+        engine = create_engine(engine_name or TTS_ENGINE, device=device)
         if engine.name == "kokoro":
             engine.pipeline = load_pipeline(device=device)
         if aligner is None:
@@ -941,18 +941,15 @@ def run_book(args) -> dict:
         }
 
     logger.info("Creating TTS engine and LLM provider")
-    engine = create_engine(args.engine)
     selected_device = getattr(args, "device", None)
-    if selected_device is None and (
-        engine.name == "kokoro"
-        or engine.post_processing_config().needs_forced_alignment
-    ):
+    if selected_device is None:
         from openshelf.pipeline.tts import get_device
 
         selected_device = get_device()
     selected_device = selected_device or "cpu"
     _log_torch_device_diagnostics(selected_device)
 
+    engine = create_engine(args.engine, device=selected_device)
     aligner = create_aligner(engine, device=selected_device)
     llm = create_llm()
     director = AudioDirector(

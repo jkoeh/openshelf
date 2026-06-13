@@ -625,6 +625,76 @@ class TestDagCliRun(unittest.TestCase):
         self.assertTrue(args.upload)
         self.assertTrue(args.force)
 
+    def test_run_book_passes_selected_device_to_engine_factory(self):
+        from openshelf.pipeline.epub_parser import Chapter, ContentElement
+        from openshelf.pipeline.logging_utils import close_pipeline_logging
+
+        chapter = Chapter(
+            number=1,
+            title="Chapter One",
+            elements=[
+                ContentElement(
+                    id="ch1-el0000",
+                    tag="p",
+                    html="<p>Hello world</p>",
+                    text="Hello world",
+                    spoken=True,
+                )
+            ],
+            paragraphs=["Hello world"],
+            text="Hello world",
+            word_count=2,
+            epub_item_name="chapter.xhtml",
+        )
+        args = types.SimpleNamespace(
+            epub="",
+            output="audio",
+            source="local",
+            engine="chatterbox",
+            voice=None,
+            cast_mode="solo",
+            performance_direction="off",
+            rendition=None,
+            device="cuda",
+            chapters="1",
+            dry_run=False,
+            keep_wav=False,
+            upload=False,
+            log_dir="logs",
+            build_id="1234567890abcdef",
+            resume=False,
+            force=False,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            epub_path = os.path.join(tmp, "book.epub")
+            open(epub_path, "wb").close()
+            args.epub = epub_path
+            args.output = tmp
+            args.log_dir = tmp
+
+            fake_engine = types.SimpleNamespace(name="chatterbox")
+            with patch("openshelf.pipeline.dag_cli.parse_epub", return_value=[chapter]), \
+                    patch(
+                        "openshelf.pipeline.dag_cli.read_book_metadata",
+                        return_value={"title": "Book", "author": "Author"},
+                    ), \
+                    patch(
+                        "openshelf.pipeline.engines.create_engine",
+                        return_value=fake_engine,
+                    ) as create_engine, \
+                    patch(
+                        "openshelf.pipeline.engines.create_aligner",
+                        side_effect=RuntimeError("stop after engine creation"),
+                    ):
+                try:
+                    with self.assertRaisesRegex(RuntimeError, "stop after engine creation"):
+                        run_book(args)
+                finally:
+                    close_pipeline_logging()
+
+        create_engine.assert_called_once_with("chatterbox", device="cuda")
+
 
 class TestDagCliSynth(unittest.TestCase):
     def _setup(self, tmp: str) -> str:
@@ -724,6 +794,28 @@ class TestDagCliSynth(unittest.TestCase):
                 synth_chapter(build_dir, 1, engine=SimpleNamespace(name="kokoro"), aligner=object())
                 mock_synth.assert_not_called()
                 mock_encode.assert_not_called()
+
+    def test_synth_passes_device_to_engine_factory(self):
+        result, fake_encode = self._patched()
+        with tempfile.TemporaryDirectory() as tmp:
+            build_dir = self._setup(tmp)
+            fake_engine = types.SimpleNamespace(name="chatterbox")
+            fake_aligner = object()
+
+            with patch(
+                "openshelf.pipeline.engines.create_engine",
+                return_value=fake_engine,
+            ) as create_engine, \
+                    patch(
+                        "openshelf.pipeline.engines.create_aligner",
+                        return_value=fake_aligner,
+                    ) as create_aligner, \
+                    patch("openshelf.pipeline.tts.synthesize_chapter", return_value=result), \
+                    patch("openshelf.pipeline.encoder.encode_to_aac", side_effect=fake_encode):
+                synth_chapter(build_dir, 1, engine_name="chatterbox", device="cuda")
+
+        create_engine.assert_called_once_with("chatterbox", device="cuda")
+        create_aligner.assert_called_once_with(fake_engine, device="cuda")
 
     def test_synth_errors_when_direction_missing(self):
         with tempfile.TemporaryDirectory() as tmp:

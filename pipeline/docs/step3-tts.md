@@ -83,7 +83,10 @@ F5 style clips are optional local inputs. The adapter recognizes
 to the base `{preset}.wav`.
 
 Chatterbox synthesis uses `chatterbox.tts.ChatterboxTTS` lazily at the first
-synthesis call. `ChatterboxAdapter.synthesize(...)` prepares the selected
+synthesis call. The adapter must be constructed with the selected pipeline
+device so upstream `ChatterboxTTS.from_pretrained(device=...)` loads classic
+Chatterbox on CUDA/MPS/CPU consistently with the CLI `--device` option.
+`ChatterboxAdapter.synthesize(...)` prepares the selected
 `VoiceSpec.ref_audio_path` with upstream `prepare_conditionals(...)` the first
 time a reference voice is used, reuses those conditionals for consecutive
 segments with the same reference clip, and then calls `generate(...)` with the

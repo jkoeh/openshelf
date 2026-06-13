@@ -231,6 +231,9 @@ Behavior:
   synthesis and pause/stitch-policy **restitch** repair — there are no durable
   WAV/unit intermediates to restitch from, so audio is regenerated from the
   existing direction (no separate `restitch` verb).
+- `--device` is the selected runtime device for both the TTS engine adapter
+  when that engine accepts a device (Kokoro, F5-TTS, Chatterbox) and the
+  WhisperX aligner when forced alignment is required.
 - Idempotency: if both the m4a and sync artifacts already exist, the stage
   **skips** unless `--force` (TTS is expensive and not deterministic, so the
   file-exists gate stands in for an input fingerprint).
@@ -308,3 +311,6 @@ sync is produced by `synth`.
 `--output`, `--source`, `--engine`, `--voice`, `--rendition`, `--cast-mode`,
 `--performance-direction`, `--device`, `--chapters`, `--dry-run`, `--keep-wav`,
 `--upload`, `--log-dir`, `--build-id`, `--resume`, and `--force`.
+For engines with a device-aware adapter, `run --device cuda` passes `cuda` into
+the engine constructor before lazy model load; it also uses the same selected
+device for WhisperX forced alignment.
