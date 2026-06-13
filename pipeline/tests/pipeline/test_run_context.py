@@ -40,6 +40,7 @@ def _context(tmp: str, **overrides):
         "voice": "af_heart",
         "rendition": "kokoro-af-heart",
         "cast_mode": "solo",
+        "performance_direction_mode": "batched",
         "language": "en",
         "chapters": [2, 1],
     }
@@ -63,6 +64,7 @@ class TestRunContext(unittest.TestCase):
 
         data = context.to_dict()
         self.assertEqual(data["chapters"], [1, 2])
+        self.assertEqual(data["performance_direction_mode"], "batched")
         self.assertEqual(data["epub_sha256"], "92719fe0cf8cd51592af31ee8a5736d79f7273777fa3f7b70bfe993a4cd32180")
 
     def test_prepare_writes_new_context(self):
@@ -103,6 +105,16 @@ class TestRunContext(unittest.TestCase):
             mismatch = _context(tmp, engine="chatterbox")
 
             with self.assertRaisesRegex(RunContextError, "engine"):
+                prepare_run_context(path, mismatch, resume=True)
+
+    def test_resume_rejects_mismatched_performance_direction_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            context = _context(tmp)
+            path = run_context_path(os.path.join(tmp, "build"))
+            prepare_run_context(path, context)
+            mismatch = _context(tmp, performance_direction_mode="off")
+
+            with self.assertRaisesRegex(RunContextError, "performance_direction_mode"):
                 prepare_run_context(path, mismatch, resume=True)
 
     def test_force_overwrites_mismatched_context(self):

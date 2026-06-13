@@ -827,6 +827,58 @@ class TestSynthesizeChapterWords(unittest.TestCase):
         self.assertGreater(result.chunk_words[0][2].start, result.chunk_words[0][1].end)
 
     @patch("openshelf.pipeline.tts.sf.write")
+    def test_engine_split_synthesis_units_are_aligned_per_unit(self, mock_sf_write):
+        class FakeEngine:
+            capabilities = TTSCapabilities(
+                emotion_control=False,
+                paralinguistic_markers=False,
+                speed_control=False,
+                provides_timestamps=False,
+                voice_cloning=False,
+            )
+
+            def __init__(self):
+                self.texts = []
+
+            def post_processing_config(self):
+                return PostProcessingConfig(
+                    needs_forced_alignment=True,
+                    voice_transition_silence_ms=0,
+                    normalize_cross_voice=False,
+                )
+
+            def split_synthesis_units(self, text):
+                return [("First split.", 20), ("Second split.", 0)]
+
+            def synthesize(self, segment):
+                self.texts.append(segment.text)
+                return TTSResult(
+                    audio=_fake_audio(6000),
+                    sample_rate=TTS_SAMPLE_RATE,
+                    words=None,
+                )
+
+        engine = FakeEngine()
+        aligner = _RecordingAligner()
+        chunk = ChunkInfo(
+            text="First split. Second split.",
+            directed_segments=[DirectedSegment(
+                text="First split. Second split.",
+                voice=VoiceSpec(id="voice-a"),
+                speaker="narrator",
+            )],
+        )
+
+        result = synthesize_chapter(engine, [chunk], "/tmp/out.wav", aligner=aligner)
+
+        self.assertEqual(engine.texts, ["First split.", "Second split."])
+        self.assertEqual(aligner.texts, ["First split.", "Second split."])
+        self.assertEqual([w.word for w in result.chunk_words[0]], ["First", "split.", "Second", "split."])
+        split_pause = int(TTS_SAMPLE_RATE * 20 / 1000)
+        written = mock_sf_write.call_args[0][1]
+        self.assertEqual(len(written), _LEAD_IN_SAMPLES + 12000 + split_pause)
+
+    @patch("openshelf.pipeline.tts.sf.write")
     def test_word_timestamps_are_clamped_to_reader_order(self, mock_sf_write):
         class FakeEngine:
             capabilities = TTSCapabilities(

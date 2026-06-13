@@ -364,9 +364,17 @@ class AudioDirector:
     def synthesize_chunk(self, segments: list[DirectedSegment], prior_frames: int) -> tuple[np.ndarray, list[WordTimestamp]]: ...
 ```
 
-`direct_chapter` is the production path. In `solo` mode, it returns one narrator segment per chunk and may run performance/emotion direction on that narrator segment only when the engine advertises support. In `multicast` mode, it performs chapter-level speaker attribution and registry expansion, then runs performance/emotion direction per chunk only when `engine.capabilities.emotion_control` or `engine.capabilities.performance_direction` is true and `engine.emotion_prompt_config()` returns a config. Kokoro advertises neither capability in the default path, so it avoids extra LLM performance calls.
+`direct_chapter` is the production path. In `solo` mode, it returns one narrator segment per chunk. In `multicast` mode, it performs chapter-level speaker attribution and registry expansion before producing renderable segments. Engines that advertise `emotion_control` or `performance_direction` then apply performance direction according to `performance_direction_mode`:
+
+- `batched` (default): group consecutive chunks into deterministic direction batches capped at about 1,500 words or 10,000 characters. The LLM returns annotations keyed by `chunk_index` and `segment_index`; code validates exact coverage, retries a failed batch as smaller halves, and finally falls back to deterministic neutral direction for that failed batch.
+- `chunk`: preserve the previous one-LLM-call-per-chunk behavior. This is mainly a debugging or narrow repair mode.
+- `off`: skip performance LLM calls and apply deterministic neutral/default direction.
+
+The output remains `list[list[DirectedSegment]]`, aligned to the original TTS chunks. Performance batching does not change `chapter-NN.voice_direction.json`, `chapter_data.json`, TTS chunking, R2 layout, or client behavior. Kokoro advertises neither capability in the default path, so it avoids extra LLM performance calls regardless of mode.
 
 `direct_chunk` follows the same cast mode. In `solo`, it returns a single narrator segment. In `multicast`, it runs chunk-level speaker annotation with fallback. It is used by tests, debugging harnesses, and as the fallback if chapter-level attribution fails.
+
+`convert-book.py --performance-direction {batched,chunk,off}` selects the mode, and `process-books.py` forwards the same option to local conversion. The default is `batched`.
 
 ## LLM Clients
 

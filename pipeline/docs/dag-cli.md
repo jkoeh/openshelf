@@ -165,9 +165,15 @@ Behavior:
 ### `direct`
 
 ```bash
+python -m openshelf.pipeline.dag_cli registry \
+  --book-parse book_parse.json \
+  --build-dir audio/{rendition}/builds/{build} \
+  --engine chatterbox --voice chatterbox-bf_emma
+
 python -m openshelf.pipeline.dag_cli direct \
   --build-dir audio/{rendition}/builds/{build} \
-  --chapter 2 --engine kokoro
+  --chapter 2 --engine chatterbox \
+  --performance-direction batched
 ```
 
 Input:
@@ -177,14 +183,21 @@ Input:
 
 Output:
 
+- `character_registry.json` from `registry`
+
 - `chapter-NN.voice_direction.json` (the LLM↔audio boundary)
 
 Behavior:
 
+- `registry` builds only the narrator/character registry from `book_parse.json`
+  and writes it to the build directory. `--voice` bypasses the registry LLM for
+  the narrator by selecting an engine voice directly; omitted `--voice` lets the
+  LLM choose from the engine's voice pool.
 - Runs `AudioDirector.direct_chapter` to produce directed segments (speaker,
   voice, and engine-supported performance steering), then writes the per-chapter
-  voice-direction artifact. This is the **only repair stage that may call the
-  LLM**.
+  voice-direction artifact. `direct --performance-direction {batched,chunk,off}`
+  selects the same engine-aware performance mode as `convert-book.py`.
+- `registry` and `direct` are the only repair stages that may call the LLM.
 - **Solo cast mode only.** Multicast registry repair / converting an existing
   solo build to multicast is out of scope (see the resumable-repair plan); the
   command rejects `--cast-mode multicast`.
@@ -255,23 +268,43 @@ Behavior:
 - Does not call the LLM or TTS. After `sync`, run `assemble` to rebuild
   `chapter_data.json`.
 
-## Full local pipeline as stages
+## Full local pipeline
 
-The commands compose into the end-to-end flow that `convert-book.py` runs as a
-monolith today:
+`run` is the canonical full-book orchestrator. It performs the same staged work
+as the manual commands below, writes the same build artifacts, and is the path
+used by `process-books.py`. `convert-book.py` is a compatibility wrapper around
+this runner.
+
+```bash
+python -m openshelf.pipeline.dag_cli run \
+  --epub book.epub \
+  --output audio \
+  --source gutenberg \
+  --engine chatterbox \
+  --device cuda \
+  --performance-direction batched \
+  --upload
+```
+
+The equivalent manual stage sequence is:
 
 ```bash
 pipeline parse   --epub book.epub --out book_parse.json --source gutenberg
 pipeline chunk   --book-parse book_parse.json --build-dir {build_dir}
+pipeline registry --book-parse book_parse.json --build-dir {build_dir} --engine kokoro --voice af_heart
 pipeline direct  --build-dir {build_dir} --chapter N --engine kokoro
 pipeline synth   --build-dir {build_dir} --chapter N --engine kokoro --device cuda
-pipeline sync    --build-dir {build_dir} --chapter N --device cuda --force   # re-align repair only
 pipeline assemble --build-dir {build_dir} --rendition {r} --build-id {b}
 pipeline upload  --book-dir {book_dir} --rendition {r} --build-id {b}
 ```
 
 `direct`, `synth`, and `sync` run per chapter and are safe to parallelize across
 chapters once `character_registry.json` exists. `assemble`, `coverage`, and
-`upload` operate on the whole build. `character_registry.json` itself is still
-produced by the book-level run in `convert-book.py` (registry discovery is not
-yet a standalone command).
+`upload` operate on the whole build. `registry` runs once per book/build before
+chapter direction. `sync` is a later re-alignment repair command; initial word
+sync is produced by `synth`.
+
+`run` preserves the legacy CLI flags from `convert-book.py`: `--epub`,
+`--output`, `--source`, `--engine`, `--voice`, `--rendition`, `--cast-mode`,
+`--performance-direction`, `--device`, `--chapters`, `--dry-run`, `--keep-wav`,
+`--upload`, `--log-dir`, `--build-id`, `--resume`, and `--force`.

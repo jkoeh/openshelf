@@ -87,9 +87,20 @@ def search_and_download(args):
 
 
 def convert_book(epub_path, source_name, args):
-    """Run convert-book.py on a single EPUB."""
-    script = os.path.join(os.path.dirname(__file__), "convert-book.py")
-    cmd = [sys.executable, script, epub_path, "--source", source_name, "--output", args.output]
+    """Run the DAG full-book runner on a single EPUB."""
+    src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+    cmd = [
+        sys.executable,
+        "-m",
+        "openshelf.pipeline.dag_cli",
+        "run",
+        "--epub",
+        epub_path,
+        "--source",
+        source_name,
+        "--output",
+        args.output,
+    ]
 
     if args.engine:
         cmd += ["--engine", args.engine]
@@ -99,20 +110,33 @@ def convert_book(epub_path, source_name, args):
         cmd += ["--rendition", args.rendition]
     if args.cast_mode:
         cmd += ["--cast-mode", args.cast_mode]
+    if args.performance_direction:
+        cmd += ["--performance-direction", args.performance_direction]
     if args.device:
         cmd += ["--device", args.device]
+    if getattr(args, "chapters", None):
+        cmd += ["--chapters", args.chapters]
     if args.keep_wav:
         cmd.append("--keep-wav")
     if args.upload:
         cmd.append("--upload")
     if args.dry_run:
         cmd.append("--dry-run")
+    if getattr(args, "build_id", None):
+        cmd += ["--build-id", args.build_id]
+    if getattr(args, "resume", False):
+        cmd.append("--resume")
     if args.force:
         cmd.append("--force")
     cmd += ["--log-dir", args.log_dir]
 
-    logger.info("Starting convert-book subprocess: %s", " ".join(cmd))
-    return subprocess.run(cmd).returncode
+    env = os.environ.copy()
+    prior_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        src_dir if not prior_pythonpath else src_dir + os.pathsep + prior_pythonpath
+    )
+    logger.info("Starting DAG runner subprocess: %s", " ".join(cmd))
+    return subprocess.run(cmd, env=env).returncode
 
 
 def refresh_catalog(args):
@@ -136,10 +160,23 @@ def main():
     parser.add_argument("--voice", default=None, help="Narrator voice override")
     parser.add_argument("--rendition", default=None, help="Rendition slug override")
     parser.add_argument("--cast-mode", default=None, choices=["solo", "multicast"], help="Voice casting mode")
+    parser.add_argument(
+        "--performance-direction",
+        default=None,
+        choices=["batched", "chunk", "off"],
+        help="Performance/emotion direction mode for supporting engines",
+    )
     parser.add_argument("--device", default=None, help="Device: cuda, mps, cpu (default: auto)")
+    parser.add_argument(
+        "--chapters",
+        default=None,
+        help="Local sample filter: chapter number/ranges to generate, e.g. 2 or 2,4-5",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Download + parse only, no audio")
     parser.add_argument("--keep-wav", action="store_true", help="Keep WAV files after encoding")
     parser.add_argument("--upload", action="store_true", help="Upload to R2 after conversion")
+    parser.add_argument("--build-id", default=None, help="Target 16-hex build ID for resume/force runs")
+    parser.add_argument("--resume", action="store_true", help="Resume an existing build only if run.json matches")
     parser.add_argument(
         "--force",
         action="store_true",
@@ -200,11 +237,11 @@ def main():
         rc = convert_book(epub_path, source_name, args)
         if rc == 0:
             succeeded += 1
-            logger.info("convert-book succeeded: %s", epub_path)
+            logger.info("DAG run succeeded: %s", epub_path)
         else:
             failed += 1
-            logger.error("convert-book failed rc=%s: %s", rc, epub_path)
-            print(f"\nError: convert-book.py exited with code {rc}")
+            logger.error("DAG run failed rc=%s: %s", rc, epub_path)
+            print(f"\nError: DAG runner exited with code {rc}")
 
     print(f"\n{'=' * 60}")
     print(f"Done. {succeeded} succeeded, {failed} failed out of {len(downloaded)} book(s).")

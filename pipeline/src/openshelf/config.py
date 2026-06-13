@@ -43,6 +43,7 @@ VOICES_DIR = PROJECT_ROOT / "pipeline" / "voices"
 
 # LLM voice direction
 CAST_MODE = os.getenv("CAST_MODE", "solo").strip().lower()
+PERFORMANCE_DIRECTION_MODE = os.getenv("PERFORMANCE_DIRECTION_MODE", "batched").strip().lower()
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "anthropic")
 LLM_MODEL = os.getenv("LLM_MODEL", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")

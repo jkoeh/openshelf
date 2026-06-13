@@ -83,17 +83,33 @@ F5 style clips are optional local inputs. The adapter recognizes
 to the base `{preset}.wav`.
 
 Chatterbox synthesis uses `chatterbox.tts.ChatterboxTTS` lazily at the first
-synthesis call. `ChatterboxAdapter.synthesize(...)` passes the sanitized segment
-text as `text`, the selected `VoiceSpec.ref_audio_path` as `audio_prompt_path`,
-and adapter-owned expression controls as `exaggeration` and `cfg_weight`.
+synthesis call. `ChatterboxAdapter.synthesize(...)` prepares the selected
+`VoiceSpec.ref_audio_path` with upstream `prepare_conditionals(...)` the first
+time a reference voice is used, reuses those conditionals for consecutive
+segments with the same reference clip, and then calls `generate(...)` with the
+sanitized segment text plus adapter-owned expression controls as `exaggeration`
+and `cfg_weight`. This keeps classic Chatterbox's CFG/expression path while
+avoiding repeated reference-conditioning work in solo-narrator audiobook runs.
+Because classic Chatterbox can run up to its internal token ceiling on long
+paragraph-sized prompts, the adapter also exposes an optional
+`split_synthesis_units(text)` hook that packs long prose into sentence-sized
+generation units before `generate(...)` is called. The split is internal to TTS
+and alignment; reader text and `chapter_data.json` stay unchanged.
 Before generation, the adapter disables upstream `tqdm` progress bars inside
 Chatterbox model modules so unattended pipeline runs cannot fail because a
 caller-owned stderr stream was closed or invalidated while synthesis continues.
+It also patches the upstream English T3 Hugging Face backend to avoid requesting
+attention tensors and full hidden-state lists during autoregressive inference;
+OpenShelf only needs the final hidden state for speech logits, and WhisperX
+performs final alignment separately.
 Chatterbox output is watermarked by the upstream model when `perth` exposes its
 implicit watermarker. On Windows installs where the optional compiled
 watermarker is unavailable, the adapter substitutes `perth.DummyWatermarker`
 before model construction so local generation can still run. Either way,
-WhisperX remains the final sync source before serialization.
+WhisperX remains the final sync source before serialization. Chatterbox adapter
+logs include per-segment conditioning and generation timings so slow runs can
+distinguish reference setup, model decode, vocoding/watermarking, and later
+forced alignment.
 
 ## Dataclasses
 
@@ -268,6 +284,12 @@ For each segment:
    real WhisperX trim boundaries can be missed, causing duplicate synthesis
    attempts without improving the public sync contract.
 3. Call `engine.synthesize(segment)` with the sanitized/contextualized text.
+   Before this call, engines may optionally split a long synthesis unit into
+   smaller engine-owned units with `split_synthesis_units(text)`. Chatterbox
+   uses this to avoid long paragraph prompts that approach the upstream
+   1000-token decode ceiling. The split units are still aligned against the
+   corresponding original reader text slices and do not change public data
+   shape.
 4. If contextual synthesis succeeds and the aligner declares context-trim
    support, align the generated audio against
    `context + current_segment_text`, trim away the context audio, and keep only

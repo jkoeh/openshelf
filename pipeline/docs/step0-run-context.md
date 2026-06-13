@@ -57,6 +57,7 @@ Shape:
   "voice": "chatterbox-af_heart",
   "rendition": "chatterbox-af-heart",
   "cast_mode": "solo",
+  "performance_direction_mode": "batched",
   "language": "en",
   "chapters": [1, 2, 3]
 }
@@ -85,6 +86,7 @@ Resume validation compares immutable fields:
 - narrator voice
 - rendition
 - cast mode
+- performance direction mode
 - language
 - selected chapter set
 - pipeline version

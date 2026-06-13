@@ -273,10 +273,38 @@ EMOTION_SCHEMA = {
     "required": ["annotations"],
 }
 
+BATCHED_EMOTION_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "annotations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "chunk_index": {"type": "integer"},
+                    "segment_index": {"type": "integer"},
+                    "emotion": {"type": "string"},
+                    "speed": {"type": "string"},
+                    "intensity": {"type": "number"},
+                    "synthesis_text": {"type": "string"},
+                    "pause_after_ms": {"type": "integer"},
+                },
+                "required": ["chunk_index", "segment_index", "emotion", "speed"],
+            },
+        },
+    },
+    "required": ["annotations"],
+}
+
 SPEED_MAP = {"slow": 0.85, "normal": 0.95, "fast": 1.05}
 NARRATOR_MAX_SPEED = 1.0
 NARRATOR_LONG_SEGMENT_WORDS = 24
 CHAPTER_ATTRIBUTION_QUOTE_BATCH_SIZE = 20
+PERFORMANCE_DIRECTION_MODES = {"batched", "chunk", "off"}
+PERFORMANCE_DIRECTION_BATCH_WORDS = 1500
+PERFORMANCE_DIRECTION_BATCH_CHARS = 10000
 DELIVERY_TYPES = {
     "spoken_dialogue",
     "internal_thought",
@@ -352,6 +380,84 @@ def _directed_pause_after_ms(value: Any, segment: DirectedSegment) -> int:
     if segment.delivery_type in {"internal_thought", "self_talk"}:
         return 0
     return min(pause_after_ms, 120)
+
+
+def _performance_system_prompt(cfg: EmotionPromptConfig) -> str:
+    return (
+        "You are directing an audiobook performance. For each speech segment, "
+        "assign one emotion and one speaking pace. Do not split segments. "
+        "Avoid pause_after_ms for ordinary joins; use it only for a brief breath "
+        "at real rhetorical breaks.\n"
+        f"{cfg.injection_rules}\n"
+        f"Pace labels: {', '.join(cfg.speed_labels)}."
+    )
+
+
+def _segment_annotation_prompt(segment: DirectedSegment, index: int) -> dict[str, Any]:
+    return {
+        "index": index,
+        "speaker": segment.speaker,
+        "delivery_type": segment.delivery_type,
+        "voice_policy": segment.voice_policy,
+        "text": segment.text,
+    }
+
+
+def _apply_emotion_annotation(
+    segment: DirectedSegment,
+    item: dict[str, Any],
+    cfg: EmotionPromptConfig,
+) -> DirectedSegment:
+    emotion = str(item.get("emotion", "neutral"))
+    if emotion not in cfg.emotion_vocabulary:
+        raise ValueError("emotion is not in engine vocabulary")
+    speed_label = str(item.get("speed", "normal"))
+    if speed_label not in SPEED_MAP:
+        raise ValueError("speed label is not supported")
+    intensity = _directed_intensity(item.get("intensity"))
+    text = segment.text
+    synthesis_text = item.get("synthesis_text")
+    if isinstance(synthesis_text, str) and synthesis_text.strip():
+        text = synthesis_text
+    if cfg.marker_format:
+        marker = cfg.marker_format.format(emotion=emotion)
+        text = f"{marker} {text}"
+    pause_after_ms = _directed_pause_after_ms(
+        item.get("pause_after_ms", 0),
+        segment,
+    )
+    return replace(
+        segment,
+        text=text,
+        emotion=emotion,
+        speed=_directed_speed(speed_label, segment),
+        pause_after_ms=pause_after_ms,
+        original_text=segment.original_text or segment.text,
+        engine_controls={
+            **segment.engine_controls,
+            "intensity": intensity,
+        },
+    )
+
+
+def neutral_emotion_direction(
+    segments: list[DirectedSegment],
+    cfg: EmotionPromptConfig,
+) -> list[DirectedSegment]:
+    emotion = "neutral" if "neutral" in cfg.emotion_vocabulary else cfg.emotion_vocabulary[0]
+    return [
+        _apply_emotion_annotation(
+            segment,
+            {
+                "emotion": emotion,
+                "speed": "normal",
+                "intensity": 0.5,
+                "pause_after_ms": 0,
+            },
+            cfg,
+        )
+        for segment in segments
+    ]
 
 
 def _clean_delivery_type(value: Any, speaker: str) -> str:
@@ -1649,22 +1755,9 @@ def add_emotion_direction(
     if not segments:
         return segments
 
-    system = (
-        "You are directing an audiobook performance. For each speech segment, "
-        "assign one emotion and one speaking pace. Do not split segments. "
-        "Avoid pause_after_ms for ordinary joins; use it only for a brief breath "
-        "at real rhetorical breaks.\n"
-        f"{cfg.injection_rules}\n"
-        f"Pace labels: {', '.join(cfg.speed_labels)}."
-    )
+    system = _performance_system_prompt(cfg)
     segments_json = [
-        {
-            "index": i,
-            "speaker": segment.speaker,
-            "delivery_type": segment.delivery_type,
-            "voice_policy": segment.voice_policy,
-            "text": segment.text,
-        }
+        _segment_annotation_prompt(segment, i)
         for i, segment in enumerate(segments)
     ]
     user = (
@@ -1680,39 +1773,164 @@ def add_emotion_direction(
             index = int(item["index"])
             if index < 0 or index >= len(updated):
                 raise ValueError("emotion annotation index out of range")
-            emotion = str(item.get("emotion", "neutral"))
-            if emotion not in cfg.emotion_vocabulary:
-                raise ValueError("emotion is not in engine vocabulary")
-            speed_label = str(item.get("speed", "normal"))
-            if speed_label not in SPEED_MAP:
-                raise ValueError("speed label is not supported")
-            intensity = _directed_intensity(item.get("intensity"))
-            text = updated[index].text
-            synthesis_text = item.get("synthesis_text")
-            if isinstance(synthesis_text, str) and synthesis_text.strip():
-                text = synthesis_text
-            if cfg.marker_format:
-                marker = cfg.marker_format.format(emotion=emotion)
-                text = f"{marker} {text}"
-            pause_after_ms = _directed_pause_after_ms(
-                item.get("pause_after_ms", 0),
-                updated[index],
-            )
-            updated[index] = replace(
-                updated[index],
-                text=text,
-                emotion=emotion,
-                speed=_directed_speed(speed_label, updated[index]),
-                pause_after_ms=pause_after_ms,
-                original_text=updated[index].original_text or updated[index].text,
-                engine_controls={
-                    **updated[index].engine_controls,
-                    "intensity": intensity,
-                },
-            )
+            updated[index] = _apply_emotion_annotation(updated[index], item, cfg)
         return updated
     except Exception:
         return segments
+
+
+def _count_words(text: str) -> int:
+    return len(re.findall(r"\b\w+\b", text))
+
+
+def performance_direction_batches(
+    windows: list[ChunkWindow],
+    directed_chunks: list[list[DirectedSegment]],
+    max_words: int = PERFORMANCE_DIRECTION_BATCH_WORDS,
+    max_chars: int = PERFORMANCE_DIRECTION_BATCH_CHARS,
+) -> list[list[int]]:
+    batches: list[list[int]] = []
+    current: list[int] = []
+    current_words = 0
+    current_chars = 0
+
+    for index, (window, segments) in enumerate(zip(windows, directed_chunks)):
+        if not segments:
+            continue
+        words = _count_words(window.text)
+        chars = len(window.text)
+        should_flush = (
+            bool(current)
+            and (
+                current_words + words > max_words
+                or current_chars + chars > max_chars
+            )
+        )
+        if should_flush:
+            batches.append(current)
+            current = []
+            current_words = 0
+            current_chars = 0
+        current.append(index)
+        current_words += words
+        current_chars += chars
+
+    if current:
+        batches.append(current)
+    return batches
+
+
+def _batched_performance_prompt_items(
+    windows: list[ChunkWindow],
+    directed_chunks: list[list[DirectedSegment]],
+    batch: list[int],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "chunk_index": chunk_index,
+            "text": windows[chunk_index].text,
+            "segments": [
+                {
+                    **_segment_annotation_prompt(segment, segment_index),
+                    "segment_index": segment_index,
+                }
+                for segment_index, segment in enumerate(directed_chunks[chunk_index])
+            ],
+        }
+        for chunk_index in batch
+    ]
+
+
+def _apply_batched_emotion_response(
+    directed_chunks: list[list[DirectedSegment]],
+    batch: list[int],
+    response: dict[str, Any],
+    cfg: EmotionPromptConfig,
+) -> list[list[DirectedSegment]]:
+    updated = [list(segments) for segments in directed_chunks]
+    expected = {
+        (chunk_index, segment_index)
+        for chunk_index in batch
+        for segment_index in range(len(directed_chunks[chunk_index]))
+    }
+    seen: set[tuple[int, int]] = set()
+    for item in response.get("annotations", []):
+        chunk_index = int(item["chunk_index"])
+        segment_index = int(item["segment_index"])
+        key = (chunk_index, segment_index)
+        if key in seen:
+            raise ValueError("duplicate emotion annotation")
+        if key not in expected:
+            raise ValueError("emotion annotation index out of range")
+        updated[chunk_index][segment_index] = _apply_emotion_annotation(
+            updated[chunk_index][segment_index],
+            item,
+            cfg,
+        )
+        seen.add(key)
+    if seen != expected:
+        raise ValueError("batched emotion annotations must cover every segment")
+    return updated
+
+
+def add_batched_emotion_direction(
+    directed_chunks: list[list[DirectedSegment]],
+    windows: list[ChunkWindow],
+    llm: LLMClient,
+    cfg: EmotionPromptConfig,
+    max_words: int = PERFORMANCE_DIRECTION_BATCH_WORDS,
+    max_chars: int = PERFORMANCE_DIRECTION_BATCH_CHARS,
+) -> list[list[DirectedSegment]]:
+    if len(directed_chunks) != len(windows):
+        raise ValueError("directed chunk count must match windows")
+    if not directed_chunks:
+        return directed_chunks
+
+    system = _performance_system_prompt(cfg)
+    result = [list(segments) for segments in directed_chunks]
+    batches = performance_direction_batches(
+        windows,
+        directed_chunks,
+        max_words=max_words,
+        max_chars=max_chars,
+    )
+
+    def apply_batch(batch: list[int]) -> None:
+        nonlocal result
+        if not batch:
+            return
+        user = (
+            f"Available emotions: {', '.join(cfg.emotion_vocabulary)}\n\n"
+            "Return one annotation for every segment in every chunk. Use the "
+            "provided chunk_index and segment_index exactly.\n\n"
+            "Chunks:\n"
+            f"{json.dumps(_batched_performance_prompt_items(windows, result, batch), ensure_ascii=False)}"
+        )
+        try:
+            response = llm.complete_json(system=system, user=user, schema=BATCHED_EMOTION_SCHEMA)
+            result = _apply_batched_emotion_response(result, batch, response, cfg)
+        except Exception as exc:
+            if len(batch) > 1:
+                midpoint = len(batch) // 2
+                logger.warning(
+                    "Batched emotion direction failed for chunks %s; retrying halves: %s",
+                    batch,
+                    exc,
+                )
+                apply_batch(batch[:midpoint])
+                apply_batch(batch[midpoint:])
+                return
+            logger.warning(
+                "Batched emotion direction failed for chunk %s; using neutral direction: %s",
+                batch[0],
+                exc,
+            )
+            chunk_index = batch[0]
+            result[chunk_index] = neutral_emotion_direction(result[chunk_index], cfg)
+
+    for batch in batches:
+        apply_batch(batch)
+    return result
 
 
 class AudioDirector:
@@ -1724,6 +1942,7 @@ class AudioDirector:
         build_dir: str | os.PathLike[str] | None = None,
         sample_rate: int | None = None,
         cast_mode: str = "solo",
+        performance_direction_mode: str = "batched",
     ):
         self.engine = engine
         self.llm = llm
@@ -1732,7 +1951,10 @@ class AudioDirector:
         self.sample_rate = sample_rate
         if cast_mode not in {"solo", "multicast"}:
             raise ValueError("cast_mode must be 'solo' or 'multicast'")
+        if performance_direction_mode not in PERFORMANCE_DIRECTION_MODES:
+            raise ValueError("performance_direction_mode must be 'batched', 'chunk', or 'off'")
         self.cast_mode = cast_mode
+        self.performance_direction_mode = performance_direction_mode
         self.last_chapter_error: str | None = None
         self.last_chapter_fallback_used = False
 
@@ -1763,31 +1985,66 @@ class AudioDirector:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(registry.to_dict(), f, indent=2, ensure_ascii=False, sort_keys=True)
 
+    def _supports_performance_direction(self) -> EmotionPromptConfig | None:
+        if not (
+            self.engine.capabilities.emotion_control
+            or self.engine.capabilities.performance_direction
+        ):
+            return None
+        return self.engine.emotion_prompt_config()
+
+    def _apply_engine_performance_controls(
+        self,
+        directed_chunks: list[list[DirectedSegment]],
+    ) -> list[list[DirectedSegment]]:
+        apply_controls = getattr(self.engine, "apply_performance_controls", None)
+        if not callable(apply_controls):
+            return directed_chunks
+        return [
+            [apply_controls(segment) for segment in segments]
+            for segments in directed_chunks
+        ]
+
+    def _add_chapter_performance_direction(
+        self,
+        directed_chunks: list[list[DirectedSegment]],
+        windows: list[ChunkWindow],
+    ) -> list[list[DirectedSegment]]:
+        emotion_cfg = self._supports_performance_direction()
+        if emotion_cfg is None:
+            return directed_chunks
+        if self.performance_direction_mode == "off":
+            directed = [
+                neutral_emotion_direction(segments, emotion_cfg)
+                for segments in directed_chunks
+            ]
+        elif self.performance_direction_mode == "chunk":
+            directed = [
+                add_emotion_direction(segments, window, self.llm, emotion_cfg)
+                for segments, window in zip(directed_chunks, windows)
+            ]
+        else:
+            directed = add_batched_emotion_direction(
+                directed_chunks,
+                windows,
+                self.llm,
+                emotion_cfg,
+            )
+        return self._apply_engine_performance_controls(directed)
+
     def _add_performance_direction(
         self,
         segments: list[DirectedSegment],
         window: ChunkWindow,
     ) -> list[DirectedSegment]:
-        if not (
-            self.engine.capabilities.emotion_control
-            or self.engine.capabilities.performance_direction
-        ):
-            return segments
-        emotion_cfg = self.engine.emotion_prompt_config()
-        if emotion_cfg is None:
-            return segments
-        directed = add_emotion_direction(segments, window, self.llm, emotion_cfg)
-        apply_controls = getattr(self.engine, "apply_performance_controls", None)
-        if callable(apply_controls):
-            return [apply_controls(segment) for segment in directed]
-        return directed
+        return self._add_chapter_performance_direction([segments], [window])[0]
 
-    def _solo_segments(
+    def _base_solo_segments(
         self,
         window: ChunkWindow,
         registry: CharacterRegistry,
     ) -> list[DirectedSegment]:
-        segments = [
+        return [
             DirectedSegment(
                 text=window.text,
                 voice=registry.narrator_voice,
@@ -1798,7 +2055,16 @@ class AudioDirector:
                 join_policy="normal",
             )
         ]
-        return self._add_performance_direction(segments, window)
+
+    def _solo_segments(
+        self,
+        window: ChunkWindow,
+        registry: CharacterRegistry,
+    ) -> list[DirectedSegment]:
+        return self._add_performance_direction(
+            self._base_solo_segments(window, registry),
+            window,
+        )
 
     def direct_chapter(
         self,
@@ -1809,10 +2075,11 @@ class AudioDirector:
         self.last_chapter_error = None
         self.last_chapter_fallback_used = False
         if self.cast_mode == "solo":
-            return registry, [
-                self._solo_segments(window, registry)
+            directed = [
+                self._base_solo_segments(window, registry)
                 for window in windows
             ]
+            return registry, self._add_chapter_performance_direction(directed, windows)
         try:
             attribution = annotate_chapter_speakers(
                 ChapterWindow(title=title, chunks=windows),
@@ -1828,10 +2095,10 @@ class AudioDirector:
                 )
                 if "".join(segment.text for segment in segments) != window.text:
                     raise ValueError("segments do not preserve chunk text")
-                directed.append(self._add_performance_direction(segments, window))
+                directed.append(segments)
             if attribution.registry.characters != registry.characters:
                 self._write_registry(attribution.registry)
-            return attribution.registry, directed
+            return attribution.registry, self._add_chapter_performance_direction(directed, windows)
         except Exception as e:
             self.last_chapter_error = f"{type(e).__name__}: {e}"
             self.last_chapter_fallback_used = True
