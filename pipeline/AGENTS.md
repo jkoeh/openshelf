@@ -24,6 +24,7 @@ the relevant docs first:
 - `pipeline/docs/step5c-rendition-manifest.md`
 - `pipeline/docs/step6-r2.md`
 - `pipeline/docs/dag-cli.md`
+- `pipeline/docs/ops-tools.md`
 
 For any TTS engine work, start with
 `pipeline/docs/engine-knowledge-base.md`, then open only the relevant adapter

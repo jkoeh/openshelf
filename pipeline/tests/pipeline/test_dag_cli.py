@@ -26,6 +26,7 @@ from openshelf.pipeline.dag_cli import (  # noqa: E402
     sync_chapter,
     synth_chapter,
     upload_build,
+    _resolve_tts_device,
 )
 from openshelf.pipeline.text_chunker import (  # noqa: E402
     Chunk,
@@ -695,6 +696,14 @@ class TestDagCliRun(unittest.TestCase):
 
         create_engine.assert_called_once_with("chatterbox", device="cuda")
 
+    def test_auto_chatterbox_cpu_resolution_fails_fast(self):
+        with patch("openshelf.pipeline.tts.get_device", return_value="cpu"):
+            with self.assertRaisesRegex(ValueError, "auto device resolved to CPU"):
+                _resolve_tts_device("chatterbox", None)
+
+    def test_explicit_chatterbox_cpu_is_allowed(self):
+        self.assertEqual(_resolve_tts_device("chatterbox", "cpu"), "cpu")
+
 
 class TestDagCliSynth(unittest.TestCase):
     def _setup(self, tmp: str) -> str:
@@ -813,6 +822,34 @@ class TestDagCliSynth(unittest.TestCase):
                     patch("openshelf.pipeline.tts.synthesize_chapter", return_value=result), \
                     patch("openshelf.pipeline.encoder.encode_to_aac", side_effect=fake_encode):
                 synth_chapter(build_dir, 1, engine_name="chatterbox", device="cuda")
+
+        create_engine.assert_called_once_with("chatterbox", device="cuda")
+        create_aligner.assert_called_once_with(fake_engine, device="cuda")
+
+    def test_synth_auto_device_resolves_before_engine_factory(self):
+        result, fake_encode = self._patched()
+        with tempfile.TemporaryDirectory() as tmp:
+            build_dir = self._setup(tmp)
+            fake_engine = types.SimpleNamespace(name="chatterbox")
+            fake_aligner = object()
+
+            with patch(
+                "openshelf.pipeline.tts.get_device",
+                return_value="cuda",
+            ), patch(
+                "openshelf.pipeline.engines.create_engine",
+                return_value=fake_engine,
+            ) as create_engine, patch(
+                "openshelf.pipeline.engines.create_aligner",
+                return_value=fake_aligner,
+            ) as create_aligner, patch(
+                "openshelf.pipeline.tts.synthesize_chapter",
+                return_value=result,
+            ), patch(
+                "openshelf.pipeline.encoder.encode_to_aac",
+                side_effect=fake_encode,
+            ):
+                synth_chapter(build_dir, 1, engine_name="chatterbox")
 
         create_engine.assert_called_once_with("chatterbox", device="cuda")
         create_aligner.assert_called_once_with(fake_engine, device="cuda")

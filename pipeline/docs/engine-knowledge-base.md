@@ -207,6 +207,9 @@ Pipeline CLIs that accept `--device` must pass the selected device into
 `ChatterboxAdapter` before lazy model load. Passing the device only to WhisperX
 or only to Kokoro leaves classic Chatterbox at the upstream default, which is
 effectively CPU on Windows.
+When no device is supplied, OpenShelf resolves accelerator-first. Classic
+Chatterbox must fail fast if that automatic resolution reaches CPU; callers who
+really want the slow path must pass `--device cpu` explicitly.
 
 The upstream package initializes `perth.PerthImplicitWatermarker` during model
 construction. Some Windows installs expose that symbol as `None` because the

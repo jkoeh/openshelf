@@ -145,6 +145,34 @@ def _log_torch_device_diagnostics(selected_device: str) -> None:
         )
 
 
+def _resolve_tts_device(engine_name: str | None, requested_device: str | None) -> str:
+    if requested_device:
+        selected = requested_device
+    else:
+        from openshelf.pipeline.tts import get_device
+
+        selected = get_device()
+
+    selected = selected or "cpu"
+
+    from openshelf.pipeline.gpu_preflight import accelerator_required_by_default
+
+    if (
+        requested_device is None
+        and selected == "cpu"
+        and accelerator_required_by_default(engine_name)
+    ):
+        raise ValueError(
+            "Chatterbox auto device resolved to CPU. Install/use a GPU-capable "
+            "PyTorch package or pass --device cpu to force the slow path."
+        )
+    if requested_device == "cpu" and accelerator_required_by_default(engine_name):
+        logger.warning(
+            "Chatterbox CPU was explicitly selected; full-book runs are usually very slow."
+        )
+    return selected
+
+
 def _chapter_number_from_chunks_path(path: str) -> int:
     match = _CHUNKS_RE.search(os.path.basename(path))
     if not match:
@@ -624,7 +652,7 @@ def synth_chapter(
         from openshelf.pipeline.engines import create_aligner, create_engine
         from openshelf.pipeline.tts import load_pipeline
 
-        device = device or "cpu"
+        device = _resolve_tts_device(engine_name or TTS_ENGINE, device)
         engine = create_engine(engine_name or TTS_ENGINE, device=device)
         if engine.name == "kokoro":
             engine.pipeline = load_pipeline(device=device)
@@ -941,12 +969,7 @@ def run_book(args) -> dict:
         }
 
     logger.info("Creating TTS engine and LLM provider")
-    selected_device = getattr(args, "device", None)
-    if selected_device is None:
-        from openshelf.pipeline.tts import get_device
-
-        selected_device = get_device()
-    selected_device = selected_device or "cpu"
+    selected_device = _resolve_tts_device(args.engine, getattr(args, "device", None))
     _log_torch_device_diagnostics(selected_device)
 
     engine = create_engine(args.engine, device=selected_device)

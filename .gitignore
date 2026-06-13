@@ -45,3 +45,4 @@ client/node_modules/
 client/.expo/
 client/dist/
 *.log
+/logs

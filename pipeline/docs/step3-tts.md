@@ -86,6 +86,9 @@ Chatterbox synthesis uses `chatterbox.tts.ChatterboxTTS` lazily at the first
 synthesis call. The adapter must be constructed with the selected pipeline
 device so upstream `ChatterboxTTS.from_pretrained(device=...)` loads classic
 Chatterbox on CUDA/MPS/CPU consistently with the CLI `--device` option.
+The default CLI device policy is accelerator-first. If Chatterbox auto-resolves
+to CPU, the pipeline fails fast before model load; CPU Chatterbox requires an
+explicit `--device cpu` override.
 `ChatterboxAdapter.synthesize(...)` prepares the selected
 `VoiceSpec.ref_audio_path` with upstream `prepare_conditionals(...)` the first
 time a reference voice is used, reuses those conditionals for consecutive

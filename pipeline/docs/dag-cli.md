@@ -234,6 +234,10 @@ Behavior:
 - `--device` is the selected runtime device for both the TTS engine adapter
   when that engine accepts a device (Kokoro, F5-TTS, Chatterbox) and the
   WhisperX aligner when forced alignment is required.
+- When omitted, `--device` resolves accelerator-first: CUDA, then MPS, then
+  CPU. Chatterbox treats an automatic CPU resolution as a configuration error
+  because full-book CPU runs are usually impractical; pass `--device cpu`
+  explicitly to force that slow path.
 - Idempotency: if both the m4a and sync artifacts already exist, the stage
   **skips** unless `--force` (TTS is expensive and not deterministic, so the
   file-exists gate stands in for an input fingerprint).
@@ -313,4 +317,7 @@ sync is produced by `synth`.
 `--upload`, `--log-dir`, `--build-id`, `--resume`, and `--force`.
 For engines with a device-aware adapter, `run --device cuda` passes `cuda` into
 the engine constructor before lazy model load; it also uses the same selected
-device for WhisperX forced alignment.
+device for WhisperX forced alignment. If `--device` is omitted, `run` resolves
+CUDA, then MPS, then CPU. Chatterbox may use CPU only when the caller passes
+`--device cpu`; an automatic CPU fallback fails before registry, LLM, or TTS
+work starts.
