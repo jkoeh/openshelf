@@ -67,6 +67,7 @@ export interface BookBuildOption {
   engine: string;
   pipeline_version: string;
   is_current: boolean;
+  uploaded_at: string;
   total_duration_seconds: number;
   chapter_count: number;
   chapters: ManifestChapter[];

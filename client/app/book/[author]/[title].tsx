@@ -1,5 +1,12 @@
 import { Link, useLocalSearchParams, useRouter } from "expo-router";
-import { BookOpen, Download, Headphones, Play } from "lucide-react-native";
+import {
+	BookOpen,
+	ChevronDown,
+	ChevronUp,
+	Download,
+	Headphones,
+	Play,
+} from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Image, Pressable, ScrollView, Text, View } from "react-native";
 import ChapterList from "../../../components/ChapterList";
@@ -15,6 +22,20 @@ import {
 } from "../../../lib/storage";
 import type { BookBuildOption, BookBuildsResponse, Manifest } from "../../../types";
 
+function formatUploadedAt(value?: string) {
+	if (!value) return "Upload time unavailable";
+	const uploaded = new Date(value);
+	if (Number.isNaN(uploaded.getTime())) return "Upload time unavailable";
+	return `${uploaded.toLocaleDateString(undefined, {
+		month: "short",
+		day: "numeric",
+		year: "numeric",
+	})} ${uploaded.toLocaleTimeString(undefined, {
+		hour: "numeric",
+		minute: "2-digit",
+	})}`;
+}
+
 export default function BookDetailPage() {
 	const { author, title, rendition, build } = useLocalSearchParams<{
 		author: string;
@@ -29,6 +50,7 @@ export default function BookDetailPage() {
 	const [selectedRenditionKey, setSelectedRenditionKey] = useState<string | null>(null);
 	const [selectedBuildId, setSelectedBuildId] = useState<string | null>(null);
 	const [selectedEngine, setSelectedEngine] = useState<string | null>(null);
+	const [renditionSelectorOpen, setRenditionSelectorOpen] = useState(false);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 
@@ -43,6 +65,7 @@ export default function BookDetailPage() {
 		setSelectedRenditionKey(saved?.rendition ?? rendition ?? null);
 		setSelectedBuildId(saved?.build ?? build ?? null);
 		setSelectedEngine(null);
+		setRenditionSelectorOpen(false);
 		fetchBook(author, title)
 			.then((data) => {
 				if (!cancelled) setManifest(data);
@@ -148,11 +171,21 @@ export default function BookDetailPage() {
 		null;
 	const visibleEngineGroup =
 		selectionGroups.find((group) => group.engine === activeEngine) ?? selectionGroups[0];
+	const selectedBuildRendition = builds?.renditions[selected.key] ?? null;
+	const selectedDisplay = selectedBuildRendition?.display ?? selected.rendition.display;
+	const selectedVoice =
+		activeBuild?.voice ?? selectedBuildRendition?.voice ?? selected.rendition.voice;
+	const selectedEngineLabel =
+		activeBuild?.engine ?? selectedBuildRendition?.engine ?? selected.rendition.engine;
+	const selectedUploadLabel = activeBuild?.uploaded_at
+		? formatUploadedAt(activeBuild.uploaded_at)
+		: null;
 
 	const handleBuildSelect = (renditionKey: string, option: BookBuildOption) => {
 		setSelectedRenditionKey(renditionKey);
 		setSelectedBuildId(option.build);
 		setSelectedEngine(option.engine);
+		setRenditionSelectorOpen(false);
 		saveBuildSelection(author, title, {
 			rendition: renditionKey,
 			build: option.build,
@@ -228,129 +261,239 @@ export default function BookDetailPage() {
 							style={{
 								width: "100%",
 								marginTop: 18,
-								padding: 14,
 								borderRadius: 12,
 								backgroundColor: colors.surface,
+								overflow: "hidden",
 							}}
 						>
-							<Text
+							<Pressable
+								onPress={() => {
+									setSelectedEngine(selectedEngineLabel);
+									setRenditionSelectorOpen((open) => !open);
+								}}
 								style={{
-									color: colors.textSecondary,
-									fontSize: 13,
-									fontWeight: "600",
-									textTransform: "uppercase",
-									letterSpacing: 0.5,
-									marginBottom: 10,
+									padding: 14,
+									flexDirection: "row",
+									alignItems: "center",
+									justifyContent: "space-between",
+									gap: 12,
 								}}
 							>
-								Rendition
-							</Text>
-							{selectionGroups.length > 1 ? (
-								<View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
-									{selectionGroups.map((group) => {
-										const active = group.engine === visibleEngineGroup.engine;
-										return (
-											<Pressable
-												key={group.engine}
-												onPress={() => setSelectedEngine(group.engine)}
-												style={{
-													flex: 1,
-													borderRadius: 9,
-													paddingVertical: 9,
-													backgroundColor: active ? colors.primary : colors.card,
-													alignItems: "center",
-												}}
-											>
-												<Text
-													style={{
-														color: active ? colors.primaryText : colors.text,
-														fontSize: 14,
-														fontWeight: "600",
-													}}
-													numberOfLines={1}
-												>
-													{group.engine}
-												</Text>
-											</Pressable>
-										);
-									})}
+								<View style={{ flex: 1 }}>
+									<Text
+										style={{
+											color: colors.textSecondary,
+											fontSize: 13,
+											fontWeight: "600",
+											textTransform: "uppercase",
+											letterSpacing: 0.5,
+											marginBottom: 6,
+										}}
+									>
+										Rendition
+									</Text>
+									<Text
+										style={{ color: colors.text, fontSize: 16, fontWeight: "700" }}
+										numberOfLines={1}
+									>
+										{selectedDisplay}
+									</Text>
+									<Text
+										style={{ color: colors.textSecondary, fontSize: 13, marginTop: 3 }}
+										numberOfLines={1}
+									>
+										{selectedEngineLabel} - {selectedVoice}
+									</Text>
+									<Text
+										style={{ color: colors.textSecondary, fontSize: 12, marginTop: 3 }}
+										numberOfLines={1}
+									>
+										{selectedUploadLabel
+											? `Uploaded ${selectedUploadLabel}`
+											: "Backend default build"}
+									</Text>
 								</View>
-							) : null}
-							{visibleEngineGroup.voices.map((voice) => (
-								<View key={voice.rendition} style={{ marginTop: 10 }}>
+								{renditionSelectorOpen ? (
+									<ChevronUp size={20} color={colors.textSecondary} strokeWidth={2.2} />
+								) : (
+									<ChevronDown size={20} color={colors.textSecondary} strokeWidth={2.2} />
+								)}
+							</Pressable>
+							{renditionSelectorOpen ? (
+								<View style={{ paddingHorizontal: 14, paddingBottom: 14 }}>
 									<View
 										style={{
-											flexDirection: "row",
-											justifyContent: "space-between",
-											alignItems: "center",
+											height: 1,
+											backgroundColor: colors.border,
+											marginBottom: 12,
+										}}
+									/>
+									<Text
+										style={{
+											color: colors.textSecondary,
+											fontSize: 12,
+											fontWeight: "700",
+											textTransform: "uppercase",
+											letterSpacing: 0.5,
 											marginBottom: 8,
 										}}
 									>
-										<Text
+										Engine
+									</Text>
+									{selectionGroups.length > 1 ? (
+										<View
 											style={{
-												color: colors.text,
-												fontSize: 15,
-												fontWeight: "700",
+												flexDirection: "row",
+												flexWrap: "wrap",
+												gap: 8,
+												marginBottom: 12,
 											}}
-											numberOfLines={1}
 										>
-											{voice.display}
-										</Text>
-										<Text
+											{selectionGroups.map((group) => {
+												const active = group.engine === visibleEngineGroup.engine;
+												return (
+													<Pressable
+														key={group.engine}
+														onPress={() => setSelectedEngine(group.engine)}
+														style={{
+															minWidth: 96,
+															borderRadius: 9,
+															paddingVertical: 9,
+															paddingHorizontal: 12,
+															backgroundColor: active ? colors.primary : colors.card,
+															alignItems: "center",
+														}}
+													>
+														<Text
+															style={{
+																color: active ? colors.primaryText : colors.text,
+																fontSize: 14,
+																fontWeight: "700",
+															}}
+															numberOfLines={1}
+														>
+															{group.engine}
+														</Text>
+													</Pressable>
+												);
+											})}
+										</View>
+									) : (
+										<View
 											style={{
-												color: colors.textSecondary,
-												fontSize: 12,
+												borderWidth: 1,
+												borderColor: colors.border,
+												borderRadius: 9,
+												paddingVertical: 9,
+												paddingHorizontal: 12,
+												backgroundColor: colors.card,
+												marginBottom: 12,
 											}}
-											numberOfLines={1}
 										>
-											{voice.voice}
-										</Text>
-									</View>
-									<View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-										{voice.builds.map((option) => {
-											const active =
-												voice.rendition === selected.key && option.build === activeBuildId;
-											return (
-												<Pressable
-													key={`${voice.rendition}:${option.build}`}
-													onPress={() => handleBuildSelect(voice.rendition, option)}
+											<Text
+												style={{ color: colors.text, fontSize: 14, fontWeight: "700" }}
+												numberOfLines={1}
+											>
+												{visibleEngineGroup.engine}
+											</Text>
+										</View>
+									)}
+									{visibleEngineGroup.voices.map((voice) => (
+										<View key={voice.rendition} style={{ marginTop: 12 }}>
+											<View style={{ marginBottom: 8 }}>
+												<Text
+													style={{ color: colors.text, fontSize: 15, fontWeight: "700" }}
+													numberOfLines={1}
+												>
+													{voice.display}
+												</Text>
+												<Text
+													style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}
+													numberOfLines={1}
+												>
+													{voice.voice}
+												</Text>
+											</View>
+											{voice.builds.length > 0 ? (
+												<View
 													style={{
 														borderWidth: 1,
-														borderColor: active ? colors.primary : colors.border,
-														backgroundColor: active ? colors.primary : colors.card,
-														borderRadius: 9,
-														paddingVertical: 8,
-														paddingHorizontal: 10,
-														minWidth: 96,
+														borderColor: colors.border,
+														borderRadius: 10,
+														overflow: "hidden",
 													}}
 												>
-													<Text
-														style={{
-															color: active ? colors.primaryText : colors.text,
-															fontSize: 13,
-															fontWeight: "700",
-															textAlign: "center",
-														}}
-													>
-														{option.is_current ? "Current" : option.build.slice(0, 8)}
-													</Text>
-													<Text
-														style={{
-															color: active ? colors.primaryText : colors.textSecondary,
-															fontSize: 11,
-															textAlign: "center",
-															marginTop: 2,
-														}}
-														numberOfLines={1}
-													>
-														{formatDuration(option.total_duration_seconds)}
-													</Text>
-												</Pressable>
-											);
-										})}
-									</View>
+													{voice.builds.map((option, index) => {
+														const active =
+															voice.rendition === selected.key &&
+															option.build === activeBuildId;
+														return (
+															<Pressable
+																key={`${voice.rendition}:${option.build}`}
+																onPress={() => handleBuildSelect(voice.rendition, option)}
+																style={{
+																	backgroundColor: active ? colors.primary : colors.card,
+																	borderTopWidth: index === 0 ? 0 : 1,
+																	borderTopColor: colors.border,
+																	flexDirection: "row",
+																	alignItems: "center",
+																	justifyContent: "space-between",
+																	gap: 10,
+																	paddingVertical: 12,
+																	paddingHorizontal: 12,
+																}}
+															>
+																<View style={{ flex: 1 }}>
+																	<Text
+																		style={{
+																			color: active ? colors.primaryText : colors.text,
+																			fontSize: 14,
+																			fontWeight: "700",
+																		}}
+																		numberOfLines={1}
+																	>
+																		{formatUploadedAt(option.uploaded_at)}
+																	</Text>
+																	<Text
+																		style={{
+																			color: active
+																				? colors.primaryText
+																				: colors.textSecondary,
+																			fontSize: 12,
+																			marginTop: 3,
+																		}}
+																		numberOfLines={1}
+																	>
+																		{formatDuration(option.total_duration_seconds)} -{" "}
+																		{option.chapter_count}{" "}
+																		{option.chapter_count === 1 ? "chapter" : "chapters"}
+																		{option.is_current ? " - Backend default" : ""}
+																	</Text>
+																</View>
+																{active ? (
+																	<Text
+																		style={{
+																			color: colors.primaryText,
+																			fontSize: 12,
+																			fontWeight: "700",
+																		}}
+																	>
+																		Selected
+																	</Text>
+																) : null}
+															</Pressable>
+														);
+													})}
+												</View>
+											) : (
+												<Text style={{ color: colors.textSecondary, fontSize: 13 }}>
+													No retained uploads
+												</Text>
+											)}
+										</View>
+									))}
 								</View>
-							))}
+							) : null}
 						</View>
 					) : null}
 				</View>

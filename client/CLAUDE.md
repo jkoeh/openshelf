@@ -68,6 +68,11 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
 - Icons use `lucide-react-native` SVG components. Do not use icon-font packages
   for app UI; web export can render those as missing-glyph squares if the font
   fails to load.
+- The book detail route loads `fetchBook` for the backend default rendition/build and
+  separately calls the no-store `fetchBookBuilds` selector API. The rendition selector
+  is collapsed by default, always shows the selected engine, expands into engine ->
+  voice -> upload-time choices, and collapses again after selection. Raw build IDs stay
+  internal to URLs, local storage, and progress keys.
 - `useSyncEngine` computes active word/chunk inside a `requestAnimationFrame` loop and only setStates when the active word/chunk index changes. It should use status time as the primary playback clock (with `player.currentTime` fallback) for iOS reliability. The hook consumes the inline `words` array from the chapter response; there is no separate alignment fetch.
 
 ## Do NOT

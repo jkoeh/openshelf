@@ -125,7 +125,7 @@ This keeps the only mutable per-book file on R2 tiny (one short-cached read per 
 
 ### How clients discover retained builds
 
-The on-R2 book manifest's `available_builds` list is the authoritative retained build list for each rendition, but it only stores build IDs. The worker's `GET /books/:a/:t/builds` route enriches those IDs by reading each retained build's `rendition-manifest.json`, returning the exact engine, voice, pipeline version, duration, and chapter metadata available for advanced client build selection. This route is not cached because the retained build list changes frequently. Clients that do not request or pass an explicit build keep using `current_build`.
+The on-R2 book manifest's `available_builds` list is the authoritative retained build list for each rendition, but it only stores build IDs. The worker's `GET /books/:a/:t/builds` route enriches those IDs by reading each retained build's `rendition-manifest.json`, returning the exact engine, voice, R2 upload timestamp, pipeline version, duration, and chapter metadata available for advanced client build selection. The upload timestamp comes from the R2 object metadata for `rendition-manifest.json`; it is not embedded in the immutable manifest JSON. This route is not cached because the retained build list changes frequently. Clients that do not request or pass an explicit build keep using `current_build`.
 
 ## Dependencies
 

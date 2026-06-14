@@ -57,7 +57,7 @@ flowchart LR
         direction TB
         W_CAT[GET /catalog<br/>catalog.json fast path<br/>book + default rendition/build]
         W_BOOK[GET /books/:a/:t<br/>→ book manifest with current_build per rendition]
-        W_BUILDS[GET /books/:a/:t/builds<br/>-> available rendition/build selections]
+        W_BUILDS[GET /books/:a/:t/builds<br/>-> available renditions/build uploads]
         W_CH[GET /books/:a/:t/chapters/:n<br/>?rendition · ?build<br/>→ text + flat words[chunk_idx]]
         W_AUDIO[GET /books/:a/:t/audio/:n<br/>?rendition · ?build<br/>→ m4a stream / range]
         W_COVER[GET /books/:a/:t/cover]
@@ -80,7 +80,7 @@ flowchart LR
         direction TB
         C1[Catalog page<br/>fetchCatalog]
         C2[Book detail<br/>fetchBook → manifest with renditions]
-        C2B[Rendition/build picker<br/>fetchBookBuilds -> retained builds]
+        C2B[Collapsed rendition picker<br/>engine -> voice -> upload time]
         C3[Reader page<br/>pin build at chapter load<br/>fetchChapter rendition build → text + words]
         C3 --> C4[expo-audio player<br/>streams m4a rendition build]
         C3 --> C5[useSyncEngine<br/>rAF reads player.currentTime]
@@ -105,8 +105,8 @@ Notes:
 - Voice direction writes auditable per-build artifacts to R2. `character_registry.json` carries the narrator, character aliases, descriptions, and assigned voices for future client features. `voice_direction.json` carries the cast mode plus speaker/performance plan used for synthesis. The reader still consumes `chapter_data.json` for text and word sync.
 - The default cast mode is **solo narrator**: the LLM may choose the narrator and build/expand the character registry, but synthesis keeps one narrator voice for the whole audiobook. Character data is used for audit and future style guidance rather than hard voice switching. **Multicast** is opt-in via config/CLI and may switch voices by character; it is experimental because prose dialogue tags can sound stitched when rendered as separate synthetic actors. WhisperX is the canonical word-timestamp source for every engine; Kokoro native token timestamps are not used for the final sync contract.
 - `catalog.json` is the preferred fast path for `GET /catalog`; when it is missing, the worker may derive the same catalog rows from root book manifests plus each selected rendition's current `rendition-manifest.json`. Catalog rows include the backend default rendition and current build so the client can open a book on a coherent default build.
-- `GET /books/:a/:t/builds` is the no-cache discovery API for build selection. It reads the book manifest's retained `available_builds` and enriches each retained build from its own `rendition-manifest.json`; omitting `build` in client URLs still means use the rendition's `current_build`.
-- The client stores the user's preferred build per book locally and uses that preference on the next book-detail load when the retained build still exists. Reading progress is keyed by book, rendition, and build so progress from one build cannot leak into another.
+- `GET /books/:a/:t/builds` is the no-cache discovery API for build selection. It reads the book manifest's retained `available_builds`, enriches each retained build from its own `rendition-manifest.json`, and returns `uploaded_at` from the R2 object's upload timestamp. Omitting `build` in client URLs still means use the rendition's `current_build`.
+- The client stores the user's preferred build per book locally and uses that preference on the next book-detail load when the retained build still exists. Reading progress is keyed by book, rendition, and build so progress from one build cannot leak into another. The book-detail selector is collapsed by default, always shows the selected engine, groups choices by engine then voice, and lists builds by upload time while keeping raw build IDs internal.
 - The client does not poll status for sync; `useSyncEngine` reads `player.currentTime` directly inside `requestAnimationFrame` and only re-renders when the active word index changes.
 - Tap-to-seek in the reader looks up `words[i].start` and calls `player.seekTo`.
 
@@ -115,7 +115,7 @@ Notes:
 OpenShelf separates two orthogonal concepts that used to be conflated:
 
 - **Rendition** is a user-facing artistic identity (a narrator voice + engine). Examples: `kokoro-af-heart`, `kokoro-bf-emma`, `f5tts-custom`, `chatterbox-custom`. Stable across pipeline changes. The user picks a rendition.
-- **Build** is an internal pipeline-output identity. It is a fresh random 16-hex string by default, or a caller-provided 16-hex string when resuming a targeted build. The default client experience hides it, but an advanced build selector may expose retained build IDs for rollback/testing.
+- **Build** is an internal pipeline-output identity. It is a fresh random 16-hex string by default, or a caller-provided 16-hex string when resuming a targeted build. The default client experience hides it; retained build choices are presented by upload time while the build ID remains the URL/storage key.
 
 Storage and HTTP URLs include **both**: `audio/{rendition}/builds/{build}/...` on R2; `?rendition=...&build=...` on every immutable HTTP route. The book-level `manifest.json` is the single mutable pointer that names the `current_build` per rendition. This makes audio + chapter_data + rendition-manifest a coherent atomic snapshot per (rendition, build), so a client can never mix bytes from different builds mid-session.
 

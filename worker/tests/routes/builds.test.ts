@@ -84,6 +84,7 @@ describe("GET /api/v1/books/:author/:title/builds", () => {
 						build: string;
 						is_current: boolean;
 						pipeline_version: string;
+						uploaded_at: string;
 						total_duration_seconds: number;
 						chapter_count: number;
 						chapters: unknown[];
@@ -112,6 +113,10 @@ describe("GET /api/v1/books/:author/:title/builds", () => {
 			chapter_count: 1,
 		});
 		expect(rendition.builds[0].chapters).toHaveLength(1);
+		expect(rendition.builds[0].uploaded_at).toMatch(
+			/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+		);
+		expect(new Date(rendition.builds[0].uploaded_at).toString()).not.toBe("Invalid Date");
 	});
 
 	it("is not cached", async () => {

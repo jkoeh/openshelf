@@ -83,7 +83,7 @@ strategy.
 
 The worker reads this file at request time to enrich `GET /books/:a/:t` responses. For each rendition in the book manifest, the worker fetches the rendition-manifest for that rendition's `current_build` and inlines its `chapters` array into the response.
 
-The worker also uses this file for `GET /books/:a/:t/builds`, the optional build-selection endpoint. That route reads the retained build IDs from the book manifest's `available_builds` list, fetches each retained build's `rendition-manifest.json`, and returns per-build engine, voice, pipeline version, duration, and chapter metadata. The build-selection endpoint uses `Cache-Control: no-store` because the set of retained builds can change often even though each individual build is immutable.
+The worker also uses this file for `GET /books/:a/:t/builds`, the optional build-selection endpoint. That route reads the retained build IDs from the book manifest's `available_builds` list, fetches each retained build's `rendition-manifest.json`, and returns per-build engine, voice, upload time, pipeline version, duration, and chapter metadata. `uploaded_at` is derived from the R2 object's `uploaded` timestamp for `rendition-manifest.json`; it stays outside the immutable JSON payload and serves as the client-facing build label. The build-selection endpoint uses `Cache-Control: no-store` because the set of retained builds can change often even though each individual build is immutable.
 
 ## Dependencies
 

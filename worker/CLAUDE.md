@@ -127,7 +127,7 @@ The book route returns a merge of two R2 reads: the small mutable `manifest.json
 
 ## `GET /books/:author/:title/builds` response shape
 
-The build-selection route is an optional discovery endpoint for clients that want to expose non-current retained builds. It reads the root book manifest, then fetches each build listed in every rendition's `available_builds` from that build's `rendition-manifest.json`. The response is never cached because build availability can change often while individual build bytes remain immutable.
+The build-selection route is an optional discovery endpoint for clients that want to expose non-current retained builds. It reads the root book manifest, then fetches each build listed in every rendition's `available_builds` from that build's `rendition-manifest.json`. `uploaded_at` comes from the R2 object's upload timestamp for that `rendition-manifest.json`, not from the immutable JSON payload. The response is never cached because build availability can change often while individual build bytes remain immutable.
 
 ```json
 {
@@ -148,6 +148,7 @@ The build-selection route is an optional discovery endpoint for clients that wan
           "engine": "kokoro",
           "pipeline_version": "1",
           "is_current": true,
+          "uploaded_at": "2026-06-14T18:42:00.000Z",
           "total_duration_seconds": 1847.3,
           "chapter_count": 1,
           "chapters": [
