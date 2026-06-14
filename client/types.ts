@@ -5,6 +5,7 @@ export interface CatalogBook {
   title_slug: string;
   source: string;
   rendition: string;
+  current_build: string;
   total_duration_seconds: number;
   chapter_count: number;
   has_cover?: boolean;
@@ -41,6 +42,33 @@ export interface ManifestRendition {
   current_build: string;
   available_builds: string[];
   total_duration_seconds: number;
+  chapters: ManifestChapter[];
+}
+
+export interface BookBuildsResponse {
+  title: string;
+  author: string;
+  source: string;
+  renditions: Record<string, BookBuildsRendition>;
+}
+
+export interface BookBuildsRendition {
+  voice: string;
+  engine: string;
+  display: string;
+  current_build: string;
+  builds: BookBuildOption[];
+}
+
+export interface BookBuildOption {
+  build: string;
+  rendition: string;
+  voice: string;
+  engine: string;
+  pipeline_version: string;
+  is_current: boolean;
+  total_duration_seconds: number;
+  chapter_count: number;
   chapters: ManifestChapter[];
 }
 

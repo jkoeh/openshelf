@@ -107,6 +107,7 @@ class TestBuildCatalog(unittest.TestCase):
         self.assertEqual(len(built["books"]), 1)
         book = built["books"][0]
         self.assertEqual(book["rendition"], "kokoro-af-heart")
+        self.assertEqual(book["current_build"], "2a4f9c1b3d8e7f60")
         self.assertEqual(book["total_duration_seconds"], 1847.3)
         self.assertEqual(book["chapter_count"], 1)
         self.assertTrue(book["has_cover"])

@@ -10,7 +10,7 @@ import ReadingPane from "../../../components/ReadingPane";
 import SettingsPanel from "../../../components/SettingsPanel";
 import { useSyncEngine } from "../../../hooks/useSyncEngine";
 import { useTheme } from "../../../hooks/useTheme";
-import { audioUrl, fetchBook, fetchChapter } from "../../../lib/api";
+import { audioUrl, fetchBook, fetchBookBuilds, fetchChapter } from "../../../lib/api";
 import { selectRendition } from "../../../lib/renditions";
 import {
   getSavedFontSize,
@@ -20,7 +20,7 @@ import {
   savePlaybackRate,
   saveProgress,
 } from "../../../lib/storage";
-import type { ChapterResponse, Manifest } from "../../../types";
+import type { BookBuildsResponse, ChapterResponse, Manifest } from "../../../types";
 
 export default function ReaderPage() {
   const {
@@ -30,6 +30,7 @@ export default function ReaderPage() {
     time: timeParam,
     autoplay,
     rendition: renditionParam,
+    build: buildParam,
   } = useLocalSearchParams<{
     author: string;
     title: string;
@@ -37,10 +38,13 @@ export default function ReaderPage() {
     time?: string;
     autoplay?: string;
     rendition?: string;
+    build?: string;
   }>();
   const { colors } = useTheme();
 
   const [manifest, setManifest] = useState<Manifest | null>(null);
+  const [buildSelection, setBuildSelection] = useState<BookBuildsResponse | null>(null);
+  const [buildSelectionLoaded, setBuildSelectionLoaded] = useState(false);
   const [chapterData, setChapterData] = useState<ChapterResponse | null>(null);
   const [pinnedBuild, setPinnedBuild] = useState<{
     chapter: number;
@@ -71,7 +75,25 @@ export default function ReaderPage() {
     () => (manifest ? selectRendition(manifest, renditionParam) : null),
     [manifest, renditionParam],
   );
-  const activeChapters = activeRendition?.rendition.chapters ?? [];
+  const requiresBuildSelection = Boolean(
+    buildParam &&
+      activeRendition &&
+      buildParam !== activeRendition.rendition.current_build,
+  );
+  const activeBuild = useMemo(() => {
+    if (!requiresBuildSelection || !buildParam || !activeRendition || !buildSelection) {
+      return null;
+    }
+    return (
+      buildSelection.renditions[activeRendition.key]?.builds.find(
+        (option) => option.build === buildParam,
+      ) ?? null
+    );
+  }, [activeRendition, buildParam, buildSelection, requiresBuildSelection]);
+  const resolvedBuild = buildParam ?? activeRendition?.rendition.current_build;
+  const activeChapters = requiresBuildSelection
+    ? (activeBuild?.chapters ?? [])
+    : (activeRendition?.rendition.chapters ?? []);
   const totalChapters = activeChapters.length;
 
   // Sync engine — reads player.currentTime directly via rAF, not via status
@@ -180,16 +202,59 @@ export default function ReaderPage() {
     }
   }, [status.isLoaded, player]);
 
-  // Fetch manifest once
+  // Fetch manifest.
   useEffect(() => {
     if (!author || !title) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setManifest(null);
+    setBuildSelection(null);
+    setBuildSelectionLoaded(false);
+    setChapterData(null);
+    setPinnedBuild(null);
     fetchBook(author, title)
-      .then(setManifest)
+      .then((data) => {
+        if (!cancelled) setManifest(data);
+      })
       .catch((e) => {
-        setError(e instanceof Error ? e.message : "Failed to load book");
-        setLoading(false);
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : "Failed to load book");
+          setLoading(false);
+        }
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, [author, title]);
+
+  useEffect(() => {
+    if (!author || !title) return;
+    let cancelled = false;
+    setBuildSelection(null);
+    setBuildSelectionLoaded(!requiresBuildSelection);
+
+    if (requiresBuildSelection) {
+      fetchBookBuilds(author, title)
+        .then((data) => {
+          if (!cancelled) setBuildSelection(data);
+        })
+        .catch((e) => {
+          if (!cancelled) {
+            setError(e instanceof Error ? e.message : "Failed to load build selection");
+            setLoading(false);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setBuildSelectionLoaded(true);
+        });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [author, title, requiresBuildSelection]);
 
   useEffect(() => {
     if (manifest && !activeRendition) {
@@ -198,59 +263,97 @@ export default function ReaderPage() {
     }
   }, [manifest, activeRendition]);
 
+  useEffect(() => {
+    if (!manifest || !activeRendition || !requiresBuildSelection || !buildSelectionLoaded) return;
+    if (!activeBuild) {
+      setError("Selected build not found");
+      setLoading(false);
+    }
+  }, [manifest, activeRendition, requiresBuildSelection, buildSelectionLoaded, activeBuild]);
+
   // Fetch chapter text when chapter changes
   useEffect(() => {
     if (!author || !title || !manifest || !activeRendition) return;
+    if (requiresBuildSelection && !buildSelectionLoaded) return;
+    if (requiresBuildSelection && !activeBuild) return;
+    if (!resolvedBuild) return;
     setLoading(true);
     setError(null);
-    const build = activeRendition.rendition.current_build;
     const rendition = activeRendition.key;
-    setPinnedBuild({ chapter: currentChapter, rendition, build });
-    fetchChapter(author, title, currentChapter, rendition, build)
+    setPinnedBuild({ chapter: currentChapter, rendition, build: resolvedBuild });
+    fetchChapter(author, title, currentChapter, rendition, resolvedBuild)
       .then((data) => {
         setChapterData(data);
         scrollRef.current?.scrollTo({ y: 0, animated: false });
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Failed to load chapter"))
       .finally(() => setLoading(false));
-  }, [author, title, manifest, activeRendition, currentChapter]);
+  }, [
+    author,
+    title,
+    manifest,
+    activeRendition,
+    currentChapter,
+    requiresBuildSelection,
+    buildSelectionLoaded,
+    activeBuild,
+    resolvedBuild,
+  ]);
 
   // Save progress every 10s while playing
   useEffect(() => {
-    if (!author || !title || !status.playing) return;
+    if (!author || !title || !pinnedBuild || !status.playing) return;
     const interval = setInterval(() => {
-      saveProgress(author, title, {
-        chapter: currentChapter,
-        audioTime: status.currentTime,
-        updatedAt: new Date().toISOString(),
-      });
+      saveProgress(
+        author,
+        title,
+        pinnedBuild.rendition,
+        pinnedBuild.build,
+        {
+          chapter: currentChapter,
+          audioTime: status.currentTime,
+          updatedAt: new Date().toISOString(),
+        },
+      );
     }, 10000);
     return () => clearInterval(interval);
-  }, [author, title, currentChapter, status.playing, status.currentTime]);
+  }, [author, title, pinnedBuild, currentChapter, status.playing, status.currentTime]);
 
   // Save progress on chapter change
   useEffect(() => {
-    if (!author || !title || status.currentTime <= 0) return;
-    saveProgress(author, title, {
-      chapter: currentChapter,
-      audioTime: status.currentTime,
-      updatedAt: new Date().toISOString(),
-    });
-  }, [currentChapter]);
+    if (!author || !title || !pinnedBuild || status.currentTime <= 0) return;
+    saveProgress(
+      author,
+      title,
+      pinnedBuild.rendition,
+      pinnedBuild.build,
+      {
+        chapter: currentChapter,
+        audioTime: status.currentTime,
+        updatedAt: new Date().toISOString(),
+      },
+    );
+  }, [author, title, pinnedBuild, currentChapter, status.currentTime]);
 
   // Save progress when app goes to background
   useEffect(() => {
     const sub = AppState.addEventListener("change", (nextState) => {
-      if (nextState !== "active" && author && title) {
-        saveProgress(author, title, {
-          chapter: currentChapter,
-          audioTime: status.currentTime,
-          updatedAt: new Date().toISOString(),
-        });
+      if (nextState !== "active" && author && title && pinnedBuild) {
+        saveProgress(
+          author,
+          title,
+          pinnedBuild.rendition,
+          pinnedBuild.build,
+          {
+            chapter: currentChapter,
+            audioTime: status.currentTime,
+            updatedAt: new Date().toISOString(),
+          },
+        );
       }
     });
     return () => sub.remove();
-  }, [author, title, currentChapter, status.currentTime]);
+  }, [author, title, pinnedBuild, currentChapter, status.currentTime]);
 
   const handleFontSizeChange = useCallback((size: number) => {
     setFontSize(size);

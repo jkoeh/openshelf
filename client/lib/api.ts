@@ -1,5 +1,6 @@
 import { API_BASE } from "../constants/config";
 import type {
+	BookBuildsResponse,
 	CatalogResponse,
 	ChapterResponse,
 	Manifest,
@@ -16,8 +17,8 @@ class ApiError extends Error {
 	}
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
-	const res = await fetch(url);
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+	const res = init ? await fetch(url, init) : await fetch(url);
 	if (!res.ok) {
 		let code = "UNKNOWN";
 		let message = res.statusText;
@@ -56,6 +57,12 @@ export function fetchCatalog(params: CatalogParams = {}): Promise<CatalogRespons
 
 export function fetchBook(author: string, title: string): Promise<Manifest> {
 	return fetchJson<Manifest>(`${API_BASE}/books/${author}/${title}`);
+}
+
+export function fetchBookBuilds(author: string, title: string): Promise<BookBuildsResponse> {
+	return fetchJson<BookBuildsResponse>(`${API_BASE}/books/${author}/${title}/builds`, {
+		cache: "no-store",
+	});
 }
 
 export function fetchChapter(

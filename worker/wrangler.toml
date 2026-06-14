@@ -21,3 +21,11 @@ name = "openshelf-api"
 [[env.production.r2_buckets]]
 binding = "R2_BUCKET"
 bucket_name = "openshelf"
+
+[env.remote_r2]
+name = "openshelf-api-remote-r2-dev"
+
+[[env.remote_r2.r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "openshelf"
+remote = true

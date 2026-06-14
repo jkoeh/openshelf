@@ -48,9 +48,13 @@ function CoverImage({ book }: { book: CatalogBook }) {
 
 export default function BookCard({ book }: { book: CatalogBook }) {
 	const { colors } = useTheme();
+	const search = new URLSearchParams({
+		rendition: book.rendition,
+		build: book.current_build,
+	});
 
 	return (
-		<Link href={`/book/${book.author_slug}/${book.title_slug}`} asChild>
+		<Link href={`/book/${book.author_slug}/${book.title_slug}?${search}`} asChild>
 			<Pressable
 				style={{
 					flexDirection: "row",

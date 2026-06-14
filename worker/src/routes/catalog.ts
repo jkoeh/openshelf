@@ -19,6 +19,7 @@ const CatalogBookSchema = z
 		title_slug: z.string(),
 		source: z.string(),
 		rendition: z.string(),
+		current_build: z.string(),
 		total_duration_seconds: z.number(),
 		chapter_count: z.number().int(),
 		has_cover: z.boolean(),
@@ -51,10 +52,12 @@ const QuerySchema = z.object({
 
 interface CatalogBook extends z.infer<typeof CatalogBookSchema> {}
 
+type CatalogFileBook = Omit<CatalogBook, "current_build"> & { current_build?: string };
+
 interface CatalogFile {
 	version?: number;
 	generated_at?: string;
-	books?: CatalogBook[];
+	books?: CatalogFileBook[];
 }
 
 interface BookManifestRendition {
@@ -114,7 +117,7 @@ async function keyExists(bucket: R2Bucket, key: string): Promise<boolean> {
 }
 
 async function deriveCatalog(bucket: R2Bucket): Promise<Required<CatalogFile>> {
-	const books: CatalogBook[] = [];
+	const books: CatalogFileBook[] = [];
 
 	for (const key of await listBookManifestKeys(bucket)) {
 		const meta = parseBookManifestKey(key);
@@ -157,6 +160,7 @@ async function deriveCatalog(bucket: R2Bucket): Promise<Required<CatalogFile>> {
 			title_slug: meta.titleSlug,
 			source: manifest.source ?? "unknown",
 			rendition,
+			current_build: currentBuild,
 			total_duration_seconds: renditionManifest.total_duration_seconds ?? 0,
 			chapter_count: chapters.length,
 			has_cover: hasCover,
@@ -181,6 +185,29 @@ async function readCatalog(bucket: R2Bucket): Promise<Required<CatalogFile>> {
 		generated_at: catalog.generated_at ?? "",
 		books: catalog.books ?? [],
 	};
+}
+
+async function withCurrentBuilds(
+	bucket: R2Bucket,
+	books: CatalogFileBook[],
+): Promise<CatalogBook[]> {
+	const enriched: CatalogBook[] = [];
+	for (const book of books) {
+		if (book.current_build) {
+			enriched.push({ ...book, current_build: book.current_build });
+			continue;
+		}
+
+		const manifestObj = await bucket.get(r2Key.bookManifest(book.author_slug, book.title_slug));
+		if (!manifestObj) {
+			enriched.push({ ...book, current_build: "" });
+			continue;
+		}
+		const manifest = (await manifestObj.json()) as BookManifestFile;
+		const currentBuild = manifest.renditions?.[book.rendition]?.current_build ?? "";
+		enriched.push({ ...book, current_build: currentBuild });
+	}
+	return enriched;
 }
 
 const route = createRoute({
@@ -227,12 +254,13 @@ app.openapi(route, async (c) => {
 	);
 	const start = (page - 1) * limit;
 	const paged = books.slice(start, start + limit);
+	const pagedWithBuilds = await withCurrentBuilds(c.env.R2_BUCKET, paged);
 
 	return c.json(
 		{
 			version: catalog.version,
 			generated_at: catalog.generated_at,
-			books: paged,
+			books: pagedWithBuilds,
 			total: books.length,
 			page,
 			limit,

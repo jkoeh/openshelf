@@ -2,6 +2,7 @@ import { swaggerUI } from "@hono/swagger-ui";
 import { cors } from "./middleware/cors";
 import audio from "./routes/audio";
 import book from "./routes/book";
+import builds from "./routes/builds";
 import catalog from "./routes/catalog";
 import chapters from "./routes/chapters";
 import cover from "./routes/cover";
@@ -17,6 +18,7 @@ app.use("*", cors);
 
 app.route("/api/v1/health", health);
 app.route("/api/v1/catalog", catalog);
+app.route("/api/v1/books/:author/:title/builds", builds);
 app.route("/api/v1/books/:author/:title/chapters/:number", chapters);
 app.route("/api/v1/books/:author/:title/audio/:chapter", audio);
 app.route("/api/v1/books/:author/:title/cover", cover);

@@ -126,6 +126,7 @@ def build_catalog(client, bucket: str) -> dict:
             "title_slug": meta["title_slug"],
             "source": manifest.get("source", "unknown"),
             "rendition": rendition,
+            "current_build": current_build,
             "total_duration_seconds": rendition_manifest.get("total_duration_seconds", 0),
             "chapter_count": len(chapters),
             "has_cover": has_cover,

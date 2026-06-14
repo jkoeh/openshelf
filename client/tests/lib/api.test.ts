@@ -5,6 +5,7 @@ import {
 	audioUrl,
 	epubUrl,
 	fetchBook,
+	fetchBookBuilds,
 	fetchCatalog,
 	fetchChapter,
 } from "../../lib/api";
@@ -79,6 +80,24 @@ describe("fetchBook", () => {
 
 		expect(result.title).toBe("The Trial");
 		expect(mockFetch.mock.calls[0][0]).toContain("/books/franz-kafka/the-trial");
+	});
+});
+
+describe("fetchBookBuilds", () => {
+	it("fetches build selections", async () => {
+		const builds = {
+			title: "The Trial",
+			author: "Franz Kafka",
+			source: "gutenberg",
+			renditions: {},
+		};
+		mockFetch.mockResolvedValue(jsonResponse(builds));
+
+		const result = await fetchBookBuilds("franz-kafka", "the-trial");
+
+		expect(result.title).toBe("The Trial");
+		expect(mockFetch.mock.calls[0][0]).toContain("/books/franz-kafka/the-trial/builds");
+		expect(mockFetch.mock.calls[0][1]).toEqual({ cache: "no-store" });
 	});
 });
 

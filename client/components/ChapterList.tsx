@@ -10,14 +10,16 @@ interface ChapterListProps {
 	author: string;
 	title: string;
 	rendition?: string;
+	build?: string;
 }
 
-export default function ChapterList({ chapters, author, title, rendition }: ChapterListProps) {
+export default function ChapterList({ chapters, author, title, rendition, build }: ChapterListProps) {
 	const { colors } = useTheme();
 	const router = useRouter();
 	const chapterUrl = (chapter: number) => {
 		const search = new URLSearchParams({ chapter: String(chapter), autoplay: "1" });
 		if (rendition) search.set("rendition", rendition);
+		if (build) search.set("build", build);
 		return `/read/${author}/${title}?${search}`;
 	};
 

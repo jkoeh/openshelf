@@ -53,15 +53,27 @@ export interface ReadingProgress {
 	updatedAt: string;
 }
 
-function progressKey(author: string, title: string): string {
-	return `progress:${author}/${title}`;
+export interface SavedBuildSelection {
+	rendition: string;
+	build: string;
+	updatedAt: string;
+}
+
+function progressKey(author: string, title: string, rendition: string, build: string): string {
+	return `progress:${author}/${title}/${rendition}/${build}`;
+}
+
+function buildSelectionKey(author: string, title: string): string {
+	return `build-selection:${author}/${title}`;
 }
 
 export function getSavedProgress(
 	author: string,
 	title: string,
+	rendition: string,
+	build: string,
 ): ReadingProgress | null {
-	const raw = getStorage().getString(progressKey(author, title));
+	const raw = getStorage().getString(progressKey(author, title, rendition, build));
 	if (!raw) return null;
 	try {
 		return JSON.parse(raw) as ReadingProgress;
@@ -73,7 +85,30 @@ export function getSavedProgress(
 export function saveProgress(
 	author: string,
 	title: string,
+	rendition: string,
+	build: string,
 	progress: ReadingProgress,
 ): void {
-	getStorage().set(progressKey(author, title), JSON.stringify(progress));
+	getStorage().set(progressKey(author, title, rendition, build), JSON.stringify(progress));
+}
+
+export function getSavedBuildSelection(
+	author: string,
+	title: string,
+): SavedBuildSelection | null {
+	const raw = getStorage().getString(buildSelectionKey(author, title));
+	if (!raw) return null;
+	try {
+		return JSON.parse(raw) as SavedBuildSelection;
+	} catch {
+		return null;
+	}
+}
+
+export function saveBuildSelection(
+	author: string,
+	title: string,
+	selection: SavedBuildSelection,
+): void {
+	getStorage().set(buildSelectionKey(author, title), JSON.stringify(selection));
 }

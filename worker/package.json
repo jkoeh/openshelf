@@ -4,7 +4,8 @@
 	"private": true,
 	"scripts": {
 		"dev": "wrangler dev --remote",
-		"dev:local": "wrangler dev",
+		"dev:local": "wrangler dev --local",
+		"dev:remote-r2": "wrangler dev -e remote_r2",
 		"deploy:staging": "wrangler deploy --env staging",
 		"deploy:production": "wrangler deploy --env production",
 		"typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",

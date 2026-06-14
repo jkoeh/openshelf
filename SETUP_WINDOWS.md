@@ -115,6 +115,20 @@ python -m unittest discover -s tests -v
 python pipeline\scripts\openshelf-pipeline.py books download --dry-run --author "Kafka"
 ```
 
+Start the worker and client together with the Windows-safe npm script:
+```powershell
+npm run dev:window
+```
+
+This starts Wrangler in local mode, so it does not require `wrangler login`.
+
+To run local Worker code against the real remote R2 bucket instead of local
+Miniflare R2, log in to Wrangler once and use the remote-R2 variant:
+```powershell
+npm --prefix worker exec wrangler login
+npm run dev:window:r2
+```
+
 ---
 
 ## Windows-Specific Gotchas

@@ -29,6 +29,7 @@ src/
     health.ts           # GET /api/v1/health
     catalog.ts          # GET /api/v1/catalog — catalog.json fast path, manifest-derived fallback
     book.ts             # GET /api/v1/books/:author/:title
+    builds.ts           # GET /api/v1/books/:author/:title/builds — retained build selection metadata
     chapters.ts         # GET /api/v1/books/:author/:title/chapters/:number?rendition=&build= — text + inline word timestamps (immutable)
     audio.ts            # GET /api/v1/books/:author/:title/audio/:chapter?rendition=&build= — m4a stream, supports Range (immutable)
     cover.ts            # GET /api/v1/books/:author/:title/cover
@@ -62,6 +63,8 @@ All commands run from the **worker/** directory.
 ```bash
 # Dev server
 npm run dev
+npm run dev:local
+npm run dev:remote-r2
 
 # Deploy
 npm run deploy:staging
@@ -80,6 +83,8 @@ npm test
 # Seed local R2
 npm run seed
 ```
+
+`npm run dev:local` runs local Worker code with local simulated R2. `npm run dev:remote-r2` runs local Worker code with the `R2_BUCKET` binding connected to the real `openshelf` R2 bucket via Wrangler remote bindings, so it requires `wrangler login`.
 
 ## Conventions
 
@@ -120,6 +125,44 @@ The book route returns a merge of two R2 reads: the small mutable `manifest.json
 
 `total_duration_seconds` and `chapters` are sourced from the rendition-manifest of `current_build`. The on-R2 book manifest does not store them — keeping it tiny and stable across reprocesses. The merged response is short-cached as a whole (the book manifest portion is the mutable part); a freshly published build propagates within the manifest cache window.
 
+## `GET /books/:author/:title/builds` response shape
+
+The build-selection route is an optional discovery endpoint for clients that want to expose non-current retained builds. It reads the root book manifest, then fetches each build listed in every rendition's `available_builds` from that build's `rendition-manifest.json`. The response is never cached because build availability can change often while individual build bytes remain immutable.
+
+```json
+{
+  "title": "The Metamorphosis",
+  "author": "Franz Kafka",
+  "source": "gutenberg",
+  "renditions": {
+    "kokoro-af-heart": {
+      "voice": "af_heart",
+      "engine": "kokoro",
+      "display": "Heart",
+      "current_build": "2a4f9c1b3d8e7f60",
+      "builds": [
+        {
+          "build": "2a4f9c1b3d8e7f60",
+          "rendition": "kokoro-af-heart",
+          "voice": "af_heart",
+          "engine": "kokoro",
+          "pipeline_version": "1",
+          "is_current": true,
+          "total_duration_seconds": 1847.3,
+          "chapter_count": 1,
+          "chapters": [
+            {"number": 1, "title": "I", "filename": "chapter-01.m4a",
+             "duration_seconds": 1847.3, "word_count": 3241}
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+Omitting `build` in client URLs keeps the default behavior: the reader resolves the selected rendition to `current_build`. Passing `build=<retained build id>` pins the reader to that build for chapter data and audio.
+
 ## Cache policy
 
 The cache header on a route is determined by **whether the URL is content-versioned**, not by the resource type:
@@ -127,6 +170,7 @@ The cache header on a route is determined by **whether the URL is content-versio
 | URL form | Cache-Control | Rationale |
 |---|---|---|
 | `/books/:a/:t` (book manifest) | `public, max-age=60, stale-while-revalidate=86400` | Mutable pointer; the only place a new build's existence can be discovered |
+| `/books/:a/:t/builds` (build selection) | `no-store` | Mutable discovery view over retained builds; build availability can change frequently |
 | `/books/:a/:t/cover`, `/epub` | `public, max-age=31536000, immutable` | Bytes never change for a book |
 | `/books/:a/:t/chapters/:n?rendition=&build=` | `public, max-age=31536000, immutable` | Build pin in URL ⇒ bytes never change |
 | `/books/:a/:t/audio/:c?rendition=&build=` | `public, max-age=31536000, immutable` | Same as above |
@@ -136,16 +180,16 @@ The cache header on a route is determined by **whether the URL is content-versio
 
 ## `GET /catalog` source of truth
 
-The preferred source is root `catalog.json`, written by `openshelf-pipeline ops catalog` and refreshed by `openshelf-pipeline books process --upload`. If that mutable index is missing, the worker derives the same response shape by listing `books/`, reading root `books/:author/:title/manifest.json` objects, selecting the default rendition (`kokoro-af-heart`, or the first sorted rendition), and enriching each row from that rendition's `current_build` `rendition-manifest.json`.
+The preferred source is root `catalog.json`, written by `openshelf-pipeline ops catalog` and refreshed by `openshelf-pipeline books process --upload`. Catalog rows include the selected default rendition and its `current_build`. If that mutable index is missing, the worker derives the same response shape by listing `books/`, reading root `books/:author/:title/manifest.json` objects, selecting the default rendition (`kokoro-af-heart`, or the first sorted rendition), and enriching each row from that rendition's `current_build` `rendition-manifest.json`.
 
 The fallback exists so a refactor or partial migration that uploads book manifests before rebuilding `catalog.json` does not make the public catalog appear empty. It is not a replacement for the pipeline catalog build; the generated `catalog.json` remains the normal fast path.
 
 ## Rendition vs build
 
 - **Rendition** (`kokoro-af-heart`) is user-facing — chosen by the user, exposed in the catalog and book manifest.
-- **Build** (`2a4f9c1b3d8e7f60`) is internal — a 16-hex string the pipeline assigns once per run (no content addressing). Surfaced only via the book manifest's per-rendition `current_build`.
+- **Build** (`2a4f9c1b3d8e7f60`) is internal — a 16-hex string the pipeline assigns once per run (no content addressing). The default client treats it as transparent, while the build-selection route can expose retained IDs for rollback/testing.
 
-The client treats rendition as a setting and build as transparent: it reads the book manifest, looks up `current_build` for the user's chosen rendition, pins that hash for the duration of the chapter session, and includes it in chapter and audio URLs as `?build=...`. New builds are picked up on the next chapter or app restart.
+The client treats rendition as a setting and build as transparent by default: it reads the book manifest, looks up `current_build` for the user's chosen rendition, pins that hash for the duration of the chapter session, and includes it in chapter and audio URLs as `?build=...`. If an explicit retained build is selected, the client passes that build instead, stores the choice locally as the book's preferred default, and scopes reading progress by book/rendition/build. New backend current builds are picked up when no explicit local build preference is retained.
 
 ## Adding or modifying a route
 
