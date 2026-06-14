@@ -480,7 +480,10 @@ def _synthesize_segments(
     prev_voice_id: str | None = None
 
     for segment in segments:
-        units = _split_synthesis_units(segment.text)
+        if getattr(engine, "prefer_packed_synthesis_units", False):
+            units = [(segment.text, 0)]
+        else:
+            units = _split_synthesis_units(segment.text)
         split_units = getattr(engine, "split_synthesis_units", None)
         if callable(split_units):
             expanded_units: list[tuple[str, int]] = []
@@ -704,7 +707,7 @@ def build_chunk_infos(
 ) -> list[ChunkInfo]:
     """Assemble the per-chunk ChunkInfo list for synthesis.
 
-    Shared by the convert-book orchestrator and the `synth` DAG command so both
+    Shared by the full DAG runner and the `synth` DAG command so both
     build synthesis input the same way.
     """
     infos: list[ChunkInfo] = []
@@ -735,7 +738,7 @@ def synthesize_chapter_to_files(
 ) -> tuple[SynthesisResult, float]:
     """Synthesize one chapter to its m4a + sync artifacts. Returns (result, encoded_duration).
 
-    This is the single audio-generation path shared by the convert-book
+    This is the single audio-generation path shared by the full DAG
     orchestrator and the `synth` DAG command: remove any stale m4a, synthesize +
     align, encode to AAC, and write chapter-NN.sync.json. The encoded duration is
     returned for manifest accounting.

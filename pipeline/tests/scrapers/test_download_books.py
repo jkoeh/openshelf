@@ -1,7 +1,6 @@
 """Unit tests for openshelf.scrapers — all network calls are mocked."""
 
 import json
-import importlib.util
 import os
 import sys
 import tempfile
@@ -12,6 +11,7 @@ from unittest.mock import MagicMock, patch
 # Allow running without pip install
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
+from openshelf.pipeline import books
 from openshelf.scrapers import http, gutenberg, standard_ebooks
 
 
@@ -322,19 +322,7 @@ class TestDownloadBook(unittest.TestCase):
 
 
 class TestProcessBooksFiltering(unittest.TestCase):
-    def _load_process_books(self):
-        script = os.path.join(
-            os.path.dirname(__file__), "..", "..", "scripts", "process-books.py",
-        )
-        spec = importlib.util.spec_from_file_location("process_books_for_test", script)
-        module = importlib.util.module_from_spec(spec)
-        assert spec.loader is not None
-        spec.loader.exec_module(module)
-        return module
-
     def test_standard_ebooks_book_filter_ignores_apostrophe(self):
-        module = self._load_process_books()
-
         def fake_download(author_name, title, epub_url, source_dir, delay=0):
             author_slug = http.sanitize(author_name)
             title_slug = http.sanitize(title) or "untitled"
@@ -352,17 +340,16 @@ class TestProcessBooksFiltering(unittest.TestCase):
             delay=0,
         )
         with (
-            patch.object(module, "se_search", return_value=[
+            patch.object(books, "se_search", return_value=[
                 ("Lewis Carroll", "Alices Adventures In Wonderland", "http://x.epub"),
             ]),
-            patch.object(module, "download_book", side_effect=fake_download),
+            patch.object(books, "download_book", side_effect=fake_download),
         ):
-            downloaded = module.search_and_download(args)
+            downloaded = books.search_and_download(args)
 
         self.assertEqual(len(downloaded), 1)
 
     def test_convert_book_forwards_performance_direction(self):
-        module = self._load_process_books()
         args = types.SimpleNamespace(
             output="audio",
             engine="chatterbox",
@@ -382,97 +369,76 @@ class TestProcessBooksFiltering(unittest.TestCase):
         )
 
         with patch.object(
-            module.subprocess,
+            books.subprocess,
             "run",
             return_value=types.SimpleNamespace(returncode=0),
         ) as run:
-            rc = module.convert_book("book.epub", "local", args)
+            rc = books.convert_book("book.epub", "local", args)
 
         self.assertEqual(rc, 0)
         cmd = run.call_args[0][0]
         self.assertIn("-m", cmd)
-        self.assertIn("openshelf.pipeline.dag_cli", cmd)
+        self.assertIn("openshelf.pipeline.dag.cli", cmd)
         self.assertIn("run", cmd)
-        self.assertNotIn("convert-book.py", " ".join(cmd))
+        self.assertNotIn("pipeline/scripts", " ".join(cmd))
         self.assertIn("--performance-direction", cmd)
         self.assertIn("batched", cmd)
         self.assertIn("PYTHONPATH", run.call_args.kwargs["env"])
 
     def test_main_exits_nonzero_when_no_books_downloaded(self):
-        module = self._load_process_books()
-
-        argv = ["process-books.py", "--author", "No Such Author"]
         with (
-            patch.object(sys, "argv", argv),
-            patch.object(module, "configure_console_output"),
-            patch.object(module, "configure_pipeline_logging", return_value="test.log"),
-            patch.object(module, "search_and_download", return_value=[]),
+            patch.object(books, "configure_console_output"),
+            patch.object(books, "configure_pipeline_logging", return_value="test.log"),
+            patch.object(books, "search_and_download", return_value=[]),
         ):
-            with self.assertRaises(SystemExit) as raised:
-                module.main()
+            code = books.main(["process", "--author", "No Such Author", "--skip-preflight"])
 
-        self.assertEqual(raised.exception.code, 1)
+        self.assertEqual(code, 1)
 
     def test_main_exits_nonzero_when_convert_fails(self):
-        module = self._load_process_books()
-
-        argv = ["process-books.py", "--epub", __file__]
         with (
-            patch.object(sys, "argv", argv),
-            patch.object(module, "configure_console_output"),
-            patch.object(module, "configure_pipeline_logging", return_value="test.log"),
-            patch.object(module, "convert_book", return_value=1),
+            patch.object(books, "configure_console_output"),
+            patch.object(books, "configure_pipeline_logging", return_value="test.log"),
+            patch.object(books, "convert_book", return_value=1),
         ):
-            with self.assertRaises(SystemExit) as raised:
-                module.main()
+            code = books.main(["process", "--epub", __file__, "--skip-preflight"])
 
-        self.assertEqual(raised.exception.code, 1)
+        self.assertEqual(code, 1)
 
     def test_main_refreshes_catalog_after_successful_upload(self):
-        module = self._load_process_books()
-
-        argv = ["process-books.py", "--epub", __file__, "--upload"]
         with (
-            patch.object(sys, "argv", argv),
-            patch.object(module, "configure_console_output"),
-            patch.object(module, "configure_pipeline_logging", return_value="test.log"),
-            patch.object(module, "convert_book", return_value=0),
-            patch.object(module, "refresh_catalog", return_value=0) as refresh,
+            patch.object(books, "configure_console_output"),
+            patch.object(books, "configure_pipeline_logging", return_value="test.log"),
+            patch.object(books, "convert_book", return_value=0),
+            patch.object(books, "refresh_catalog", return_value=0) as refresh,
         ):
-            module.main()
+            code = books.main(["process", "--epub", __file__, "--upload", "--skip-preflight"])
 
+        self.assertEqual(code, 0)
         refresh.assert_called_once()
 
     def test_main_skips_catalog_refresh_without_upload(self):
-        module = self._load_process_books()
-
-        argv = ["process-books.py", "--epub", __file__]
         with (
-            patch.object(sys, "argv", argv),
-            patch.object(module, "configure_console_output"),
-            patch.object(module, "configure_pipeline_logging", return_value="test.log"),
-            patch.object(module, "convert_book", return_value=0),
-            patch.object(module, "refresh_catalog") as refresh,
+            patch.object(books, "configure_console_output"),
+            patch.object(books, "configure_pipeline_logging", return_value="test.log"),
+            patch.object(books, "convert_book", return_value=0),
+            patch.object(books, "refresh_catalog") as refresh,
         ):
-            module.main()
+            code = books.main(["process", "--epub", __file__, "--skip-preflight"])
 
+        self.assertEqual(code, 0)
         refresh.assert_not_called()
 
     def test_main_exits_nonzero_when_catalog_refresh_fails(self):
-        module = self._load_process_books()
-
-        argv = ["process-books.py", "--epub", __file__, "--upload"]
         with (
-            patch.object(sys, "argv", argv),
-            patch.object(module, "configure_console_output"),
-            patch.object(module, "configure_pipeline_logging", return_value="test.log"),
-            patch.object(module, "convert_book", return_value=0),
-            patch.object(module, "refresh_catalog", return_value=2),
+            patch.object(books, "configure_console_output"),
+            patch.object(books, "configure_pipeline_logging", return_value="test.log"),
+            patch.object(books, "convert_book", return_value=0),
+            patch.object(books, "refresh_catalog", return_value=2),
         ):
-            with self.assertRaises(SystemExit) as raised:
-                module.main()
+            code = books.main(["process", "--epub", __file__, "--upload", "--skip-preflight"])
 
-        self.assertEqual(raised.exception.code, 2)
+        self.assertEqual(code, 2)
 
 
 if __name__ == "__main__":

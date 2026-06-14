@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Quick audio quality validation script.
 
 Generates audio from a short EPUB (or built-in test text) and validates:
@@ -8,21 +7,18 @@ Generates audio from a short EPUB (or built-in test text) and validates:
   4. Duration sanity — total audio roughly matches expected speech rate
 
 Usage:
-    python scripts/test-audio-quality.py                          # built-in test text
-    python scripts/test-audio-quality.py --epub <path>            # from EPUB
-    python scripts/test-audio-quality.py --epub <path> --chapters 1-2
-    python scripts/test-audio-quality.py --device cpu             # force CPU
+    openshelf-pipeline qa audio
+    openshelf-pipeline qa audio --epub <path> --chapters 1-2
 """
 
 import argparse
 import os
 import sys
 import tempfile
+from typing import Sequence
 
 import numpy as np
 import soundfile as sf
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from openshelf.config import (
     CHUNK_MAX_WORDS,
@@ -250,14 +246,17 @@ def run_validation(pipeline, chapters, device, output_dir):
     return all_passed, results
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Validate audio quality after TTS pipeline changes")
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="openshelf-pipeline qa audio",
+        description="Validate audio quality after TTS pipeline changes",
+    )
     parser.add_argument("--epub", help="Path to EPUB file (uses built-in test text if omitted)")
     parser.add_argument("--chapters", help="Chapter range, e.g. 1-2 (only with --epub)")
     parser.add_argument("--device", default=None, help="Device: cuda, mps, cpu (default: auto)")
     parser.add_argument("--output", "-o", help="Output directory (default: temp dir)")
     parser.add_argument("--keep", action="store_true", help="Keep generated audio files")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Determine chapters to process
     if args.epub:
@@ -274,7 +273,7 @@ def main():
         ]
         if not chapters:
             print("No chapters found.")
-            sys.exit(1)
+            return 1
         print(f"Using EPUB: {args.epub} ({len(chapters)} chapters)")
     else:
         chapters = TEST_CHAPTERS
@@ -308,7 +307,7 @@ def main():
         print("\nAll validations PASSED.")
     else:
         print("\nSome validations FAILED. Check output above.")
-        sys.exit(1)
+        return 1
 
     if not args.keep and not args.output:
         import shutil
@@ -316,7 +315,8 @@ def main():
         print(f"Cleaned up temp dir.")
     else:
         print(f"Audio files kept at: {output_dir}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

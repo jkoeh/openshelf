@@ -81,7 +81,7 @@ def upload_epub(
 ) -> str | None
 ```
 
-`force=True` on the per-artifact uploaders skips the HEAD existence check and overwrites — used by `reprocess-book.py`. The book manifest does not take `force` because it is unconditionally overwritten on every run.
+`force=True` on the per-artifact uploaders skips the HEAD existence check and overwrites; `openshelf-pipeline books reprocess` uses this path. The book manifest does not take `force` because it is unconditionally overwritten on every run.
 
 ## R2 Key Layout
 
@@ -105,7 +105,7 @@ books/{author_slug}/{title_slug}/
 
 Every key under a `builds/{build_id}/` prefix is part of a coherent atomic snapshot: the audio bytes, the chapter_data word timestamps, the character registry, the voice direction audit, the run context, and the rendition-manifest's chapter durations all describe the same build. A client that pins to a build hash for a chapter session is guaranteed not to see a mid-listen mismatch.
 
-For local quality checks, `convert-book.py --chapters` may restrict generation to
+For local quality checks, `openshelf-pipeline dag run --chapters` may restrict generation to
 one chapter or a comma/range list such as `2` or `2,4-5`. This writes the same
 per-build artifact shapes, but with only the selected chapters in
 `chapter_data.json`, `voice_direction.json`, and `rendition-manifest.json`. The

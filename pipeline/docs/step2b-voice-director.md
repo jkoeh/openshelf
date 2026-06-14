@@ -374,7 +374,7 @@ The output remains `list[list[DirectedSegment]]`, aligned to the original TTS ch
 
 `direct_chunk` follows the same cast mode. In `solo`, it returns a single narrator segment. In `multicast`, it runs chunk-level speaker annotation with fallback. It is used by tests, debugging harnesses, and as the fallback if chapter-level attribution fails.
 
-`convert-book.py --performance-direction {batched,chunk,off}` selects the mode, and `process-books.py` forwards the same option to local conversion. The default is `batched`.
+`openshelf-pipeline dag run --performance-direction {batched,chunk,off}` selects the mode, and `books process` forwards the same option to local conversion. The default is `batched`.
 
 ## LLM Clients
 
@@ -392,9 +392,9 @@ Offline tests use:
 - `ReplayLLM`: JSON fixtures keyed by `sha256(system + user)[:16]`
 - `RecordingLLM`: optional wrapper for creating fixtures from real calls
 
-`pipeline/scripts/profile-directing.py` is the local directing harness for
+`openshelf-pipeline profile direction` is the local directing harness for
 real-book prompt experiments without TTS synthesis. It parses an EPUB, runs the
-same registry/chapter directing path as `convert-book.py`, records LLM call
+same registry/chapter directing path as `dag run`, records LLM call
 timings, and writes a JSON artifact containing each directed segment's speaker,
 voice, original text, synthesis text, `delivery_type`, `voice_policy`, and
 `join_policy`.

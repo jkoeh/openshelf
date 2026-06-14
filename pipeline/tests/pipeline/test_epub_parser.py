@@ -309,6 +309,34 @@ class TestParseEpubFiltering(unittest.TestCase):
         self.assertEqual(chapters[0].number, 1)
         self.assertEqual(chapters[0].title, "I")
 
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_removes_inline_gutenberg_boilerplate_without_dropping_story(self, mock_read):
+        story_words = " ".join(f"story{i}" for i in range(60))
+        html = (
+            "<html><body>"
+            '<div id="pg-header" class="pg-boilerplate">'
+            "<h2>The Project Gutenberg eBook of Example</h2>"
+            "<p>This eBook is for the use of anyone anywhere.</p>"
+            '<div id="pg-start-separator">'
+            "<span>*** START OF THE PROJECT GUTENBERG EBOOK EXAMPLE ***</span>"
+            "</div></div>"
+            "<h1>Example Story</h1>"
+            f"<p>{story_words}</p>"
+            '<div id="pg-footer" class="pg-boilerplate">'
+            "<p>*** END OF THE PROJECT GUTENBERG EBOOK EXAMPLE ***</p>"
+            "<p>Project Gutenberg License</p>"
+            "</div>"
+            "</body></html>"
+        )
+        mock_read.return_value = _make_book([_make_item("OEBPS/story.xhtml", html)])
+
+        chapters = parse_epub("f.epub")
+
+        self.assertEqual(len(chapters), 1)
+        self.assertEqual(chapters[0].title, "Example Story")
+        self.assertNotIn("Project Gutenberg", chapters[0].text)
+        self.assertNotIn("License", chapters[0].text)
+
 
 class TestParseEpubHtmlCleaning(unittest.TestCase):
 

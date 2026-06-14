@@ -59,6 +59,24 @@ class TestConfigurePipelineLogging(unittest.TestCase):
             finally:
                 close_pipeline_logging()
 
+    def test_quiets_noisy_dependency_loggers(self):
+        loggers = [
+            logging.getLogger("numba.core.byteflow"),
+            logging.getLogger("chatterbox.models.t3.t3"),
+        ]
+        prior = [logger.level for logger in loggers]
+        for logger in loggers:
+            logger.setLevel(logging.DEBUG)
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                configure_pipeline_logging("quiet deps", tmp)
+                for logger in loggers:
+                    self.assertEqual(logger.getEffectiveLevel(), logging.WARNING)
+            finally:
+                close_pipeline_logging()
+                for logger, level in zip(loggers, prior):
+                    logger.setLevel(level)
+
 
 class TestHeartbeat(unittest.TestCase):
     def test_logs_start_progress_heartbeat_and_finish(self):

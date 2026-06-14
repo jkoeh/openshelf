@@ -279,7 +279,10 @@ def format_gpu_preflight_report(report: GpuPreflightReport) -> str:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Check GPU readiness for OpenShelf TTS")
+    parser = argparse.ArgumentParser(
+        prog="openshelf-pipeline ops gpu-preflight",
+        description="Check GPU readiness for OpenShelf TTS",
+    )
     parser.add_argument("--engine", default="chatterbox", help="TTS engine to check")
     parser.add_argument(
         "--device",

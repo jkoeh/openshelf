@@ -87,7 +87,9 @@ The platform enables read-along highlighting and seamless switching between read
 1. Tapped word -> look up `start` time in `chapter_data.json`
 2. Seek audio player to that time
 
-WhisperX forced alignment is no longer published as a public artifact. Kokoro provides timestamps natively in `chapter_data.json`. WhisperX remains in-tree as internal QA tooling used by `test-audio-quality.py` for roundtrip ASR/WER validation.
+WhisperX forced alignment is the canonical source for word timestamps in
+`chapter_data.json` for every TTS engine. Engine-native timestamps are not part
+of the public sync contract.
 
 ## R2 Storage Layout
 
@@ -130,13 +132,13 @@ uv pip install -r requirements.txt
 
 ```bash
 # Preview
-python3 scripts/download-books.py --dry-run --author "Dostoevsky"
+python3 pipeline/scripts/openshelf-pipeline.py books download --dry-run --author "Dostoevsky"
 
 # Download from all sources
-python3 scripts/download-books.py --author "Dostoevsky"
+python3 pipeline/scripts/openshelf-pipeline.py books download --author "Dostoevsky"
 
 # Specific source
-python3 scripts/download-books.py --source gutenberg --author "Kafka"
+python3 pipeline/scripts/openshelf-pipeline.py books download --source gutenberg --author "Kafka"
 ```
 
 Downloads go to `download/books/{source}/{author-slug}/{title-slug}.epub`.
@@ -145,25 +147,26 @@ Downloads go to `download/books/{source}/{author-slug}/{title-slug}.epub`.
 
 ```bash
 # Convert (auto-detects GPU)
-python3 scripts/convert-book.py path/to/book.epub
+python3 pipeline/scripts/openshelf-pipeline.py books process --epub path/to/book.epub
 
 # Preview chapters only
-python3 scripts/convert-book.py path/to/book.epub --dry-run
+python3 pipeline/scripts/openshelf-pipeline.py books process --epub path/to/book.epub --dry-run
 
 # Convert and upload to R2
-python3 scripts/convert-book.py path/to/book.epub --upload
+python3 pipeline/scripts/openshelf-pipeline.py books process --epub path/to/book.epub --upload
 
 # Choose voice and device
-python3 scripts/convert-book.py path/to/book.epub --voice bf_emma --device cpu
+python3 pipeline/scripts/openshelf-pipeline.py books process --epub path/to/book.epub --voice bf_emma --device cpu
 ```
 
 Output goes to `audio/{author-slug}/{title-slug}/audio/{rendition}/builds/{build}/`.
 
 ### CLI Options
 
-| Flag | convert-book | Description |
+| Flag | `books process` | Description |
 |---|---|---|
-| `epub` | required | Path to source EPUB |
+| `--epub` | optional | Path to source EPUB; skips search/download |
+| `--author` / `--book` | optional | Search/download filters when `--epub` is omitted |
 | `--output` | `audio/` | Output directory |
 | `--source` | `gutenberg` | Book source |
 | `--rendition` | `kokoro-af-heart` | Rendition name |

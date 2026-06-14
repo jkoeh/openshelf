@@ -1,32 +1,19 @@
-"""Tests for convert-book direction artifact helpers."""
+"""Tests for DAG direction artifact helpers."""
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import sys
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
+from openshelf.pipeline.dag import cli as dag_module  # noqa: E402
 from openshelf.pipeline.tts_engine import DirectedSegment, VoiceSpec  # noqa: E402
 from openshelf.pipeline.voice_director import (  # noqa: E402
     build_direction_chapter,
     build_voice_direction_payload,
 )
-
-SCRIPT_PATH = os.path.join(
-    os.path.dirname(__file__),
-    "..",
-    "..",
-    "scripts",
-    "convert-book.py",
-)
-spec = importlib.util.spec_from_file_location("convert_book_script", SCRIPT_PATH)
-convert_book_script = importlib.util.module_from_spec(spec)
-sys.modules["convert_book_script"] = convert_book_script
-spec.loader.exec_module(convert_book_script)
-
 
 class TestConvertBookDirectionArtifacts(unittest.TestCase):
     def test_chapter_direction_payload_and_speed_summary(self):
@@ -55,7 +42,7 @@ class TestConvertBookDirectionArtifacts(unittest.TestCase):
             "solo",
             [chapter],
         )
-        summary = convert_book_script._direction_speed_summary(chapter)
+        summary = dag_module._direction_speed_summary(chapter)
 
         self.assertEqual(payload["cast_mode"], "solo")
         self.assertEqual(payload["chapters"][0]["number"], 3)
@@ -66,7 +53,7 @@ class TestConvertBookDirectionArtifacts(unittest.TestCase):
         self.assertEqual(summary["max_speed"], 1.05)
 
     def test_chapter_direction_path_is_local_snapshot_name(self):
-        path = convert_book_script._chapter_direction_path("build-dir", 7)
+        path = dag_module._chapter_direction_path("build-dir", 7)
 
         self.assertEqual(
             path,
@@ -74,13 +61,13 @@ class TestConvertBookDirectionArtifacts(unittest.TestCase):
         )
 
     def test_parse_chapter_filter(self):
-        self.assertEqual(convert_book_script._parse_chapter_filter("2"), {2})
-        self.assertEqual(convert_book_script._parse_chapter_filter("2,4-5"), {2, 4, 5})
-        self.assertIsNone(convert_book_script._parse_chapter_filter(None))
+        self.assertEqual(dag_module._parse_chapter_filter("2"), {2})
+        self.assertEqual(dag_module._parse_chapter_filter("2,4-5"), {2, 4, 5})
+        self.assertIsNone(dag_module._parse_chapter_filter(None))
 
     def test_parse_chapter_filter_rejects_invalid_range(self):
         with self.assertRaises(Exception):
-            convert_book_script._parse_chapter_filter("5-2")
+            dag_module._parse_chapter_filter("5-2")
 
 
 if __name__ == "__main__":

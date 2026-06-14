@@ -879,6 +879,59 @@ class TestSynthesizeChapterWords(unittest.TestCase):
         self.assertEqual(len(written), _LEAD_IN_SAMPLES + 12000 + split_pause)
 
     @patch("openshelf.pipeline.tts.sf.write")
+    def test_engine_can_pack_internal_paragraph_breaks_before_split(self, mock_sf_write):
+        class FakeEngine:
+            prefer_packed_synthesis_units = True
+            capabilities = TTSCapabilities(
+                emotion_control=False,
+                paralinguistic_markers=False,
+                speed_control=False,
+                provides_timestamps=False,
+                voice_cloning=False,
+            )
+
+            def __init__(self):
+                self.split_inputs = []
+                self.texts = []
+
+            def post_processing_config(self):
+                return PostProcessingConfig(
+                    needs_forced_alignment=True,
+                    voice_transition_silence_ms=0,
+                    normalize_cross_voice=False,
+                )
+
+            def split_synthesis_units(self, text):
+                self.split_inputs.append(text)
+                return [(text.replace("\n\n", " "), 0)]
+
+            def synthesize(self, segment):
+                self.texts.append(segment.text)
+                return TTSResult(
+                    audio=_fake_audio(6000),
+                    sample_rate=TTS_SAMPLE_RATE,
+                    words=None,
+                )
+
+        engine = FakeEngine()
+        aligner = _RecordingAligner()
+        text = "First paragraph has words.\n\nSecond paragraph has more words."
+        chunk = ChunkInfo(
+            text=text,
+            directed_segments=[DirectedSegment(
+                text=text,
+                voice=VoiceSpec(id="voice-a"),
+                speaker="narrator",
+            )],
+        )
+
+        synthesize_chapter(engine, [chunk], "/tmp/out.wav", aligner=aligner)
+
+        self.assertEqual(engine.split_inputs, [text])
+        self.assertEqual(engine.texts, ["First paragraph has words. Second paragraph has more words."])
+        self.assertEqual(aligner.texts, engine.texts)
+
+    @patch("openshelf.pipeline.tts.sf.write")
     def test_word_timestamps_are_clamped_to_reader_order(self, mock_sf_write):
         class FakeEngine:
             capabilities = TTSCapabilities(

@@ -6,6 +6,8 @@ import logging
 import os
 import re
 import time
+import warnings
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -97,6 +99,7 @@ def _interpolate(base: float, target: float, intensity: float) -> float:
 
 class ChatterboxAdapter:
     name = "chatterbox"
+    prefer_packed_synthesis_units = True
     capabilities = TTSCapabilities(
         emotion_control=True,
         paralinguistic_markers=False,
@@ -173,7 +176,8 @@ class ChatterboxAdapter:
                 ) from exc
             _patch_missing_perth_watermarker()
             _patch_chatterbox_backend_forward()
-            self._model = ChatterboxTTS.from_pretrained(device=self.device)
+            with _suppress_chatterbox_dependency_warnings():
+                self._model = ChatterboxTTS.from_pretrained(device=self.device)
         return self._model
 
     def _prepare_reference_voice(
@@ -190,7 +194,8 @@ class ChatterboxAdapter:
             return False
 
         started = time.perf_counter()
-        prepare(ref_audio, exaggeration=exaggeration)
+        with _suppress_chatterbox_dependency_warnings():
+            prepare(ref_audio, exaggeration=exaggeration)
         elapsed = time.perf_counter() - started
         self._prepared_ref_audio = ref_key
         logger.info("Chatterbox prepared reference voice %s in %.2fs", ref_key, elapsed)
@@ -289,7 +294,8 @@ class ChatterboxAdapter:
         if not prepared:
             generate_kwargs["audio_prompt_path"] = ref_audio
         started = time.perf_counter()
-        wav = runtime.generate(**generate_kwargs)
+        with _suppress_chatterbox_dependency_warnings():
+            wav = runtime.generate(**generate_kwargs)
         elapsed = time.perf_counter() - started
         logger.info(
             "Chatterbox generated speaker=%s voice=%s chars=%d cfg_weight=%.4f "
@@ -346,6 +352,22 @@ def _word_pack(text: str, max_chars: int) -> list[str]:
     if current:
         units.append(current)
     return units
+
+
+@contextmanager
+def _suppress_chatterbox_dependency_warnings():
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            category=FutureWarning,
+            message=r"`LoRACompatibleLinear` is deprecated.*",
+        )
+        warnings.filterwarnings(
+            "ignore",
+            category=FutureWarning,
+            message=r"`torch\.backends\.cuda\.sdp_kernel\(\)` is deprecated.*",
+        )
+        yield
 
 
 def _quiet_tqdm(iterable: Any = None, *args: Any, **kwargs: Any) -> Any:

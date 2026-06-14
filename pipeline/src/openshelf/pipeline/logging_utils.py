@@ -42,9 +42,28 @@ def configure_pipeline_logging(
     ))
     handler._openshelf_pipeline_handler = True  # type: ignore[attr-defined]
     root.addHandler(handler)
+    _quiet_noisy_dependency_loggers()
 
     logging.getLogger(__name__).info("Logging to %s", path)
     return path
+
+
+def _quiet_noisy_dependency_loggers() -> None:
+    """Keep DEBUG pipeline logs from ballooning with dependency internals."""
+    for name in (
+        "botocore",
+        "boto3",
+        "s3transfer",
+        "urllib3",
+        "numba",
+        "chatterbox.models",
+        "torio._extension.utils",
+    ):
+        logging.getLogger(name).setLevel(logging.WARNING)
+        prefix = f"{name}."
+        for child_name in logging.Logger.manager.loggerDict:
+            if child_name.startswith(prefix):
+                logging.getLogger(child_name).setLevel(logging.WARNING)
 
 
 def configure_console_output() -> None:

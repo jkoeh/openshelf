@@ -9,7 +9,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from openshelf.pipeline.pipeline_doctor import diagnose_build  # noqa: E402
+from openshelf.pipeline.ops.doctor import diagnose_build  # noqa: E402
 
 
 def _write_json(path: str, payload: dict):
@@ -104,7 +104,7 @@ class TestPipelineDoctor(unittest.TestCase):
                     "2026 DEBUG [torio._extension.utils] Failed to load FFmpeg6 extension.\n"
                     "Traceback (most recent call last):\n"
                     "FileNotFoundError: libtorio_ffmpeg6.pyd\n"
-                    "2026 INFO [openshelf.pipeline.dag_cli] Chapter 1 complete\n"
+                    "2026 INFO [openshelf.pipeline.dag.cli] Chapter 1 complete\n"
                 )
 
             report = diagnose_build(tmp, log)

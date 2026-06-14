@@ -7,6 +7,7 @@ import sys
 import tempfile
 import types
 import unittest
+import warnings
 from unittest import mock
 
 import numpy as np
@@ -20,6 +21,7 @@ from openshelf.pipeline.engines.chatterbox import (  # noqa: E402
     _patch_chatterbox_backend_forward,
     _patch_chatterbox_progress_bars,
     _patch_missing_perth_watermarker,
+    _suppress_chatterbox_dependency_warnings,
 )
 from openshelf.pipeline.tts_engine import DirectedSegment, VoiceSpec  # noqa: E402
 
@@ -230,6 +232,25 @@ class TestChatterboxAdapter(unittest.TestCase):
         self.assertFalse(backend.model.kwargs["output_hidden_states"])
         self.assertIsNone(output.attentions)
         self.assertEqual(tuple(output.logits.shape), (1, 1, 2))
+
+    def test_suppresses_known_chatterbox_dependency_warnings_only(self):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with _suppress_chatterbox_dependency_warnings():
+                warnings.warn(
+                    "`LoRACompatibleLinear` is deprecated and will be removed in version 1.0.0",
+                    FutureWarning,
+                    stacklevel=1,
+                )
+                warnings.warn(
+                    "`torch.backends.cuda.sdp_kernel()` is deprecated. In the future, this "
+                    "context manager will be removed.",
+                    FutureWarning,
+                    stacklevel=1,
+                )
+                warnings.warn("important future warning", FutureWarning, stacklevel=1)
+
+        self.assertEqual([str(item.message) for item in caught], ["important future warning"])
 
 
 if __name__ == "__main__":

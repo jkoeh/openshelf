@@ -30,10 +30,7 @@ dev = [
 ]
 
 [project.scripts]
-openshelf-gpu-preflight = "openshelf.pipeline.gpu_preflight:main"
-openshelf-pipeline-doctor = "openshelf.pipeline.pipeline_doctor:main"
-openshelf-pipeline-runner = "openshelf.pipeline.pipeline_runner:main"
-tts-pipeline = "openshelf.pipeline.runner:main"
+openshelf-pipeline = "openshelf.pipeline.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -7,7 +7,7 @@
 
 Parse an EPUB file into a list of chapters, each containing structured content elements with stable IDs. These IDs are the foundation for text/audio synchronization — they become DOM anchors in the annotated EPUB and let downstream chunks reference specific paragraphs by ID.
 
-`process-books.py` may acquire the EPUB before this stage by searching Project
+`openshelf-pipeline books process` may acquire the EPUB before this stage by searching Project
 Gutenberg and Standard Ebooks. Standard Ebooks catalog results are only treated
 as downloadable source EPUBs when the listing represents an available
 public-domain edition; placeholder / not-yet-public-domain results are skipped
@@ -17,7 +17,7 @@ The end-to-end CLI must propagate conversion failure with a non-zero process
 exit. Its progress output is Unicode-safe on Windows consoles so source chapter
 titles cannot crash the run before parsing/chunking finishes.
 
-When `process-books.py --upload` completes at least one conversion and all
+When `openshelf-pipeline books process --upload` completes at least one conversion and all
 conversions succeeded, it refreshes the root R2 `catalog.json` once at the end
 so the public catalog fast path sees newly uploaded book manifests without a
 separate operator step.
@@ -79,12 +79,14 @@ Items are skipped if their filename (case-insensitive) contains any of: `nav`,
 `uncopyright`; or if the basename is exactly `loi`. Titlepage is intentionally
 kept — it becomes the audiobook opening.
 
-Project Gutenberg legal boilerplate is also skipped even when it appears as a
-long spine document that would otherwise pass the word-count filter. A document
-is treated as boilerplate when its extracted text contains `project gutenberg`
-plus a legal marker such as `license`, `start of the project gutenberg ebook`,
-or `end of the project gutenberg ebook`. This keeps the audiobook content to
-the book itself while preserving the unmodified source EPUB upload.
+Project Gutenberg legal boilerplate is removed before word-count filtering.
+Modern Gutenberg EPUBs sometimes place the legal header/footer and the actual
+book text in the same spine document; in that case only known boilerplate
+containers such as `pg-boilerplate`, `pg-header`, `pg-footer`, and separator
+blocks are stripped, and the remaining story text is parsed normally. A
+document that still contains only Gutenberg legal/license text after this
+cleanup is skipped. This keeps the audiobook content to the book itself while
+preserving the unmodified source EPUB upload.
 
 Word count is checked **before** assigning a chapter number, so filtered items don't cause gaps in numbering or element IDs.
 

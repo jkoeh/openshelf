@@ -1,8 +1,7 @@
-"""Tests for build-catalog.py against the build-versioned manifest layout."""
+"""Tests for catalog building against the build-versioned manifest layout."""
 
 from __future__ import annotations
 
-import importlib.util
 import io
 import os
 import sys
@@ -12,15 +11,9 @@ from unittest.mock import MagicMock, patch
 
 from botocore.exceptions import ClientError
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-SCRIPT_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "..", "scripts", "build-catalog.py",
-)
-spec = importlib.util.spec_from_file_location("build_catalog_script", SCRIPT_PATH)
-build_catalog_script = importlib.util.module_from_spec(spec)
-assert spec.loader is not None
-sys.modules["build_catalog_script"] = build_catalog_script
-spec.loader.exec_module(build_catalog_script)
+from openshelf.pipeline.ops import catalog
 
 
 def _client_error(code: str) -> ClientError:
@@ -53,11 +46,11 @@ class FakeClient:
 class TestBuildCatalog(unittest.TestCase):
     def test_parse_manifest_key_accepts_only_root_book_manifest(self):
         self.assertEqual(
-            build_catalog_script.parse_manifest_key("books/franz-kafka/the-trial/manifest.json"),
+            catalog.parse_manifest_key("books/franz-kafka/the-trial/manifest.json"),
             {"author_slug": "franz-kafka", "title_slug": "the-trial"},
         )
         self.assertIsNone(
-            build_catalog_script.parse_manifest_key(
+            catalog.parse_manifest_key(
                 "books/franz-kafka/the-trial/audio/kokoro-af-heart/manifest.json",
             ),
         )
@@ -105,14 +98,14 @@ class TestBuildCatalog(unittest.TestCase):
         existing = set(objects.keys()) | {"books/franz-kafka/the-trial/cover.jpg"}
         client = FakeClient(objects, existing_keys=existing)
 
-        with patch("build_catalog_script.datetime") as dt:
+        with patch("openshelf.pipeline.ops.catalog.datetime") as dt:
             dt.now.return_value.isoformat.return_value = "2026-01-01T00:00:00+00:00"
             with redirect_stdout(io.StringIO()):
-                catalog = build_catalog_script.build_catalog(client, "openshelf")
+                built = catalog.build_catalog(client, "openshelf")
 
-        self.assertEqual(catalog["generated_at"], "2026-01-01T00:00:00+00:00")
-        self.assertEqual(len(catalog["books"]), 1)
-        book = catalog["books"][0]
+        self.assertEqual(built["generated_at"], "2026-01-01T00:00:00+00:00")
+        self.assertEqual(len(built["books"]), 1)
+        book = built["books"][0]
         self.assertEqual(book["rendition"], "kokoro-af-heart")
         self.assertEqual(book["total_duration_seconds"], 1847.3)
         self.assertEqual(book["chapter_count"], 1)
@@ -120,7 +113,7 @@ class TestBuildCatalog(unittest.TestCase):
 
     def test_choose_catalog_rendition_falls_back_to_first_sorted_key(self):
         self.assertEqual(
-            build_catalog_script.choose_catalog_rendition({
+            catalog.choose_catalog_rendition({
                 "kokoro-bf-emma": {},
                 "kokoro-af-nicole": {},
             }),

@@ -261,7 +261,7 @@ The target behavior:
 - manual directive edits are supported by source hashes and validation
 
 This makes retry/resume possible because the LLM output is no longer transient
-state hidden inside `convert-book.py`.
+state hidden inside the full-book runner.
 
 ## Sync Coverage Policy
 
@@ -288,10 +288,10 @@ build state.
 5. Add repair commands for `direction`, `audio`, `sync`, and `assemble`. ✅
 
 **Status: implemented.** The stage commands live in
-`src/openshelf/pipeline/dag_cli.py` (`parse`, `chunk`, `direct`, `synth`,
+`src/openshelf/pipeline/dag/cli.py` (`parse`, `chunk`, `direct`, `synth`,
 `sync`, `assemble`, `coverage`, `upload`) — see `docs/dag-cli.md`. The
-per-chapter logic is shared between the standalone commands and the
-`convert-book.py` orchestrator (one code path): `build_chunk_windows` and
+per-chapter logic is shared between the standalone commands and the full DAG
+runner (one code path): `build_chunk_windows` and
 `build_direction_chapter`/`build_voice_direction_payload` (direction),
 `build_chunk_infos` + `synthesize_chapter_to_files` (audio), and
 `build_chapter_data_payload` (assembly). `book_parse.json` was added as a
@@ -299,17 +299,17 @@ durable local parse artifact (`docs/step1b-book-parse.md`).
 
 ## CLI Shape
 
-Implemented as `python -m openshelf.pipeline.dag_cli <command>` (see
+Implemented as `openshelf-pipeline dag <command>` (see
 `docs/dag-cli.md` for full flags):
 
 ```bash
-pipeline parse   --epub book.epub --out book_parse.json --source gutenberg
-pipeline chunk   --book-parse book_parse.json --build-dir {build_dir}
-pipeline direct  --build-dir {build_dir} --chapter 2 --engine kokoro
-pipeline synth   --build-dir {build_dir} --chapter 2 --engine kokoro   # covers restitch
-pipeline sync    --build-dir {build_dir} --chapter 2 --force           # re-align only
-pipeline assemble --build-dir {build_dir} --rendition {r} --build-id {b}
-pipeline upload  --book-dir {book_dir} --rendition {r} --build-id {b}
+openshelf-pipeline dag parse   --epub book.epub --out book_parse.json --source gutenberg
+openshelf-pipeline dag chunk   --book-parse book_parse.json --build-dir {build_dir}
+openshelf-pipeline dag direct  --build-dir {build_dir} --chapter 2 --engine kokoro
+openshelf-pipeline dag synth   --build-dir {build_dir} --chapter 2 --engine kokoro
+openshelf-pipeline dag sync    --build-dir {build_dir} --chapter 2 --force
+openshelf-pipeline dag assemble --build-dir {build_dir} --rendition {r} --build-id {b}
+openshelf-pipeline dag upload  --book-dir {book_dir} --rendition {r} --build-id {b}
 ```
 
 Each command should be runnable on one chapter, many chapters, or all chapters

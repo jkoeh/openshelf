@@ -17,7 +17,7 @@ The client, worker, R2 key layout, `chapter_data.json`, `manifest.json`, and `re
 
 ## Engine Boundary
 
-TTS engines implement `TTSEngine` from `tts_engine.py`. The selected engine is configured with `TTS_ENGINE` or `convert-book.py --engine`.
+TTS engines implement `TTSEngine` from `tts_engine.py`. The selected engine is configured with `TTS_ENGINE` or `openshelf-pipeline ... --engine`.
 
 ```python
 @runtime_checkable
@@ -54,7 +54,7 @@ WhisperX for final sync.
 F5 reference clips are generated locally from Kokoro with:
 
 ```bash
-python pipeline/scripts/bootstrap-f5tts-voices.py
+python pipeline/scripts/openshelf-pipeline.py voices bootstrap-f5tts
 ```
 
 The script writes one WAV per Kokoro preset under `pipeline/voices/f5tts/`.
@@ -96,11 +96,16 @@ segments with the same reference clip, and then calls `generate(...)` with the
 sanitized segment text plus adapter-owned expression controls as `exaggeration`
 and `cfg_weight`. This keeps classic Chatterbox's CFG/expression path while
 avoiding repeated reference-conditioning work in solo-narrator audiobook runs.
-Because classic Chatterbox can run up to its internal token ceiling on long
-paragraph-sized prompts, the adapter also exposes an optional
-`split_synthesis_units(text)` hook that packs long prose into sentence-sized
-generation units before `generate(...)` is called. The split is internal to TTS
-and alignment; reader text and `chapter_data.json` stay unchanged.
+Because classic Chatterbox has high per-call overhead but can run up to its
+internal token ceiling on long prompts, the adapter opts into packed synthesis
+units. The generic TTS layer lets Chatterbox see the full directed segment
+instead of first splitting true paragraph breaks into separate synthesis calls;
+then Chatterbox's optional `split_synthesis_units(text)` hook packs prose into
+sentence-sized generation units bounded by its max character window before
+`generate(...)` is called. The split is internal to TTS and alignment; reader
+text and `chapter_data.json` stay unchanged. Kokoro keeps the generic paragraph
+break behavior because its lower per-call overhead and native timing path make
+explicit paragraph pauses useful.
 Before generation, the adapter disables upstream `tqdm` progress bars inside
 Chatterbox model modules so unattended pipeline runs cannot fail because a
 caller-owned stderr stream was closed or invalidated while synthesis continues.

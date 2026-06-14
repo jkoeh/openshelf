@@ -1,24 +1,11 @@
-#!/usr/bin/env python3
-"""Build catalog.json from root book manifests on R2 and upload it.
-
-Scans R2 for books/<author>/<title>/manifest.json, enriches each book from its
-selected rendition's current rendition-manifest.json, and uploads the catalog to
-the bucket root.
-
-Usage:
-    python3 pipeline/scripts/build-catalog.py
-    python3 pipeline/scripts/build-catalog.py --dry-run   # print catalog, don't upload
-"""
+"""Build catalog.json from root book manifests on R2 and upload it."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
-import sys
 from datetime import datetime, timezone
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+from typing import Sequence
 
 from botocore.exceptions import ClientError
 
@@ -40,10 +27,7 @@ def list_manifests(client, bucket: str) -> list[str]:
 
 
 def parse_manifest_key(key: str) -> dict | None:
-    """Extract author_slug and title_slug from a root book manifest key.
-
-    Expected: books/<author>/<title>/manifest.json
-    """
+    """Extract author_slug and title_slug from a root book manifest key."""
     parts = key.split("/")
     if len(parts) != 4 or parts[0] != R2_PREFIX_BOOKS or parts[3] != "manifest.json":
         return None
@@ -111,7 +95,10 @@ def build_catalog(client, bucket: str) -> dict:
             continue
 
         rendition_manifest_key = r2_keys.rendition_manifest_key(
-            meta["author_slug"], meta["title_slug"], rendition, current_build,
+            meta["author_slug"],
+            meta["title_slug"],
+            rendition,
+            current_build,
         )
         rendition_manifest = _read_json_object(client, bucket, rendition_manifest_key)
         if not rendition_manifest:
@@ -120,11 +107,13 @@ def build_catalog(client, bucket: str) -> dict:
 
         has_cover = (
             _key_exists(
-                client, bucket,
+                client,
+                bucket,
                 r2_keys.cover_key(meta["author_slug"], meta["title_slug"], "image/jpeg"),
             )
             or _key_exists(
-                client, bucket,
+                client,
+                bucket,
                 r2_keys.cover_key(meta["author_slug"], meta["title_slug"], "image/png"),
             )
         )
@@ -143,7 +132,7 @@ def build_catalog(client, bucket: str) -> dict:
         }
         books.append(book)
         mins = book["total_duration_seconds"] / 60
-        print(f"  {book['author']} — {book['title']} ({book['chapter_count']} ch, {mins:.1f} min)")
+        print(f"  {book['author']} - {book['title']} ({book['chapter_count']} ch, {mins:.1f} min)")
 
     return {
         "version": 1,
@@ -152,31 +141,41 @@ def build_catalog(client, bucket: str) -> dict:
     }
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Build and upload catalog.json from root R2 manifests")
-    parser.add_argument("--dry-run", action="store_true", help="Print catalog without uploading")
-    args = parser.parse_args()
-
-    client = make_client()
-    catalog = build_catalog(client, R2_BUCKET)
+def build_and_upload_catalog(*, dry_run: bool = False, client=None, bucket: str = R2_BUCKET) -> dict:
+    """Build catalog.json and upload it unless ``dry_run`` is set."""
+    if client is None:
+        client = make_client()
+    catalog = build_catalog(client, bucket)
 
     print(f"\nCatalog: {len(catalog['books'])} book(s)")
 
-    if args.dry_run:
+    if dry_run:
         print("\n" + json.dumps(catalog, indent=2))
         print("\n[DRY RUN] Not uploaded.")
-        return
+        return catalog
 
     catalog_json = json.dumps(catalog, indent=2, ensure_ascii=False)
     client.put_object(
-        Bucket=R2_BUCKET,
+        Bucket=bucket,
         Key="catalog.json",
         Body=catalog_json.encode("utf-8"),
         ContentType="application/json",
         CacheControl="public, max-age=60",
     )
     print("Uploaded catalog.json to R2.")
+    return catalog
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="openshelf-pipeline ops catalog",
+        description="Build and upload catalog.json from root R2 manifests.",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="Print catalog without uploading")
+    args = parser.parse_args(argv)
+    build_and_upload_catalog(dry_run=args.dry_run)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

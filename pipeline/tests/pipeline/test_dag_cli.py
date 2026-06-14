@@ -16,7 +16,7 @@ import io  # noqa: E402
 
 from unittest.mock import MagicMock, patch  # noqa: E402
 
-from openshelf.pipeline.dag_cli import (  # noqa: E402
+from openshelf.pipeline.dag.cli import (  # noqa: E402
     build_registry,
     chunk_chapters,
     collect_coverage,
@@ -439,7 +439,7 @@ class TestDagCliDirect(unittest.TestCase):
     def test_direct_via_main_accepts_performance_direction_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
             build_dir = self._setup(tmp)
-            with patch("openshelf.pipeline.dag_cli.direct_chapter") as mocked:
+            with patch("openshelf.pipeline.dag.cli.direct_chapter") as mocked:
                 mocked.return_value = os.path.join(build_dir, "chapter-01.voice_direction.json")
                 exit_code = main([
                     "direct",
@@ -503,7 +503,7 @@ class TestDagCliRegistry(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             book_parse_path = self._write_book_parse(tmp)
             build_dir = os.path.join(tmp, "audio", "kokoro-af-heart", "builds", "abc123")
-            with patch("openshelf.pipeline.dag_cli.build_registry") as mocked:
+            with patch("openshelf.pipeline.dag.cli.build_registry") as mocked:
                 mocked.return_value = os.path.join(build_dir, "character_registry.json")
                 exit_code = main([
                     "registry",
@@ -570,9 +570,9 @@ class TestDagCliRun(unittest.TestCase):
             args.output = tmp
             args.log_dir = tmp
 
-            with patch("openshelf.pipeline.dag_cli.parse_epub", return_value=[chapter]), \
+            with patch("openshelf.pipeline.dag.cli.parse_epub", return_value=[chapter]), \
                     patch(
-                        "openshelf.pipeline.dag_cli.read_book_metadata",
+                        "openshelf.pipeline.dag.cli.read_book_metadata",
                         return_value={"title": "Book", "author": "Author"},
                     ), \
                     patch("openshelf.pipeline.engines.create_engine") as create_engine:
@@ -586,7 +586,7 @@ class TestDagCliRun(unittest.TestCase):
         create_engine.assert_not_called()
 
     def test_run_via_main_forwards_full_book_flags(self):
-        with patch("openshelf.pipeline.dag_cli.run_book") as mocked:
+        with patch("openshelf.pipeline.dag.cli.run_book") as mocked:
             mocked.return_value = {"build_id": "abc123"}
             exit_code = main([
                 "run",
@@ -675,9 +675,9 @@ class TestDagCliRun(unittest.TestCase):
             args.log_dir = tmp
 
             fake_engine = types.SimpleNamespace(name="chatterbox")
-            with patch("openshelf.pipeline.dag_cli.parse_epub", return_value=[chapter]), \
+            with patch("openshelf.pipeline.dag.cli.parse_epub", return_value=[chapter]), \
                     patch(
-                        "openshelf.pipeline.dag_cli.read_book_metadata",
+                        "openshelf.pipeline.dag.cli.read_book_metadata",
                         return_value={"title": "Book", "author": "Author"},
                     ), \
                     patch(

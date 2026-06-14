@@ -39,6 +39,17 @@ under `pipeline/src/openshelf/pipeline/engines/`.
 - WhisperX is the canonical final sync source for every current engine.
 - Engine-native timestamps, prompt markers, and paralinguistic tags must not be serialized to `chapter_data.json` unless the public contract is explicitly changed in the docs first.
 
+## CLI Rules
+
+- `openshelf-pipeline` is the canonical command surface.
+- `openshelf-pipeline books ...` owns user-facing book workflows: search,
+  download, process local EPUBs, upload, and catalog refresh.
+- `openshelf-pipeline dag ...` owns repairable artifact stages and full DAG
+  runs for explicit EPUB/build paths.
+- `openshelf-pipeline ops ...`, `voices ...`, `qa ...`, and `profile ...` own
+  local diagnostics, reference-voice prep, quality checks, and profiling.
+- Deleted legacy script filenames are not preserved.
+
 ## Tests
 
 Pipeline tests are Python `unittest` tests under `pipeline/tests/` and should

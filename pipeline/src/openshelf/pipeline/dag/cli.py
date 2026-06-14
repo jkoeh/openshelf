@@ -32,7 +32,7 @@ _CHUNKS_RE = re.compile(r"chapter-(\d+)\.chunks\.json$")
 _SYNC_RE = re.compile(r"chapter-(\d+)\.sync\.json$")
 _REGISTRY_OPENING_CHARS = 12000
 _PERFORMANCE_DIRECTION_CHOICES = ("batched", "chunk", "off")
-logger = logging.getLogger("openshelf.pipeline.dag_cli")
+logger = logging.getLogger("openshelf.pipeline.dag.cli")
 
 
 def _read_json(path: str) -> dict:
@@ -146,7 +146,8 @@ def _log_torch_device_diagnostics(selected_device: str) -> None:
 
 
 def _resolve_tts_device(engine_name: str | None, requested_device: str | None) -> str:
-    if requested_device:
+    requested = (requested_device or "auto").lower()
+    if requested != "auto":
         selected = requested_device
     else:
         from openshelf.pipeline.tts import get_device
@@ -155,10 +156,10 @@ def _resolve_tts_device(engine_name: str | None, requested_device: str | None) -
 
     selected = selected or "cpu"
 
-    from openshelf.pipeline.gpu_preflight import accelerator_required_by_default
+    from openshelf.pipeline.ops.gpu_preflight import accelerator_required_by_default
 
     if (
-        requested_device is None
+        requested == "auto"
         and selected == "cpu"
         and accelerator_required_by_default(engine_name)
     ):
@@ -166,7 +167,7 @@ def _resolve_tts_device(engine_name: str | None, requested_device: str | None) -
             "Chatterbox auto device resolved to CPU. Install/use a GPU-capable "
             "PyTorch package or pass --device cpu to force the slow path."
         )
-    if requested_device == "cpu" and accelerator_required_by_default(engine_name):
+    if requested == "cpu" and accelerator_required_by_default(engine_name):
         logger.warning(
             "Chatterbox CPU was explicitly selected; full-book runs are usually very slow."
         )
@@ -277,7 +278,7 @@ def build_chapter_data_payload(
 ) -> dict:
     """Assemble the public chapter_data.json payload from chunk + sync artifacts.
 
-    Shared by the `assemble` DAG command and the convert-book orchestrator.
+    Shared by the `assemble` DAG command and the full DAG runner.
     ``selected_chapters`` restricts assembly to a subset (e.g. a local
     --chapters sample run); None assembles every chapter present.
     """
@@ -1393,7 +1394,7 @@ def add_run_arguments(parser: argparse.ArgumentParser, *, positional_epub: bool 
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="pipeline")
+    parser = argparse.ArgumentParser(prog="openshelf-pipeline dag")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run = subparsers.add_parser("run")

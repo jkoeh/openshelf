@@ -279,7 +279,10 @@ def format_doctor_report(report: DoctorReport) -> str:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Inspect an OpenShelf local build")
+    parser = argparse.ArgumentParser(
+        prog="openshelf-pipeline ops doctor",
+        description="Inspect an OpenShelf local build",
+    )
     parser.add_argument("--build-dir", required=True)
     parser.add_argument("--log", default=None, help="Optional pipeline log to scan")
     parser.add_argument("--json", action="store_true", help="Print JSON report")

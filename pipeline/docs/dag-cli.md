@@ -1,6 +1,6 @@
 # Pipeline DAG CLI
 
-**Module:** `src/openshelf/pipeline/dag_cli.py`
+**Module:** `src/openshelf/pipeline/dag/cli.py`
 **Test:** `tests/pipeline/test_dag_cli.py`
 
 ## Purpose
@@ -18,7 +18,7 @@ R2 access.
 ### `parse`
 
 ```bash
-python -m openshelf.pipeline.dag_cli parse \
+openshelf-pipeline dag parse \
   --epub download/books/kafka/metamorphosis.epub \
   --out audio/kafka/metamorphosis/book_parse.json \
   --source gutenberg
@@ -43,7 +43,7 @@ Behavior:
 ### `chunk`
 
 ```bash
-python -m openshelf.pipeline.dag_cli chunk \
+openshelf-pipeline dag chunk \
   --book-parse audio/kafka/metamorphosis/book_parse.json \
   --build-dir audio/kafka/metamorphosis/audio/{rendition}/builds/{build} \
   --chapters 2,4-5
@@ -61,7 +61,7 @@ Behavior:
 
 - Reconstructs each chapter's spoken paragraphs and element IDs from
   `book_parse.json` and calls `text_chunker.chunk_text(...)`, producing chunk
-  artifacts byte-identical to the inline `convert-book.py` path.
+  artifacts byte-identical to the full DAG run path.
 - `--chapters` accepts a number/range filter (e.g. `2` or `2,4-5`); omitted
   means all chapters.
 - Identical output skips; different output fails unless `--force`.
@@ -70,7 +70,7 @@ Behavior:
 ### `assemble`
 
 ```bash
-python -m openshelf.pipeline.dag_cli assemble \
+openshelf-pipeline dag assemble \
   --build-dir audio/{rendition}/builds/{build} \
   --rendition kokoro-af-heart \
   --build-id 2a4f9c1b3d8e7f60
@@ -100,9 +100,9 @@ Behavior:
 ### `coverage`
 
 ```bash
-python -m openshelf.pipeline.dag_cli coverage \
+openshelf-pipeline dag coverage \
   --build-dir audio/{rendition}/builds/{build}
-python -m openshelf.pipeline.dag_cli coverage \
+openshelf-pipeline dag coverage \
   --build-dir audio/{rendition}/builds/{build} --json
 ```
 
@@ -131,7 +131,7 @@ Behavior:
 ### `upload`
 
 ```bash
-python -m openshelf.pipeline.dag_cli upload \
+openshelf-pipeline dag upload \
   --book-dir audio/kafka/metamorphosis \
   --rendition kokoro-af-heart \
   --build-id 2a4f9c1b3d8e7f60
@@ -165,12 +165,12 @@ Behavior:
 ### `direct`
 
 ```bash
-python -m openshelf.pipeline.dag_cli registry \
+openshelf-pipeline dag registry \
   --book-parse book_parse.json \
   --build-dir audio/{rendition}/builds/{build} \
   --engine chatterbox --voice chatterbox-bf_emma
 
-python -m openshelf.pipeline.dag_cli direct \
+openshelf-pipeline dag direct \
   --build-dir audio/{rendition}/builds/{build} \
   --chapter 2 --engine chatterbox \
   --performance-direction batched
@@ -196,7 +196,7 @@ Behavior:
 - Runs `AudioDirector.direct_chapter` to produce directed segments (speaker,
   voice, and engine-supported performance steering), then writes the per-chapter
   voice-direction artifact. `direct --performance-direction {batched,chunk,off}`
-  selects the same engine-aware performance mode as `convert-book.py`.
+  selects the same engine-aware performance mode as `dag run`.
 - `registry` and `direct` are the only repair stages that may call the LLM.
 - **Solo cast mode only.** Multicast registry repair / converting an existing
   solo build to multicast is out of scope (see the resumable-repair plan); the
@@ -208,7 +208,7 @@ Behavior:
 ### `synth`
 
 ```bash
-python -m openshelf.pipeline.dag_cli synth \
+openshelf-pipeline dag synth \
   --build-dir audio/{rendition}/builds/{build} \
   --chapter 2 --engine kokoro --device cuda
 ```
@@ -246,7 +246,7 @@ Behavior:
 ### `sync`
 
 ```bash
-python -m openshelf.pipeline.dag_cli sync \
+openshelf-pipeline dag sync \
   --build-dir audio/{rendition}/builds/{build} \
   --chapter 2 --device cuda --force
 ```
@@ -277,13 +277,13 @@ Behavior:
 
 ## Full local pipeline
 
-`run` is the canonical full-book orchestrator. It performs the same staged work
-as the manual commands below, writes the same build artifacts, and is the path
-used by `process-books.py`. `convert-book.py` is a compatibility wrapper around
-this runner.
+`run` is the canonical full-book DAG orchestrator for explicit EPUB paths. It
+performs the same staged work as the manual commands below and writes the same
+build artifacts. User-facing search/download/upload/catalog workflows use
+`openshelf-pipeline books process`, which delegates conversion to this DAG path.
 
 ```bash
-python -m openshelf.pipeline.dag_cli run \
+openshelf-pipeline dag run \
   --epub book.epub \
   --output audio \
   --source gutenberg \
@@ -311,10 +311,10 @@ chapters once `character_registry.json` exists. `assemble`, `coverage`, and
 chapter direction. `sync` is a later re-alignment repair command; initial word
 sync is produced by `synth`.
 
-`run` preserves the legacy CLI flags from `convert-book.py`: `--epub`,
-`--output`, `--source`, `--engine`, `--voice`, `--rendition`, `--cast-mode`,
-`--performance-direction`, `--device`, `--chapters`, `--dry-run`, `--keep-wav`,
-`--upload`, `--log-dir`, `--build-id`, `--resume`, and `--force`.
+`run` accepts `--epub`, `--output`, `--source`, `--engine`, `--voice`,
+`--rendition`, `--cast-mode`, `--performance-direction`, `--device`,
+`--chapters`, `--dry-run`, `--keep-wav`, `--upload`, `--log-dir`, `--build-id`,
+`--resume`, and `--force`.
 For engines with a device-aware adapter, `run --device cuda` passes `cuda` into
 the engine constructor before lazy model load; it also uses the same selected
 device for WhisperX forced alignment. If `--device` is omitted, `run` resolves

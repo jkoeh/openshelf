@@ -136,7 +136,7 @@ The cache header on a route is determined by **whether the URL is content-versio
 
 ## `GET /catalog` source of truth
 
-The preferred source is root `catalog.json`, written by `pipeline/scripts/build-catalog.py`. If that mutable index is missing, the worker derives the same response shape by listing `books/`, reading root `books/:author/:title/manifest.json` objects, selecting the default rendition (`kokoro-af-heart`, or the first sorted rendition), and enriching each row from that rendition's `current_build` `rendition-manifest.json`.
+The preferred source is root `catalog.json`, written by `openshelf-pipeline ops catalog` and refreshed by `openshelf-pipeline books process --upload`. If that mutable index is missing, the worker derives the same response shape by listing `books/`, reading root `books/:author/:title/manifest.json` objects, selecting the default rendition (`kokoro-af-heart`, or the first sorted rendition), and enriching each row from that rendition's `current_build` `rendition-manifest.json`.
 
 The fallback exists so a refactor or partial migration that uploads book manifests before rebuilding `catalog.json` does not make the public catalog appear empty. It is not a replacement for the pipeline catalog build; the generated `catalog.json` remains the normal fast path.
 

@@ -1,8 +1,8 @@
 # Pipeline Ops Tools
 
-**Modules:** `src/openshelf/pipeline/gpu_preflight.py`, `src/openshelf/pipeline/pipeline_doctor.py`, `src/openshelf/pipeline/pipeline_runner.py`
-**Scripts:** `scripts/gpu-preflight.py`, `scripts/pipeline-doctor.py`, `scripts/pipeline-runner.py`
-**Installed commands:** `openshelf-gpu-preflight`, `openshelf-pipeline-doctor`, `openshelf-pipeline-runner`
+**Modules:** `src/openshelf/pipeline/ops/*`
+**Command:** `openshelf-pipeline ops ...`
+**Installed command:** `openshelf-pipeline`
 **Tests:** `tests/pipeline/test_gpu_preflight.py`, `tests/pipeline/test_pipeline_doctor.py`, `tests/pipeline/test_pipeline_runner.py`
 
 ## Purpose
@@ -12,7 +12,7 @@ generation:
 
 - check that the selected TTS engine will use the intended accelerator before
   an expensive run starts
-- run `process-books.py` with GPU-first defaults and background PID/log support
+- run book processing with GPU-first defaults and background PID/log support
 - inspect a local build directory and logs after a run
 
 These tools do not change the public R2/client contract. They read existing
@@ -41,13 +41,13 @@ The preflight package check is intentionally separate from synthesis:
 - optional `--load-engine` also constructs the selected OpenShelf adapter and
   loads its runtime so model-placement mistakes are caught before a book run
 
-## `gpu-preflight`
+## `ops gpu-preflight`
 
 ```bash
-python pipeline/scripts/gpu-preflight.py --engine chatterbox
-python pipeline/scripts/gpu-preflight.py --engine chatterbox --device cuda
-python pipeline/scripts/gpu-preflight.py --engine chatterbox --device cpu
-python pipeline/scripts/gpu-preflight.py --engine chatterbox --load-engine
+openshelf-pipeline ops gpu-preflight --engine chatterbox
+openshelf-pipeline ops gpu-preflight --engine chatterbox --device cuda
+openshelf-pipeline ops gpu-preflight --engine chatterbox --device cpu
+openshelf-pipeline ops gpu-preflight --engine chatterbox --load-engine
 ```
 
 Behavior:
@@ -58,16 +58,16 @@ Behavior:
 - prints either a human report or JSON with `--json`
 - never downloads or loads a model unless `--load-engine` is provided
 
-## `pipeline-runner`
+## `books process`
 
 ```bash
-python pipeline/scripts/pipeline-runner.py \
+openshelf-pipeline books process \
   --epub download/books/standard-ebooks/lewis-carroll/alices-adventures-in-wonderland.epub \
   --engine chatterbox \
   --voice chatterbox-bf_emma \
   --upload
 
-python pipeline/scripts/pipeline-runner.py \
+openshelf-pipeline books process \
   --author "Lewis Carroll" --book "Alice" \
   --engine chatterbox \
   --background
@@ -76,20 +76,20 @@ python pipeline/scripts/pipeline-runner.py \
 Behavior:
 
 - runs GPU preflight before launching unless `--skip-preflight` is passed
-- passes the resolved device into `process-books.py` so the DAG engine adapter
+- passes the resolved device into `dag run` so the DAG engine adapter
   is constructed on the intended device before lazy model load
-- supports the normal `process-books.py` book selectors and pipeline flags
-- foreground mode streams the existing `process-books.py` output
+- supports book selectors and pipeline flags
+- foreground mode streams the DAG run output
 - background mode writes stdout/stderr logs plus a PID file and returns after
   launch
 
-The runner is a safety wrapper. It does not replace `process-books.py` or
-`dag_cli run`.
+`books process` is the human-facing happy path. `dag run` remains the explicit
+EPUB conversion path, and individual `dag` stages remain the repair path.
 
-## `pipeline-doctor`
+## `ops doctor`
 
 ```bash
-python pipeline/scripts/pipeline-doctor.py \
+openshelf-pipeline ops doctor \
   --build-dir audio/lewis-carroll/alices-adventures-in-wonderland/audio/chatterbox-bf-emma/builds/e3eebabdbf3e88ca \
   --log logs/20260613-071007-dag-run-alices-adventures-in-wonderland-e3eebabdbf3e88ca.log
 ```

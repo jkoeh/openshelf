@@ -1,20 +1,16 @@
-#!/usr/bin/env python3
 """Generate local F5-TTS reference clips from Kokoro preset voices."""
 
 from __future__ import annotations
 
 import argparse
-import os
-import sys
+from typing import Sequence
+
+from openshelf.pipeline.engines.f5tts import bootstrap_kokoro_reference_voices
 
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-
-from openshelf.pipeline.engines.f5tts import bootstrap_kokoro_reference_voices  # noqa: E402
-
-
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
+        prog="openshelf-pipeline voices bootstrap-f5tts",
         description="Render pipeline/voices/f5tts/*.wav reference clips from Kokoro presets.",
     )
     parser.add_argument(
@@ -43,7 +39,7 @@ def main() -> int:
         action="store_true",
         help="Print the planned files without loading Kokoro or writing WAVs.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     results = bootstrap_kokoro_reference_voices(
         voices_dir=args.voices_dir,

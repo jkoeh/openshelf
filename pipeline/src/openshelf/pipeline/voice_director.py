@@ -2253,7 +2253,7 @@ def build_voice_direction_payload(
 def build_chunk_windows(chunk_texts: list[str]) -> list[ChunkWindow]:
     """Build prev/text/next direction windows for a chapter's chunks.
 
-    Shared by the convert-book orchestrator and the `direct` DAG command.
+    Shared by the full DAG runner and the `direct` DAG command.
     """
     return [
         ChunkWindow(

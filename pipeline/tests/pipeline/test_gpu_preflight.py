@@ -8,7 +8,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
-from openshelf.pipeline.gpu_preflight import (  # noqa: E402
+from openshelf.pipeline.ops.gpu_preflight import (  # noqa: E402
     _collect_model_devices,
     run_gpu_preflight,
 )

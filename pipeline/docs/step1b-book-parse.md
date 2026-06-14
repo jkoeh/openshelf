@@ -64,7 +64,7 @@ content, skip; if it exists with different content, raise unless `force=True`.
 
 ## Consumed by
 
-- `dag_cli chunk` — reconstructs each chapter's spoken `paragraphs` and
+- `openshelf-pipeline dag chunk` reconstructs each chapter's spoken `paragraphs` and
   `element_ids`, then calls `text_chunker.chunk_text(...)` to write
   `chapter-NN.chunks.json`. Output is byte-identical to the inline path in
-  `convert-book.py`.
+  `dag run`.

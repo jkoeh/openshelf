@@ -37,7 +37,7 @@ class TTSEngine(Protocol):
 ```
 
 `synthesize()` receives a `DirectedSegment` whose `text` is synthesis-only. The
-reader text remains `ChunkInfo.text` and is serialized by `convert-book.py`.
+reader text remains `ChunkInfo.text` and is serialized by the DAG assembly path.
 Engine steering lives on `DirectedSegment.emotion`, `DirectedSegment.speed`,
 `DirectedSegment.pause_after_ms`, and `DirectedSegment.engine_controls`.
 Adapters return `TTSResult(audio, sample_rate, words)`. Current production
@@ -129,7 +129,7 @@ F5 voices are bootstrapped from Kokoro presets. `af_heart` becomes
 `pipeline/voices/f5tts/af_heart.wav`. Generate those clips with:
 
 ```bash
-python pipeline/scripts/bootstrap-f5tts-voices.py
+python pipeline/scripts/openshelf-pipeline.py voices bootstrap-f5tts
 ```
 
 The reference WAVs are local synthesis inputs, not R2 artifacts.

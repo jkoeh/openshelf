@@ -112,7 +112,7 @@ R2_BUCKET_NAME=your-bucket-name
 python -m unittest discover -s tests -v
 
 # Test the scraper in dry-run mode
-python scripts\download-books.py --dry-run --author "Kafka"
+python pipeline\scripts\openshelf-pipeline.py books download --dry-run --author "Kafka"
 ```
 
 ---

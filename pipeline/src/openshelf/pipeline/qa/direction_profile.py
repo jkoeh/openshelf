@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Isolate and profile the LLM voice-directing step (no TTS synthesis).
 
 The directing step dominates pipeline runtime: for each chunk the AudioDirector
@@ -8,25 +7,18 @@ each call costs tens of seconds, so this script measures the real per-call and
 per-chunk latency on a few chunks and projects the cost over the whole book —
 without loading the TTS model or generating any audio.
 
-Usage (from repo root):
-    uv run python pipeline/scripts/profile-directing.py --epub <path>
-    uv run python pipeline/scripts/profile-directing.py --epub <path> --chapter 1 --chunks 4
-    uv run python pipeline/scripts/profile-directing.py --epub <path> --chapter 1 --chunks all --artifact artifacts/alice-directing-ch1.json
-    uv run python pipeline/scripts/profile-directing.py --epub <path> --no-emotion
-    uv run python pipeline/scripts/profile-directing.py --epub <path> --model gpt-4o-mini
-    uv run python pipeline/scripts/profile-directing.py --epub <path> --debug-validation
+Usage:
+    openshelf-pipeline profile direction --epub <path>
+    openshelf-pipeline profile direction --epub <path> --chapter 1 --chunks 4
 """
 from __future__ import annotations
 
 import argparse
 import dataclasses
 import json
-import os
-import sys
 import time
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from typing import Sequence
 
 from ebooklib import epub as _epub_lib
 
@@ -275,8 +267,11 @@ def _run_chapter_pass(llm, engine, chunks, args):
     return registry, artifact_chunks, chapter_text, raw_spans
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
+def main(argv: Sequence[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="openshelf-pipeline profile direction",
+        description=__doc__,
+    )
     ap.add_argument("--epub", required=True, help="Path to EPUB file")
     ap.add_argument("--engine", default="kokoro", help="TTS engine (default: kokoro)")
     ap.add_argument("--chapter", type=int, default=1, help="1-based chapter index to sample")
@@ -295,7 +290,7 @@ def main() -> int:
                     help="Skip the emotion/performance pass to measure its cost")
     ap.add_argument("--debug-validation", action="store_true",
                     help="Record raw attribution spans and validation errors in the artifact")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     print(f"Parsing {args.epub} ...", flush=True)
     chapters = parse_epub(args.epub)

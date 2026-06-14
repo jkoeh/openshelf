@@ -54,6 +54,22 @@ _GUTENBERG_BOILERPLATE_MARKERS = (
     "start of the project gutenberg ebook",
     "end of the project gutenberg ebook",
 )
+_GUTENBERG_BOILERPLATE_IDS = frozenset({
+    "pg-header",
+    "pg-footer",
+    "pg-start-separator",
+    "pg-end-separator",
+    "pg-machine-header",
+})
+_GUTENBERG_BOILERPLATE_CLASSES = frozenset({
+    "pg-boilerplate",
+    "pgheader",
+    "pgfooter",
+})
+_GUTENBERG_SEPARATOR_RE = re.compile(
+    r"^\*{3}\s+(START|END)\s+OF\s+THE\s+PROJECT\s+GUTENBERG\s+EBOOK\b",
+    re.IGNORECASE,
+)
 _FILENAME_TITLES = {
     "epigraph": "Epigraph",
 }
@@ -263,6 +279,27 @@ def _is_project_gutenberg_boilerplate(soup: BeautifulSoup) -> bool:
     return any(marker in lowered for marker in _GUTENBERG_BOILERPLATE_MARKERS)
 
 
+def _remove_project_gutenberg_boilerplate(soup: BeautifulSoup) -> None:
+    """Remove inline Gutenberg header/footer blocks while preserving story text."""
+    for tag in list(soup.find_all(True)):
+        if tag.parent is None or tag.attrs is None:
+            continue
+        tag_id = tag.get("id", "")
+        classes = tag.get("class", [])
+        if isinstance(classes, str):
+            classes = classes.split()
+        if tag_id in _GUTENBERG_BOILERPLATE_IDS:
+            tag.decompose()
+            continue
+        if any(cls in _GUTENBERG_BOILERPLATE_CLASSES for cls in classes):
+            tag.decompose()
+            continue
+        if tag.name in {"div", "p", "span"}:
+            text = clean_extracted_text(tag.get_text(separator=" "))
+            if _GUTENBERG_SEPARATOR_RE.match(text):
+                tag.decompose()
+
+
 def extract_cover_image(epub_path: str) -> tuple[bytes, str] | None:
     """Extract the cover image from an EPUB. Returns (image_bytes, media_type) or None.
 
@@ -333,6 +370,7 @@ def parse_epub(epub_path: str) -> list[Chapter]:
 
         content = item.get_content()
         soup = BeautifulSoup(content, "html.parser")
+        _remove_project_gutenberg_boilerplate(soup)
 
         if _is_project_gutenberg_boilerplate(soup):
             continue

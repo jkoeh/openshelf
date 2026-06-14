@@ -17,9 +17,9 @@ already contains `run.json`, the caller must pass either `--resume` or
 ## CLI Contract
 
 ```bash
-convert-book.py book.epub
-convert-book.py book.epub --build-id 2a4f9c1b3d8e7f60 --resume
-convert-book.py book.epub --build-id 2a4f9c1b3d8e7f60 --force
+openshelf-pipeline dag run --epub book.epub
+openshelf-pipeline dag run --epub book.epub --build-id 2a4f9c1b3d8e7f60 --resume
+openshelf-pipeline dag run --epub book.epub --build-id 2a4f9c1b3d8e7f60 --force
 ```
 
 - No `--build-id`: mint a fresh random build as before.
