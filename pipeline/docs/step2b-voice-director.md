@@ -384,11 +384,11 @@ class AudioDirector:
 
 `direct_chapter` is the production path. In `solo` mode, it returns one narrator segment per chunk. In `multicast` mode, it performs chapter-level speaker attribution and registry expansion before producing renderable segments. Engines that advertise `emotion_control` or `performance_direction` then apply performance direction according to `performance_direction_mode`:
 
-- `batched` (default): group consecutive chunks into deterministic direction batches capped at about 1,500 words or 10,000 characters. The LLM returns annotations keyed by `chunk_index` and `segment_index`; code validates exact coverage, retries a failed batch as smaller halves, and finally falls back to deterministic neutral direction for that failed batch.
+- `batched` (default): group consecutive chunks into direction batches capped at about 1,500 words or 10,000 characters. The LLM decides per chunk whether one shared performance setting should apply to the whole chunk or whether that chunk should be split into smaller performance units. `whole` mode applies one emotion/speed/intensity decision to every existing segment in the chunk. `split` mode is accepted only when the chunk currently has one parent segment and the returned unit texts concatenate exactly to that segment text. Code validates exact coverage and text preservation, retries a failed batch as smaller halves, and finally falls back to deterministic neutral direction for that failed chunk.
 - `chunk`: preserve the previous one-LLM-call-per-chunk behavior. This is mainly a debugging or narrow repair mode.
 - `off`: skip performance LLM calls and apply deterministic neutral/default direction.
 
-The output remains `list[list[DirectedSegment]]`, aligned to the original TTS chunks. Performance batching does not change `chapter-NN.voice_direction.json`, `chapter_data.json`, TTS chunking, R2 layout, or client behavior. Kokoro advertises neither capability in the default path, so it avoids extra LLM performance calls regardless of mode.
+The output remains `list[list[DirectedSegment]]`, aligned to the original TTS chunks. Adaptive batching may increase the number of `DirectedSegment`s inside a chunk, but it does not change `chapter-NN.voice_direction.json`, `chapter_data.json`, TTS chunking, R2 layout, or client behavior. Kokoro advertises neither capability in the default path, so it avoids extra LLM performance calls regardless of mode.
 
 `direct_chunk` follows the same cast mode. In `solo`, it returns a single narrator segment. In `multicast`, it runs chunk-level speaker annotation with fallback. It is used by tests, debugging harnesses, and as the fallback if chapter-level attribution fails.
 

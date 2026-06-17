@@ -201,7 +201,10 @@ Production chapter audio generation should populate `ChunkInfo.directed_segments
 by loading `chapter-NN.voice_direction.json`. The directive artifact, not
 transient in-memory LLM output, is the boundary between direction and synthesis.
 This preserves repairability: regenerating audio from an existing directive must
-not call the LLM again.
+not call the LLM again. Adaptive performance direction may split one reader
+chunk into multiple directed segments when the LLM decides the chunk needs
+different controls internally; those segments still synthesize and align as one
+reader chunk.
 
 ## Chapter Sync Artifact
 

@@ -277,25 +277,39 @@ BATCHED_EMOTION_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
-        "annotations": {
+        "chunks": {
             "type": "array",
             "items": {
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {
                     "chunk_index": {"type": "integer"},
-                    "segment_index": {"type": "integer"},
+                    "mode": {"type": "string", "enum": ["whole", "split"]},
                     "emotion": {"type": "string"},
                     "speed": {"type": "string"},
                     "intensity": {"type": "number"},
-                    "synthesis_text": {"type": "string"},
                     "pause_after_ms": {"type": "integer"},
+                    "units": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "text": {"type": "string"},
+                                "emotion": {"type": "string"},
+                                "speed": {"type": "string"},
+                                "intensity": {"type": "number"},
+                                "pause_after_ms": {"type": "integer"},
+                            },
+                            "required": ["text", "emotion", "speed"],
+                        },
+                    },
                 },
-                "required": ["chunk_index", "segment_index", "emotion", "speed"],
+                "required": ["chunk_index", "mode"],
             },
         },
     },
-    "required": ["annotations"],
+    "required": ["chunks"],
 }
 
 SPEED_MAP = {"slow": 0.85, "normal": 0.95, "fast": 1.05}
@@ -305,6 +319,7 @@ CHAPTER_ATTRIBUTION_QUOTE_BATCH_SIZE = 20
 PERFORMANCE_DIRECTION_MODES = {"batched", "chunk", "off"}
 PERFORMANCE_DIRECTION_BATCH_WORDS = 1500
 PERFORMANCE_DIRECTION_BATCH_CHARS = 10000
+MAX_ADAPTIVE_UNITS_PER_SEGMENT = 8
 DELIVERY_TYPES = {
     "spoken_dialogue",
     "internal_thought",
@@ -388,6 +403,21 @@ def _performance_system_prompt(cfg: EmotionPromptConfig) -> str:
         "assign one emotion and one speaking pace. Do not split segments. "
         "Avoid pause_after_ms for ordinary joins; use it only for a brief breath "
         "at real rhetorical breaks.\n"
+        f"{cfg.injection_rules}\n"
+        f"Pace labels: {', '.join(cfg.speed_labels)}."
+    )
+
+
+def _adaptive_performance_system_prompt(cfg: EmotionPromptConfig) -> str:
+    return (
+        "You are directing an audiobook performance. For each chunk, decide "
+        "whether one shared performance setting is best or whether the chunk "
+        "needs smaller performance units with different controls. Use split "
+        "mode only for meaningful shifts in delivery, such as emotionally "
+        "charged close-POV narration, inner thought, or a sharp tonal change. "
+        "Most chunks should use whole mode, often neutral. Do not rewrite text; "
+        "split unit text must be copied exactly and concatenate to the parent "
+        "segment text.\n"
         f"{cfg.injection_rules}\n"
         f"Pace labels: {', '.join(cfg.speed_labels)}."
     )
@@ -1836,7 +1866,9 @@ def _batched_performance_prompt_items(
     return [
         {
             "chunk_index": chunk_index,
+            "previous": windows[chunk_index].prev,
             "text": windows[chunk_index].text,
+            "next": windows[chunk_index].next,
             "segments": [
                 {
                     **_segment_annotation_prompt(segment, segment_index),
@@ -1849,6 +1881,47 @@ def _batched_performance_prompt_items(
     ]
 
 
+def _apply_whole_chunk_annotation(
+    segments: list[DirectedSegment],
+    item: dict[str, Any],
+    cfg: EmotionPromptConfig,
+) -> list[DirectedSegment]:
+    if "emotion" not in item or "speed" not in item:
+        raise ValueError("whole chunk direction requires emotion and speed")
+    return [_apply_emotion_annotation(segment, item, cfg) for segment in segments]
+
+
+def _split_segment_by_adaptive_units(
+    segment: DirectedSegment,
+    units: Any,
+    cfg: EmotionPromptConfig,
+) -> list[DirectedSegment]:
+    if not isinstance(units, list) or not units:
+        raise ValueError("split direction requires non-empty units")
+    if len(units) > MAX_ADAPTIVE_UNITS_PER_SEGMENT:
+        raise ValueError("split direction has too many units")
+
+    unit_texts: list[str] = []
+    directed: list[DirectedSegment] = []
+    for unit in units:
+        if not isinstance(unit, dict):
+            raise ValueError("split unit must be an object")
+        text = unit.get("text")
+        if not isinstance(text, str) or not text:
+            raise ValueError("split unit requires text")
+        unit_texts.append(text)
+        unit_segment = replace(
+            segment,
+            text=text,
+            original_text=text,
+        )
+        directed.append(_apply_emotion_annotation(unit_segment, unit, cfg))
+
+    if "".join(unit_texts) != segment.text:
+        raise ValueError("split unit text must preserve parent segment text exactly")
+    return directed
+
+
 def _apply_batched_emotion_response(
     directed_chunks: list[list[DirectedSegment]],
     batch: list[int],
@@ -1856,28 +1929,35 @@ def _apply_batched_emotion_response(
     cfg: EmotionPromptConfig,
 ) -> list[list[DirectedSegment]]:
     updated = [list(segments) for segments in directed_chunks]
-    expected = {
-        (chunk_index, segment_index)
-        for chunk_index in batch
-        for segment_index in range(len(directed_chunks[chunk_index]))
-    }
-    seen: set[tuple[int, int]] = set()
-    for item in response.get("annotations", []):
+    expected = set(batch)
+    seen: set[int] = set()
+    for item in response.get("chunks", []):
         chunk_index = int(item["chunk_index"])
-        segment_index = int(item["segment_index"])
-        key = (chunk_index, segment_index)
-        if key in seen:
-            raise ValueError("duplicate emotion annotation")
-        if key not in expected:
-            raise ValueError("emotion annotation index out of range")
-        updated[chunk_index][segment_index] = _apply_emotion_annotation(
-            updated[chunk_index][segment_index],
-            item,
-            cfg,
-        )
-        seen.add(key)
+        if chunk_index in seen:
+            raise ValueError("duplicate chunk direction")
+        if chunk_index not in expected:
+            raise ValueError("chunk direction index out of range")
+        mode = str(item.get("mode", ""))
+        if mode == "whole":
+            updated[chunk_index] = _apply_whole_chunk_annotation(
+                updated[chunk_index],
+                item,
+                cfg,
+            )
+        elif mode == "split":
+            segments = updated[chunk_index]
+            if len(segments) != 1:
+                raise ValueError("split direction requires exactly one parent segment")
+            updated[chunk_index] = _split_segment_by_adaptive_units(
+                segments[0],
+                item.get("units"),
+                cfg,
+            )
+        else:
+            raise ValueError("chunk direction mode must be whole or split")
+        seen.add(chunk_index)
     if seen != expected:
-        raise ValueError("batched emotion annotations must cover every segment")
+        raise ValueError("batched emotion directions must cover every chunk")
     return updated
 
 
@@ -1894,7 +1974,7 @@ def add_batched_emotion_direction(
     if not directed_chunks:
         return directed_chunks
 
-    system = _performance_system_prompt(cfg)
+    system = _adaptive_performance_system_prompt(cfg)
     result = [list(segments) for segments in directed_chunks]
     batches = performance_direction_batches(
         windows,
@@ -1909,8 +1989,15 @@ def add_batched_emotion_direction(
             return
         user = (
             f"Available emotions: {', '.join(cfg.emotion_vocabulary)}\n\n"
-            "Return one annotation for every segment in every chunk. Use the "
-            "provided chunk_index and segment_index exactly.\n\n"
+            "Return one direction object for every chunk_index exactly once.\n"
+            "For each chunk choose mode='whole' when one shared emotion, pace, "
+            "and intensity should apply to the whole chunk, neutral or otherwise. "
+            "Choose mode='split' only when materially different performance "
+            "controls are needed within a single parent segment, such as calm "
+            "narration plus anxious inner thought. For split mode, return ordered "
+            "units whose text values concatenate exactly to the parent segment "
+            "text; do not rewrite, omit, normalize, or add text. Prefer whole "
+            "and neutral unless a split is clearly beneficial.\n\n"
             "Chunks:\n"
             f"{json.dumps(_batched_performance_prompt_items(windows, result, batch), ensure_ascii=False)}"
         )

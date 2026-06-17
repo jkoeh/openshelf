@@ -196,7 +196,10 @@ Behavior:
 - Runs `AudioDirector.direct_chapter` to produce directed segments (speaker,
   voice, and engine-supported performance steering), then writes the per-chapter
   voice-direction artifact. `direct --performance-direction {batched,chunk,off}`
-  selects the same engine-aware performance mode as `dag run`.
+  selects the same engine-aware performance mode as `dag run`; `batched` is the
+  default adaptive mode where the LLM decides per chunk whether one shared
+  performance setting is enough or whether that chunk should be split into
+  smaller performance units.
 - `registry` and `direct` are the only repair stages that may call the LLM.
 - **Solo cast mode only.** Multicast registry repair / converting an existing
   solo build to multicast is out of scope (see the resumable-repair plan); the

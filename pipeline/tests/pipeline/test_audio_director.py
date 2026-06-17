@@ -101,6 +101,23 @@ class FakePerformanceEngine(FakeEngine):
             speed_labels=["slow", "normal", "fast"],
         )
 
+    def apply_performance_controls(self, segment: DirectedSegment):
+        controls = dict(segment.engine_controls)
+        controls["applied_emotion"] = segment.emotion
+        return DirectedSegment(
+            text=segment.text,
+            voice=segment.voice,
+            speaker=segment.speaker,
+            emotion=segment.emotion,
+            speed=segment.speed,
+            pause_after_ms=segment.pause_after_ms,
+            original_text=segment.original_text,
+            delivery_type=segment.delivery_type,
+            voice_policy=segment.voice_policy,
+            join_policy=segment.join_policy,
+            engine_controls=controls,
+        )
+
 
 def _registry() -> CharacterRegistry:
     return CharacterRegistry(
@@ -248,9 +265,9 @@ class TestAudioDirector(unittest.TestCase):
             ChunkWindow("", "First chunk.", "Second chunk."),
             ChunkWindow("First chunk.", "Second chunk.", ""),
         ]
-        llm = StubLLM([{"annotations": [
-            {"chunk_index": 0, "segment_index": 0, "emotion": "anxious", "speed": "normal"},
-            {"chunk_index": 1, "segment_index": 0, "emotion": "sad", "speed": "slow"},
+        llm = StubLLM([{"chunks": [
+            {"chunk_index": 0, "mode": "whole", "emotion": "anxious", "speed": "normal"},
+            {"chunk_index": 1, "mode": "whole", "emotion": "sad", "speed": "slow"},
         ]}])
         director = AudioDirector(FakePerformanceEngine(), llm, NullAligner())
 
@@ -259,7 +276,29 @@ class TestAudioDirector(unittest.TestCase):
         self.assertEqual(len(llm.calls), 1)
         self.assertEqual(directed[0][0].emotion, "anxious")
         self.assertEqual(directed[1][0].emotion, "sad")
+        self.assertEqual(directed[0][0].engine_controls["applied_emotion"], "anxious")
         self.assertIn("chunk_index", llm.calls[0]["user"])
+
+    def test_default_batched_performance_direction_can_split_chunk_units(self):
+        windows = [ChunkWindow("", "Calm. Then fear.", "")]
+        llm = StubLLM([{"chunks": [{
+            "chunk_index": 0,
+            "mode": "split",
+            "units": [
+                {"text": "Calm. ", "emotion": "neutral", "speed": "normal"},
+                {"text": "Then fear.", "emotion": "anxious", "speed": "normal", "intensity": 0.8},
+            ],
+        }]}])
+        director = AudioDirector(FakePerformanceEngine(), llm, NullAligner())
+
+        _registry_after, directed = director.direct_chapter("I", windows, _registry())
+
+        self.assertEqual(len(llm.calls), 1)
+        self.assertEqual([segment.text for segment in directed[0]], ["Calm. ", "Then fear."])
+        self.assertEqual("".join(segment.text for segment in directed[0]), windows[0].text)
+        self.assertEqual([segment.emotion for segment in directed[0]], ["neutral", "anxious"])
+        self.assertEqual(directed[0][1].engine_controls["intensity"], 0.8)
+        self.assertEqual(directed[0][1].engine_controls["applied_emotion"], "anxious")
 
     def test_chunk_performance_direction_preserves_per_chunk_calls(self):
         windows = [

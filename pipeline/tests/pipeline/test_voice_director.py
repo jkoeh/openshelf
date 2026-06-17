@@ -652,9 +652,9 @@ class TestPerformanceDirection(unittest.TestCase):
             [DirectedSegment(text=window.text, voice=VoiceSpec(id="narrator"), speaker="narrator")]
             for window in windows
         ]
-        llm = StubLLM([{"annotations": [
-            {"chunk_index": 0, "segment_index": 0, "emotion": "anxious", "speed": "fast", "intensity": 0.8},
-            {"chunk_index": 1, "segment_index": 0, "emotion": "sad", "speed": "slow", "intensity": 0.6},
+        llm = StubLLM([{"chunks": [
+            {"chunk_index": 0, "mode": "whole", "emotion": "anxious", "speed": "fast", "intensity": 0.8},
+            {"chunk_index": 1, "mode": "whole", "emotion": "sad", "speed": "slow", "intensity": 0.6},
         ]}])
 
         directed = add_batched_emotion_direction(directed_chunks, windows, llm, cfg)
@@ -665,6 +665,7 @@ class TestPerformanceDirection(unittest.TestCase):
         self.assertEqual(directed[1][0].emotion, "sad")
         self.assertEqual(directed[1][0].speed, 0.85)
         self.assertIn("chunk_index", llm.calls[0]["user"])
+        self.assertIn("mode='whole'", llm.calls[0]["user"])
 
     def test_batched_emotion_direction_retries_halves_after_failure(self):
         cfg = self._cfg()
@@ -677,12 +678,12 @@ class TestPerformanceDirection(unittest.TestCase):
             for window in windows
         ]
         llm = StubLLM([
-            {"annotations": []},
-            {"annotations": [
-                {"chunk_index": 0, "segment_index": 0, "emotion": "anxious", "speed": "normal"},
+            {"chunks": []},
+            {"chunks": [
+                {"chunk_index": 0, "mode": "whole", "emotion": "anxious", "speed": "normal"},
             ]},
-            {"annotations": [
-                {"chunk_index": 1, "segment_index": 0, "emotion": "sad", "speed": "normal"},
+            {"chunks": [
+                {"chunk_index": 1, "mode": "whole", "emotion": "sad", "speed": "normal"},
             ]},
         ])
 
@@ -698,7 +699,7 @@ class TestPerformanceDirection(unittest.TestCase):
         directed_chunks = [[
             DirectedSegment(text="Only chunk.", voice=VoiceSpec(id="narrator"), speaker="narrator")
         ]]
-        llm = StubLLM([{"annotations": []}])
+        llm = StubLLM([{"chunks": []}])
 
         directed = add_batched_emotion_direction(directed_chunks, windows, llm, cfg)
 
@@ -706,6 +707,78 @@ class TestPerformanceDirection(unittest.TestCase):
         self.assertEqual(directed[0][0].emotion, "neutral")
         self.assertEqual(directed[0][0].speed, 0.95)
         self.assertEqual(directed[0][0].engine_controls["intensity"], 0.5)
+
+    def test_batched_emotion_direction_splits_single_parent_segment(self):
+        cfg = self._cfg()
+        windows = [ChunkWindow("", "Calm. Then terror.", "")]
+        directed_chunks = [[
+            DirectedSegment(
+                text="Calm. Then terror.",
+                voice=VoiceSpec(id="narrator"),
+                speaker="narrator",
+                original_text="Calm. Then terror.",
+            )
+        ]]
+        llm = StubLLM([{"chunks": [{
+            "chunk_index": 0,
+            "mode": "split",
+            "units": [
+                {"text": "Calm. ", "emotion": "neutral", "speed": "normal", "intensity": 0.2},
+                {"text": "Then terror.", "emotion": "anxious", "speed": "normal", "intensity": 0.8},
+            ],
+        }]}])
+
+        directed = add_batched_emotion_direction(directed_chunks, windows, llm, cfg)
+
+        self.assertEqual([segment.text for segment in directed[0]], ["Calm. ", "Then terror."])
+        self.assertEqual("".join(segment.text for segment in directed[0]), windows[0].text)
+        self.assertEqual([segment.voice.id for segment in directed[0]], ["narrator", "narrator"])
+        self.assertEqual([segment.speaker for segment in directed[0]], ["narrator", "narrator"])
+        self.assertEqual(directed[0][0].emotion, "neutral")
+        self.assertEqual(directed[0][1].emotion, "anxious")
+        self.assertEqual(directed[0][1].engine_controls["intensity"], 0.8)
+
+    def test_batched_emotion_direction_rejects_split_that_rewrites_text(self):
+        cfg = self._cfg()
+        windows = [ChunkWindow("", "Original text.", "")]
+        directed_chunks = [[
+            DirectedSegment(text="Original text.", voice=VoiceSpec(id="narrator"), speaker="narrator")
+        ]]
+        llm = StubLLM([{"chunks": [{
+            "chunk_index": 0,
+            "mode": "split",
+            "units": [
+                {"text": "Changed text.", "emotion": "sad", "speed": "normal"},
+            ],
+        }]}])
+
+        directed = add_batched_emotion_direction(directed_chunks, windows, llm, cfg)
+
+        self.assertEqual(len(llm.calls), 1)
+        self.assertEqual(len(directed[0]), 1)
+        self.assertEqual(directed[0][0].text, "Original text.")
+        self.assertEqual(directed[0][0].emotion, "neutral")
+
+    def test_batched_emotion_direction_rejects_split_for_multi_segment_chunk(self):
+        cfg = self._cfg()
+        windows = [ChunkWindow("", "First.Second.", "")]
+        directed_chunks = [[
+            DirectedSegment(text="First.", voice=VoiceSpec(id="narrator"), speaker="narrator"),
+            DirectedSegment(text="Second.", voice=VoiceSpec(id="narrator"), speaker="narrator"),
+        ]]
+        llm = StubLLM([{"chunks": [{
+            "chunk_index": 0,
+            "mode": "split",
+            "units": [
+                {"text": "First.", "emotion": "neutral", "speed": "normal"},
+                {"text": "Second.", "emotion": "sad", "speed": "normal"},
+            ],
+        }]}])
+
+        directed = add_batched_emotion_direction(directed_chunks, windows, llm, cfg)
+
+        self.assertEqual(len(directed[0]), 2)
+        self.assertTrue(all(segment.emotion == "neutral" for segment in directed[0]))
 
     def test_neutral_emotion_direction_makes_no_llm_decision(self):
         cfg = self._cfg()
