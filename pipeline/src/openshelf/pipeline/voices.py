@@ -1,23 +1,37 @@
-"""Generate local F5-TTS reference clips from Kokoro preset voices."""
+"""Generate local reference clips from Kokoro preset voices."""
 
 from __future__ import annotations
 
 import argparse
 from typing import Sequence
 
-from openshelf.pipeline.engines.f5tts import bootstrap_kokoro_reference_voices
+from openshelf.pipeline.engines.chatterbox import (
+    bootstrap_kokoro_reference_voices as bootstrap_chatterbox_reference_voices,
+)
+from openshelf.pipeline.engines.f5tts import (
+    bootstrap_kokoro_reference_voices as bootstrap_f5tts_reference_voices,
+)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="openshelf-pipeline voices bootstrap-f5tts",
-        description="Render pipeline/voices/f5tts/*.wav reference clips from Kokoro presets.",
+        prog="openshelf-pipeline voices bootstrap",
+        description="Render pipeline/voices/<engine>/*.wav reference clips from Kokoro presets.",
+    )
+    parser.add_argument(
+        "--engine",
+        choices=["f5tts", "chatterbox"],
+        default="f5tts",
+        help="Reference-voice target engine. Defaults to f5tts for backward compatibility.",
     )
     parser.add_argument(
         "--voices",
         nargs="*",
         default=None,
-        help="Optional Kokoro presets or F5 IDs to render, e.g. af_heart f5tts-bm_george.",
+        help=(
+            "Optional Kokoro presets or engine IDs to render, e.g. af_heart, "
+            "f5tts-bm_george, or chatterbox-bf_alice."
+        ),
     )
     parser.add_argument(
         "--voices-dir",
@@ -41,7 +55,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    results = bootstrap_kokoro_reference_voices(
+    bootstrap = (
+        bootstrap_chatterbox_reference_voices
+        if args.engine == "chatterbox"
+        else bootstrap_f5tts_reference_voices
+    )
+    results = bootstrap(
         voices_dir=args.voices_dir,
         voice_ids=args.voices,
         overwrite=args.overwrite,

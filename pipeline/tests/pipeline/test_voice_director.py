@@ -935,6 +935,9 @@ class TestBuildCharacterRegistry(unittest.TestCase):
 
         self.assertIn("whimsical children's fiction", llm.calls[0]["system"])
         self.assertIn("Do not default to", llm.calls[0]["system"])
+        self.assertIn("dominant POV", llm.calls[0]["system"])
+        self.assertIn("Narrator gender, age impression, and temperament", llm.calls[0]["system"])
+        self.assertIn("Voice source must not imply priority", llm.calls[0]["system"])
 
 
 class TestChapterAttribution(unittest.TestCase):

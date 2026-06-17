@@ -63,11 +63,18 @@ def _ops_main(argv: Sequence[str] | None = None) -> int:
 def _voices_main(argv: Sequence[str] | None = None) -> int:
     from openshelf.pipeline import voices
 
+    def bootstrap_f5tts(rest: Sequence[str] | None = None) -> int:
+        return voices.main(["--engine", "f5tts", *(rest or [])])
+
+    def bootstrap_chatterbox(rest: Sequence[str] | None = None) -> int:
+        return voices.main(["--engine", "chatterbox", *(rest or [])])
+
     return _dispatch_group(
         prog="openshelf-pipeline voices",
         argv=list(argv or []),
         commands={
-            "bootstrap-f5tts": ("Generate F5-TTS reference clips", voices.main),
+            "bootstrap-f5tts": ("Generate F5-TTS reference clips", bootstrap_f5tts),
+            "bootstrap-chatterbox": ("Generate Chatterbox reference clips", bootstrap_chatterbox),
         },
     )
 

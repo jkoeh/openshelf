@@ -91,12 +91,17 @@ class SpeakerSpan:
 - title, author, language, opening text
 - engine voice pool description
 - narrator casting guidance from the engine, including which voices are suited to literary narration, children/young-adult fiction, comedy, solemn narration, or character-only use
+- dominant POV guidance: narrator gender, age impression, and temperament should
+  be strongly influenced by the main narrative persona in the opening/chapter
+  sample. For first-person or close-third prose, prefer a narrator whose voice
+  plausibly carries that POV unless genre, frame narration, or explicit
+  authorial distance argues otherwise.
 - rules for characters with quoted speech, quoted thoughts, self-talk, or lines described as spoken aloud, even if the character appears only once in the sample
 - rules that exclude labels, signs, book titles, object text, imagined concepts, silent mentions, and pronouns
 
 The LLM returns a strict registry shape. Each character item includes `canonical`, `aliases`, `description`, `gender`, `age`, `persona_of`, `voice_id`, and `first_evidence_quote`. `first_evidence_quote` is an audit field that explains why the character belongs in the registry and helps catch empty or hallucinated registries. If the opening sample contains actual quoted speech/self-talk, quoted thought, or explicit spoken-aloud narration, an empty character list is invalid and the registry call is retried with an explicit correction prompt before failing. Ordinary narration that merely contains words such as "thought" does not require a character registry entry when there is no quoted/spoken sample text.
 
-The LLM may suggest `narrator_voice_id` and character `voice_id` values, but code remains authoritative. Narrator choice is either an explicit `--voice`/override, which bypasses the registry LLM entirely and starts with an empty character registry, or a valid engine voice ID chosen from the engine's voice-pool description. If the LLM returns an invalid narrator ID, code falls back to the engine's first available voice. For Kokoro, the voice-pool description must include enough qualitative guidance for narrator selection; whimsical children's fiction should prefer warm, expressive, approachable voices and avoid overly grave/deep narrator voices unless the book tone asks for that. F5-TTS bootstraps its initial voice choices from the same Kokoro preset catalog, exposed as `f5tts-{kokoro_preset}` IDs, and its voice-pool description must preserve the Kokoro qualitative casting guidance while making clear that the selected F5 voice clones the matching local reference clip.
+The LLM may suggest `narrator_voice_id` and character `voice_id` values, but code remains authoritative. Narrator choice is either an explicit `--voice`/override, which bypasses the registry LLM entirely and starts with an empty character registry, or a valid engine voice ID chosen from the engine's voice-pool description. If the LLM returns an invalid narrator ID, code falls back to the engine's first available voice. For Kokoro, the voice-pool description must include enough qualitative guidance for narrator selection; whimsical children's fiction should prefer warm, expressive, approachable voices and avoid overly grave/deep narrator voices unless the book tone asks for that. F5-TTS bootstraps its initial voice choices from the same Kokoro preset catalog, exposed as `f5tts-{kokoro_preset}` IDs, and its voice-pool description must preserve the Kokoro qualitative casting guidance while making clear that the selected F5 voice clones the matching local reference clip. Chatterbox may expose both curated local reference profiles and Kokoro-derived reference profiles; Kokoro-derived references are the default because their narrator qualities are inherited from the stronger Kokoro preset catalog, while curated human/public-domain references remain selectable only when they win decisively over the best Kokoro-derived candidate across multiple concrete book-fit axes such as dominant POV, narrative distance, prose period or genre, emotional register, and requested voice quality.
 
 `assign_voices()` validates character voice IDs against `engine.available_voices()`, fills gaps deterministically, uses gender/age hints where possible, and wraps the pool if more characters exist than voices.
 
@@ -304,6 +309,19 @@ reconstructs `DirectedSegment`s from `chapter-NN.voice_direction.json` rather
 than relying on transient in-memory LLM output. This lets an audio repair rerun
 avoid another LLM call as long as the directive artifact is present and valid.
 
+Full DAG runs default to reusing local chapter direction before calling the LLM.
+Unless `--new-voice-direction` is passed, `dag run` looks for an earlier local
+`chapter-NN.voice_direction.json` for the same author/title, engine, and cast
+mode, regardless of voice/rendition/build. The cached chapter must also have
+the same chapter number and chunk text. A compatible cached chapter is copied
+into the new build prefix, with the top-level `rendition`/`build` and narrator
+voice specs remapped to the current build's selected narrator before synthesis.
+The copied artifact then becomes the same idempotent synthesis input as a
+freshly directed chapter. Passing `--new-voice-direction` disables this cache
+lookup and preserves the historical behavior: run the registry and
+chapter-direction LLM paths for the current build, then write fresh chapter
+snapshots.
+
 The chapter snapshots are not part of the public playback contract. The log
 also records a speed summary for each chapter before synthesis begins, including
 total segment count, counts by numeric speed, and whether any narrator segment
@@ -374,7 +392,7 @@ The output remains `list[list[DirectedSegment]]`, aligned to the original TTS ch
 
 `direct_chunk` follows the same cast mode. In `solo`, it returns a single narrator segment. In `multicast`, it runs chunk-level speaker annotation with fallback. It is used by tests, debugging harnesses, and as the fallback if chapter-level attribution fails.
 
-`openshelf-pipeline dag run --performance-direction {batched,chunk,off}` selects the mode, and `books process` forwards the same option to local conversion. The default is `batched`.
+`openshelf-pipeline dag run --performance-direction {batched,chunk,off}` selects the mode, and `books process` forwards the same option to local conversion. The default is `batched`. `dag run --new-voice-direction` forces fresh per-chapter direction instead of reusing compatible local chapter snapshots; `books process --new-voice-direction` forwards the same flag.
 
 ## LLM Clients
 

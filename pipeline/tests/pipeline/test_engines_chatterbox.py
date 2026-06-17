@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 import sys
 import tempfile
 import types
@@ -22,6 +23,7 @@ from openshelf.pipeline.engines.chatterbox import (  # noqa: E402
     _patch_chatterbox_progress_bars,
     _patch_missing_perth_watermarker,
     _suppress_chatterbox_dependency_warnings,
+    bootstrap_kokoro_reference_voices,
 )
 from openshelf.pipeline.tts_engine import DirectedSegment, VoiceSpec  # noqa: E402
 
@@ -59,6 +61,58 @@ class TestChatterboxAdapter(unittest.TestCase):
         self.assertEqual(voices[0].id, "chatterbox-af_heart")
         self.assertTrue(voices[0].ref_audio_path.endswith(os.path.join("chatterbox", "af_heart.wav")))
         self.assertIn("chatterbox-bm_george", {voice.id for voice in voices})
+
+    def test_available_voices_include_curated_profiles_after_kokoro_refs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            voice_dir = os.path.join(tmp, "chatterbox")
+            os.makedirs(voice_dir)
+            ref_path = os.path.join(voice_dir, "librivox-warm.wav")
+            with open(ref_path, "wb") as f:
+                f.write(b"RIFF")
+            profile_path = os.path.join(voice_dir, "profiles.json")
+            with open(profile_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "voices": [
+                        {
+                            "id": "chatterbox-librivox-warm",
+                            "ref_audio_path": "librivox-warm.wav",
+                            "description": "warm public-domain literary narrator",
+                            "source": "LibriVox public-domain recording",
+                        },
+                        {
+                            "id": "chatterbox-missing",
+                            "ref_audio_path": "missing.wav",
+                            "description": "should not be selectable",
+                        },
+                    ]
+                }, f)
+            engine = ChatterboxAdapter(voices_dir=tmp)
+
+            voices = engine.available_voices()
+            description = engine.registry_prompt_config().voice_pool_description
+
+        self.assertEqual(voices[0].id, "chatterbox-af_heart")
+        self.assertIn("chatterbox-librivox-warm", {voice.id for voice in voices})
+        self.assertNotIn("chatterbox-missing", {voice.id for voice in voices})
+        self.assertIn("chatterbox-librivox-warm: warm public-domain literary narrator", description)
+        self.assertIn("Default to these Kokoro-derived chatterbox-* IDs", description)
+        self.assertIn("wins decisively over the best Kokoro-derived candidate", description)
+        self.assertIn("decisive fit beyond the best Kokoro-derived", description)
+        self.assertIn("chatterbox-af_heart", description)
+
+    def test_bootstrap_chatterbox_reference_voices_dry_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            results = bootstrap_kokoro_reference_voices(
+                voices_dir=tmp,
+                voice_ids=["af_heart", "chatterbox-bm_george"],
+                dry_run=True,
+            )
+
+        self.assertEqual([item.voice_id for item in results], [
+            "chatterbox-af_heart",
+            "chatterbox-bm_george",
+        ])
+        self.assertEqual([item.status for item in results], ["would_write", "would_write"])
 
     def test_synthesize_uses_expression_controls(self):
         with tempfile.TemporaryDirectory() as tmp:

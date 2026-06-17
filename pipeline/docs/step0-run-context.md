@@ -87,6 +87,7 @@ Resume validation compares immutable fields:
 - rendition
 - cast mode
 - performance direction mode
+- voice-direction refresh mode (`--new-voice-direction`)
 - language
 - selected chapter set
 - pipeline version

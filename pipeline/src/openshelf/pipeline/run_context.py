@@ -25,6 +25,7 @@ _MATCH_FIELDS = (
     "rendition",
     "cast_mode",
     "performance_direction_mode",
+    "new_voice_direction",
     "language",
     "chapters",
 )
@@ -51,6 +52,7 @@ class RunContext:
     performance_direction_mode: str
     language: str
     chapters: list[int]
+    new_voice_direction: bool = False
     version: int = RUN_CONTEXT_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -69,6 +71,7 @@ class RunContext:
             "rendition": self.rendition,
             "cast_mode": self.cast_mode,
             "performance_direction_mode": self.performance_direction_mode,
+            "new_voice_direction": self.new_voice_direction,
             "language": self.language,
             "chapters": list(self.chapters),
         }
@@ -109,6 +112,7 @@ def make_run_context(
     performance_direction_mode: str,
     language: str,
     chapters: list[int],
+    new_voice_direction: bool = False,
 ) -> RunContext:
     return RunContext(
         build=validate_build_id(build),
@@ -124,6 +128,7 @@ def make_run_context(
         rendition=rendition,
         cast_mode=cast_mode,
         performance_direction_mode=performance_direction_mode,
+        new_voice_direction=bool(new_voice_direction),
         language=language,
         chapters=sorted(chapters),
     )
@@ -138,7 +143,10 @@ def validate_resume_context(existing: dict[str, Any], expected: RunContext) -> N
     expected_dict = expected.to_dict()
     mismatches: list[str] = []
     for field in _MATCH_FIELDS:
-        if existing.get(field) != expected_dict.get(field):
+        existing_value = existing.get(field)
+        if field == "new_voice_direction" and field not in existing:
+            existing_value = False
+        if existing_value != expected_dict.get(field):
             mismatches.append(field)
     if mismatches:
         joined = ", ".join(mismatches)

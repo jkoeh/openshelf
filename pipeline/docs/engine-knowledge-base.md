@@ -241,6 +241,46 @@ outputs needed for speech logits. It disables attention tensors and full
 hidden-state lists because OpenShelf does not use upstream attentions for sync
 or reader data.
 
+### Voice Model
+
+Classic Chatterbox is reference-audio driven, not a preset catalog in the
+Kokoro sense. Upstream can synthesize with its default voice when no reference
+clip is supplied, but OpenShelf treats production Chatterbox voices as explicit
+`VoiceSpec.ref_audio_path` entries so narrator selection is auditable and
+repeatable.
+
+The adapter builds its selectable voice pool from:
+
+- Curated local Chatterbox reference profiles from
+  `pipeline/voices/chatterbox/profiles.json`, when the referenced WAV files
+  exist.
+- Kokoro-derived references under `pipeline/voices/chatterbox/*.wav`. These
+  expose the same qualitative casting guidance as Kokoro, with
+  `chatterbox-{kokoro_preset}` IDs such as `chatterbox-af_heart`.
+
+Chatterbox narrator choice defaults to Kokoro-derived references. These
+references inherit the strongest Kokoro narrator descriptions and have been
+generated from the same stable preset catalog used by other engines. Curated
+human/public-domain references remain selectable, but only when they win
+decisively over the best Kokoro-derived candidate across multiple concrete
+book-fit axes such as dominant POV gender, narrative distance, prose period or
+genre, emotional register, and requested voice quality. Human provenance alone,
+or a merely comparable fit, is not enough to override the Kokoro-derived
+default.
+
+The local profile JSON is intentionally data-only. A profile may document a
+public-domain source such as LibriVox, but the adapter never fetches network
+audio while casting or synthesizing; only local WAV paths are used. LibriVox
+recordings are useful seed material because LibriVox states that its recordings
+are public domain, but any imported clip should still be curated by listening
+for a single speaker, low noise, and a clean reading style before it is added
+to the profile pool.
+
+If callers pass `--voice`, the DAG creates a narrator-only registry and skips
+LLM narrator selection. To let the registry LLM choose among Chatterbox
+profiles, omit `--voice`; the selected Chatterbox voice becomes the build's
+rendition identity.
+
 ### Direction Implications
 
 Do not ask the LLM to write raw Chatterbox API parameters directly. Keep the

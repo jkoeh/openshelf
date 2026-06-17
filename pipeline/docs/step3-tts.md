@@ -49,7 +49,17 @@ local reference clip instead of calling Kokoro at synthesis time.
 Chatterbox is a zero-shot voice-cloning adapter with expression controls. It
 uses local reference clips, maps generic direction to the upstream
 `exaggeration` and `cfg_weight` controls, returns `words=None`, and relies on
-WhisperX for final sync.
+WhisperX for final sync. Chatterbox does not ship an OpenShelf-ready preset
+catalog like Kokoro; OpenShelf exposes local reference profiles instead. The
+adapter reads curated profiles from `pipeline/voices/chatterbox/profiles.json`
+when their WAV files exist, then supplements any missing coverage with the
+Kokoro-derived `pipeline/voices/chatterbox/{preset}.wav` references using
+`chatterbox-{preset}` IDs and the same qualitative narrator guidance as Kokoro.
+Automatic Chatterbox narrator selection treats Kokoro-derived references as the
+default and chooses a curated profile only when it is a decisive book-specific
+fit beyond the best Kokoro-derived option.
+Passing `--voice` still forces one narrator and bypasses automatic narrator
+selection.
 
 F5 reference clips are generated locally from Kokoro with:
 
@@ -62,6 +72,17 @@ The script writes one WAV per Kokoro preset under `pipeline/voices/f5tts/`.
 behavior as a reusable Python API. Existing clips are skipped unless
 `--overwrite` is provided. These reference files are local artifacts and are not
 uploaded to R2.
+
+Chatterbox Kokoro-derived reference clips are generated with:
+
+```bash
+python pipeline/scripts/openshelf-pipeline.py voices bootstrap-chatterbox
+```
+
+The script writes one WAV per Kokoro preset under `pipeline/voices/chatterbox/`.
+Curated human/public-domain Chatterbox profiles may be added separately through
+`pipeline/voices/chatterbox/profiles.json`; the adapter only includes those
+profiles when the referenced local WAV exists.
 
 F5-TTS synthesis uses the official `f5_tts.api.F5TTS` Python API lazily at the
 first synthesis call. `F5TTSAdapter.synthesize(...)` passes the selected

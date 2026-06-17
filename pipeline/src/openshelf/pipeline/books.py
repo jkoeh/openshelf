@@ -196,6 +196,8 @@ def convert_book(epub_path: str, source_name: str, args: argparse.Namespace) -> 
         cmd.append("--dry-run")
     if getattr(args, "resume", False):
         cmd.append("--resume")
+    if getattr(args, "new_voice_direction", False):
+        cmd.append("--new-voice-direction")
     if args.force:
         cmd.append("--force")
     cmd += ["--log-dir", args.log_dir]
@@ -355,6 +357,7 @@ def reprocess_book(args: argparse.Namespace, parser: argparse.ArgumentParser | N
         build_id=args.build_id,
         resume=False,
         force=True,
+        new_voice_direction=args.new_voice_direction,
         delay=args.delay,
         download_dir=args.download_dir,
         log_dir=args.log_dir,
@@ -391,7 +394,7 @@ def build_process_command(
     _append_optional(cmd, "--chapters", getattr(args, "chapters", None))
     _append_optional(cmd, "--build-id", getattr(args, "build_id", None))
 
-    for flag in ("dry_run", "keep_wav", "upload", "resume", "force"):
+    for flag in ("dry_run", "keep_wav", "upload", "resume", "force", "new_voice_direction"):
         if getattr(args, flag, False):
             cmd.append(f"--{flag.replace('_', '-')}")
     if skip_preflight:
@@ -479,6 +482,11 @@ def _add_processing_options(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--chapters", default=None, help="Chapter number/ranges, e.g. 2 or 2,4-5")
     parser.add_argument("--keep-wav", action="store_true")
+    parser.add_argument(
+        "--new-voice-direction",
+        action="store_true",
+        help="Force fresh per-chapter voice direction instead of reusing local cached direction",
+    )
     parser.add_argument("--build-id", default=None)
     parser.add_argument("--delay", type=float, default=2)
     parser.add_argument("--download-dir", default=DEFAULT_DOWNLOAD_DIR)

@@ -26,6 +26,8 @@ from openshelf.pipeline.dag.cli import (  # noqa: E402
     sync_chapter,
     synth_chapter,
     upload_build,
+    _direction_cache_hit_message,
+    _load_or_copy_chapter_direction,
     _resolve_tts_device,
 )
 from openshelf.pipeline.text_chunker import (  # noqa: E402
@@ -480,6 +482,181 @@ class TestDagCliDirect(unittest.TestCase):
                 direct_chapter(build_dir, 1, director=_StubDirector())
 
 
+class TestDagCliDirectionCache(unittest.TestCase):
+    def _write_direction(
+        self,
+        build_dir: str,
+        *,
+        rendition: str,
+        build_id: str,
+        engine: str,
+        text: str = "hello world",
+    ) -> str:
+        from openshelf.pipeline.tts_engine import DirectedSegment, VoiceSpec
+        from openshelf.pipeline.voice_director import (
+            build_direction_chapter,
+            build_voice_direction_payload,
+        )
+
+        os.makedirs(build_dir, exist_ok=True)
+        chapter = build_direction_chapter(
+            1,
+            "Chapter One",
+            [text],
+            [[
+                DirectedSegment(
+                    text=text,
+                    voice=VoiceSpec(
+                        id="chatterbox-librivox-old",
+                        ref_audio_path="old.wav",
+                        ref_text="Old reference.",
+                    ),
+                    speaker="narrator",
+                    original_text=text,
+                    emotion="anxious",
+                    engine_controls={
+                        "intensity": 0.7,
+                        "exaggeration": 0.696,
+                        "cfg_weight": 0.402,
+                    },
+                )
+            ]],
+        )
+        path = os.path.join(build_dir, "chapter-01.voice_direction.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(
+                build_voice_direction_payload(
+                    rendition,
+                    build_id,
+                    engine,
+                    "solo",
+                    [chapter],
+                ),
+                f,
+            )
+        return path
+
+    def test_reuses_same_engine_chapter_direction_and_remaps_narrator_voice(self):
+        from openshelf.pipeline.tts_engine import VoiceSpec
+
+        with tempfile.TemporaryDirectory() as tmp:
+            book_dir = os.path.join(tmp, "charlotte-bronte", "jane-eyre")
+            old_build = os.path.join(
+                book_dir,
+                "audio",
+                "chatterbox-librivox-old",
+                "builds",
+                "aaaaaaaaaaaaaaaa",
+            )
+            self._write_direction(
+                old_build,
+                rendition="chatterbox-librivox-old",
+                build_id="aaaaaaaaaaaaaaaa",
+                engine="chatterbox",
+            )
+            new_build = os.path.join(
+                book_dir,
+                "audio",
+                "chatterbox-af-heart",
+                "builds",
+                "bbbbbbbbbbbbbbbb",
+            )
+
+            result = _load_or_copy_chapter_direction(
+                book_dir=book_dir,
+                build_dir=new_build,
+                chapter_number=1,
+                engine_name="chatterbox",
+                cast_mode="solo",
+                chunk_texts=["hello world"],
+                rendition="chatterbox-af-heart",
+                build_id="bbbbbbbbbbbbbbbb",
+                narrator_voice=VoiceSpec(
+                    id="chatterbox-af_heart",
+                    ref_audio_path="af_heart.wav",
+                    ref_text="Heart reference.",
+                ),
+            )
+
+            self.assertIsNotNone(result)
+            payload, source = result
+            copied_path = os.path.join(new_build, "chapter-01.voice_direction.json")
+            self.assertTrue(os.path.exists(copied_path))
+            self.assertTrue(source.endswith("chapter-01.voice_direction.json"))
+            self.assertEqual(payload["rendition"], "chatterbox-af-heart")
+            self.assertEqual(payload["build"], "bbbbbbbbbbbbbbbb")
+            segment = payload["chapters"][0]["chunks"][0]["segments"][0]
+            self.assertEqual(segment["emotion"], "anxious")
+            self.assertEqual(segment["engine_controls"]["intensity"], 0.7)
+            self.assertEqual(segment["voice"]["id"], "chatterbox-af_heart")
+            self.assertEqual(segment["voice"]["ref_audio_path"], "af_heart.wav")
+
+            with open(copied_path, encoding="utf-8") as f:
+                copied = json.load(f)
+            self.assertEqual(copied, payload)
+
+    def test_direction_cache_rejects_mismatched_chunk_text(self):
+        from openshelf.pipeline.tts_engine import VoiceSpec
+
+        with tempfile.TemporaryDirectory() as tmp:
+            book_dir = os.path.join(tmp, "charlotte-bronte", "jane-eyre")
+            old_build = os.path.join(
+                book_dir,
+                "audio",
+                "chatterbox-af-heart",
+                "builds",
+                "aaaaaaaaaaaaaaaa",
+            )
+            self._write_direction(
+                old_build,
+                rendition="chatterbox-af-heart",
+                build_id="aaaaaaaaaaaaaaaa",
+                engine="chatterbox",
+                text="old text",
+            )
+            new_build = os.path.join(
+                book_dir,
+                "audio",
+                "chatterbox-af-heart",
+                "builds",
+                "bbbbbbbbbbbbbbbb",
+            )
+
+            result = _load_or_copy_chapter_direction(
+                book_dir=book_dir,
+                build_dir=new_build,
+                chapter_number=1,
+                engine_name="chatterbox",
+                cast_mode="solo",
+                chunk_texts=["new text"],
+                rendition="chatterbox-af-heart",
+                build_id="bbbbbbbbbbbbbbbb",
+                narrator_voice=VoiceSpec(id="chatterbox-af_heart"),
+            )
+
+            self.assertIsNone(result)
+            self.assertFalse(os.path.exists(
+                os.path.join(new_build, "chapter-01.voice_direction.json")
+            ))
+
+    def test_direction_cache_hit_message_includes_copy_source_and_target(self):
+        source = os.path.join("old", "chapter-01.voice_direction.json")
+        target = os.path.join("new", "chapter-01.voice_direction.json")
+
+        self.assertEqual(
+            _direction_cache_hit_message(source, target),
+            f"voice direction cache hit: copied from {source} -> {target}",
+        )
+
+    def test_direction_cache_hit_message_identifies_existing_target(self):
+        target = os.path.join("build", "chapter-01.voice_direction.json")
+
+        self.assertEqual(
+            _direction_cache_hit_message(target, target),
+            f"voice direction cache hit: existing {target}",
+        )
+
+
 class TestDagCliRegistry(unittest.TestCase):
     def _write_book_parse(self, tmp: str) -> str:
         path = os.path.join(tmp, "book_parse.json")
@@ -611,6 +788,7 @@ class TestDagCliRun(unittest.TestCase):
                 "--chapters",
                 "1",
                 "--upload",
+                "--new-voice-direction",
                 "--force",
             ])
 
@@ -624,6 +802,7 @@ class TestDagCliRun(unittest.TestCase):
         self.assertEqual(args.device, "cuda")
         self.assertEqual(args.chapters, "1")
         self.assertTrue(args.upload)
+        self.assertTrue(args.new_voice_direction)
         self.assertTrue(args.force)
 
     def test_run_book_passes_selected_device_to_engine_factory(self):

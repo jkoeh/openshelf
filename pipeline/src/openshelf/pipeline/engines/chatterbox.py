@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
+import json
 import os
 import re
 import time
 import warnings
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ from openshelf.config import PROJECT_ROOT, TTS_SAMPLE_RATE
 from openshelf.pipeline.engines.kokoro import (
     KOKORO_VOICE_POOL_DESCRIPTION,
     KOKORO_VOICES,
+    KokoroAdapter,
 )
 from openshelf.pipeline.tts_engine import (
     AnnotationPromptConfig,
@@ -49,6 +51,7 @@ DEFAULT_REF_TEXT = (
 DEFAULT_MAX_SYNTHESIS_CHARS = 320
 DEFAULT_SPLIT_PAUSE_MS = 80
 _SENTENCE_RE = re.compile(r".+?(?:[.!?][\"'\u201d\u2019)\]]*(?=\s+|$)|$)", re.DOTALL)
+PROFILES_FILENAME = "profiles.json"
 
 _BASE_CONTROLS = {"exaggeration": 0.5, "cfg_weight": 0.5}
 _EMOTION_TARGETS = {
@@ -62,6 +65,14 @@ _EMOTION_TARGETS = {
 }
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class BootstrapVoiceResult:
+    voice_id: str
+    kokoro_preset: str
+    path: str
+    status: str
 
 
 def _chatterbox_voice_id(kokoro_preset: str) -> str:
@@ -79,12 +90,16 @@ def _voice_pool_description() -> str:
     )
     for voice in sorted(KOKORO_VOICES, key=lambda item: len(_kokoro_preset(item)), reverse=True):
         preset = _kokoro_preset(voice)
-        description = description.replace(preset, _chatterbox_voice_id(preset))
+        description = re.sub(rf"\b{re.escape(preset)}\b", _chatterbox_voice_id(preset), description)
     return (
-        "Available Chatterbox reference voices bootstrapped from Kokoro presets. "
-        "Choose narrator_voice_id from these chatterbox-* IDs using the same "
-        "qualitative guidance as the matching Kokoro preset; Chatterbox will "
-        "clone the local reference clip for the selected ID.\n\n"
+        "Default to these Kokoro-derived chatterbox-* IDs for narrator "
+        "selection; they inherit the stable Kokoro narrator guidance. Choose "
+        "a curated human/public-domain profile only when it wins decisively "
+        "over the best Kokoro-derived candidate across multiple concrete axes "
+        "such as dominant POV gender, narrative distance, prose period or "
+        "genre, emotional register, or requested voice quality. Do not choose "
+        "curated merely because it is human/public-domain. "
+        "Chatterbox will clone the local reference clip for the selected ID.\n\n"
         f"{description}"
     )
 
@@ -95,6 +110,142 @@ def _clamp(value: float, low: float, high: float) -> float:
 
 def _interpolate(base: float, target: float, intensity: float) -> float:
     return base + (target - base) * intensity
+
+
+def _select_kokoro_voices(voice_ids: list[str] | None) -> list[VoiceSpec]:
+    if not voice_ids:
+        return list(KOKORO_VOICES)
+
+    by_id: dict[str, VoiceSpec] = {}
+    for voice in KOKORO_VOICES:
+        preset = _kokoro_preset(voice)
+        by_id[preset] = voice
+        by_id[_chatterbox_voice_id(preset)] = voice
+
+    selected: list[VoiceSpec] = []
+    unknown: list[str] = []
+    for voice_id in voice_ids:
+        voice = by_id.get(voice_id)
+        if voice is None:
+            unknown.append(voice_id)
+            continue
+        if voice not in selected:
+            selected.append(voice)
+
+    if unknown:
+        known = ", ".join(_kokoro_preset(voice) for voice in KOKORO_VOICES)
+        raise ValueError(f"Unknown Kokoro/Chatterbox voice id(s): {', '.join(unknown)}. Known: {known}")
+    return selected
+
+
+def _resolve_profile_audio_path(voice_dir: Path, value: Any) -> Path | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    path = Path(value.strip())
+    if not path.is_absolute():
+        path = voice_dir / path
+    return path
+
+
+def _load_curated_voice_profiles(voice_dir: Path) -> tuple[list[VoiceSpec], str]:
+    profile_path = voice_dir / PROFILES_FILENAME
+    if not profile_path.exists():
+        return [], ""
+
+    with profile_path.open("r", encoding="utf-8") as f:
+        raw = json.load(f)
+
+    profiles = raw.get("voices", raw) if isinstance(raw, dict) else raw
+    if not isinstance(profiles, list):
+        raise ValueError(f"Chatterbox profile file must contain a voices list: {profile_path}")
+
+    voices: list[VoiceSpec] = []
+    lines: list[str] = []
+    for item in profiles:
+        if not isinstance(item, dict):
+            continue
+        voice_id = str(item.get("id", "")).strip()
+        if not voice_id:
+            continue
+        ref_audio = _resolve_profile_audio_path(voice_dir, item.get("ref_audio_path"))
+        if ref_audio is None or not ref_audio.exists():
+            logger.warning("Skipping Chatterbox profile %s with missing ref_audio_path=%s", voice_id, ref_audio)
+            continue
+
+        ref_text = str(item.get("ref_text") or DEFAULT_REF_TEXT)
+        voices.append(VoiceSpec(
+            id=voice_id,
+            ref_audio_path=str(ref_audio),
+            ref_text=ref_text,
+        ))
+        description = str(item.get("description") or "curated local reference voice").strip()
+        source = str(item.get("source") or "").strip()
+        source_note = f" Source: {source}." if source else ""
+        lines.append(f"{voice_id}: {description}.{source_note}")
+
+    if not lines:
+        return voices, ""
+    return voices, (
+        "Curated Chatterbox reference voices from local WAV profiles. "
+        "Use these only when the profile is a decisive fit beyond the best "
+        "Kokoro-derived Chatterbox reference, not merely because it is "
+        "human/public-domain:\n"
+        + "\n".join(lines)
+    )
+
+
+def bootstrap_kokoro_reference_voices(
+    voices_dir: str | Path | None = None,
+    voice_ids: list[str] | None = None,
+    overwrite: bool = False,
+    dry_run: bool = False,
+    device: str | None = None,
+    kokoro_pipeline=None,
+) -> list[BootstrapVoiceResult]:
+    """Render local Chatterbox reference WAVs from Kokoro presets."""
+    base = Path(voices_dir) if voices_dir else PROJECT_ROOT / "pipeline" / "voices"
+    voice_dir = base / "chatterbox"
+    selected = _select_kokoro_voices(voice_ids)
+    results: list[BootstrapVoiceResult] = []
+
+    if not dry_run:
+        voice_dir.mkdir(parents=True, exist_ok=True)
+
+    kokoro = None
+    for kokoro_voice in selected:
+        preset = _kokoro_preset(kokoro_voice)
+        path = voice_dir / f"{preset}.wav"
+        voice_id = _chatterbox_voice_id(preset)
+
+        if path.exists() and not overwrite:
+            results.append(BootstrapVoiceResult(voice_id, preset, str(path), "exists"))
+            continue
+
+        if dry_run:
+            status = "would_overwrite" if path.exists() else "would_write"
+            results.append(BootstrapVoiceResult(voice_id, preset, str(path), status))
+            continue
+
+        if kokoro is None:
+            kokoro = KokoroAdapter(pipeline=kokoro_pipeline, device=device)
+
+        segment = DirectedSegment(
+            text=DEFAULT_REF_TEXT,
+            voice=VoiceSpec(id=preset, preset_name=preset),
+            speaker="narrator",
+            original_text=DEFAULT_REF_TEXT,
+        )
+        result = kokoro.synthesize(segment)
+        if result.audio.size == 0:
+            raise RuntimeError(f"Kokoro returned empty audio for {preset}")
+
+        import soundfile as sf
+
+        sf.write(str(path), result.audio, result.sample_rate or TTS_SAMPLE_RATE)
+        status = "overwritten" if overwrite else "written"
+        results.append(BootstrapVoiceResult(voice_id, preset, str(path), status))
+
+    return results
 
 
 class ChatterboxAdapter:
@@ -122,8 +273,13 @@ class ChatterboxAdapter:
         self._prepared_ref_audio: str | None = None
 
     def registry_prompt_config(self) -> RegistryPromptConfig:
+        curated_description = _load_curated_voice_profiles(self.voice_dir)[1]
+        if curated_description:
+            voice_pool_description = f"{_voice_pool_description()}\n\n{curated_description}"
+        else:
+            voice_pool_description = _voice_pool_description()
         return RegistryPromptConfig(
-            voice_pool_description=_voice_pool_description(),
+            voice_pool_description=voice_pool_description,
             schema_extra_fields={"requires_ref_audio": True},
         )
 
@@ -155,14 +311,25 @@ class ChatterboxAdapter:
         )
 
     def available_voices(self) -> list[VoiceSpec]:
+        curated, _description = _load_curated_voice_profiles(self.voice_dir)
         voices: list[VoiceSpec] = []
+        seen: set[str] = set()
         for kokoro_voice in KOKORO_VOICES:
             preset = _kokoro_preset(kokoro_voice)
+            voice_id = _chatterbox_voice_id(preset)
+            if voice_id in seen:
+                continue
             voices.append(VoiceSpec(
-                id=_chatterbox_voice_id(preset),
+                id=voice_id,
                 ref_audio_path=str(self.voice_dir / f"{preset}.wav"),
                 ref_text=DEFAULT_REF_TEXT,
             ))
+            seen.add(voice_id)
+        for voice in curated:
+            if voice.id in seen:
+                continue
+            voices.append(voice)
+            seen.add(voice.id)
         return voices
 
     def _runtime(self):

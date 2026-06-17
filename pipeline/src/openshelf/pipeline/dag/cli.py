@@ -9,8 +9,9 @@ import logging
 import os
 import re
 import time
+from dataclasses import asdict
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 from openshelf.pipeline.epub_parser import (
     build_book_parse_artifact,
@@ -114,6 +115,181 @@ def _direction_speed_summary(chapter_payload: dict) -> dict:
         "narrator_above_1x": narrator_above_1x,
         "max_speed": max_speed,
     }
+
+
+def _chapter_direction_payload_matches(
+    payload: dict,
+    *,
+    chapter_number: int,
+    engine_name: str,
+    cast_mode: str,
+    chunk_texts: list[str],
+) -> bool:
+    if payload.get("engine") != engine_name:
+        return False
+    if payload.get("cast_mode") != cast_mode:
+        return False
+    chapters = payload.get("chapters", [])
+    if len(chapters) != 1:
+        return False
+    chapter = chapters[0]
+    if int(chapter.get("number", -1)) != chapter_number:
+        return False
+    chunks = chapter.get("chunks", [])
+    if len(chunks) != len(chunk_texts):
+        return False
+    return all((chunk.get("text") or "") == text for chunk, text in zip(chunks, chunk_texts))
+
+
+def _narrator_voice_dict(narrator_voice: Any) -> dict:
+    if isinstance(narrator_voice, dict):
+        return dict(narrator_voice)
+    return asdict(narrator_voice)
+
+
+def _remap_direction_payload_for_build(
+    payload: dict,
+    *,
+    rendition: str,
+    build_id: str,
+    engine_name: str,
+    cast_mode: str,
+    narrator_voice: Any,
+) -> dict:
+    remapped = json.loads(json.dumps(payload))
+    remapped["rendition"] = rendition
+    remapped["build"] = build_id
+    remapped["engine"] = engine_name
+    remapped["cast_mode"] = cast_mode
+
+    voice = _narrator_voice_dict(narrator_voice)
+    for chapter in remapped.get("chapters", []):
+        for chunk in chapter.get("chunks", []):
+            for segment in chunk.get("segments", []):
+                if (
+                    cast_mode == "solo"
+                    or segment.get("speaker") == "narrator"
+                    or str(segment.get("voice_policy", "")).startswith("narrator")
+                ):
+                    segment["voice"] = voice
+    return remapped
+
+
+def _find_cached_chapter_direction(
+    *,
+    book_dir: str,
+    build_dir: str,
+    chapter_number: int,
+    engine_name: str,
+    cast_mode: str,
+    chunk_texts: list[str],
+) -> tuple[str, dict] | None:
+    current_path = Path(_chapter_direction_path(build_dir, chapter_number)).resolve()
+    pattern = os.path.join(
+        book_dir,
+        "audio",
+        "*",
+        "builds",
+        "*",
+        f"chapter-{chapter_number:02d}.voice_direction.json",
+    )
+    candidates = sorted(
+        glob.glob(pattern),
+        key=lambda path: os.path.getmtime(path),
+        reverse=True,
+    )
+    for candidate in candidates:
+        candidate_path = Path(candidate).resolve()
+        if candidate_path == current_path:
+            continue
+        try:
+            payload = _read_json(candidate)
+        except (OSError, json.JSONDecodeError):
+            logger.warning("Skipping unreadable cached voice direction: %s", candidate)
+            continue
+        if _chapter_direction_payload_matches(
+            payload,
+            chapter_number=chapter_number,
+            engine_name=engine_name,
+            cast_mode=cast_mode,
+            chunk_texts=chunk_texts,
+        ):
+            return candidate, payload
+    return None
+
+
+def _load_or_copy_chapter_direction(
+    *,
+    book_dir: str,
+    build_dir: str,
+    chapter_number: int,
+    engine_name: str,
+    cast_mode: str,
+    chunk_texts: list[str],
+    rendition: str,
+    build_id: str,
+    narrator_voice: Any,
+) -> tuple[dict, str] | None:
+    direction_path = _chapter_direction_path(build_dir, chapter_number)
+    if os.path.exists(direction_path):
+        payload = _read_json(direction_path)
+        if _chapter_direction_payload_matches(
+            payload,
+            chapter_number=chapter_number,
+            engine_name=engine_name,
+            cast_mode=cast_mode,
+            chunk_texts=chunk_texts,
+        ):
+            remapped = _remap_direction_payload_for_build(
+                payload,
+                rendition=rendition,
+                build_id=build_id,
+                engine_name=engine_name,
+                cast_mode=cast_mode,
+                narrator_voice=narrator_voice,
+            )
+            if remapped != payload:
+                _write_json(direction_path, remapped)
+            return remapped, direction_path
+        logger.warning(
+            "Existing chapter direction is incompatible and will not be reused: %s",
+            direction_path,
+        )
+
+    cached = _find_cached_chapter_direction(
+        book_dir=book_dir,
+        build_dir=build_dir,
+        chapter_number=chapter_number,
+        engine_name=engine_name,
+        cast_mode=cast_mode,
+        chunk_texts=chunk_texts,
+    )
+    if cached is None:
+        return None
+
+    source_path, payload = cached
+    remapped = _remap_direction_payload_for_build(
+        payload,
+        rendition=rendition,
+        build_id=build_id,
+        engine_name=engine_name,
+        cast_mode=cast_mode,
+        narrator_voice=narrator_voice,
+    )
+    _write_json(direction_path, remapped)
+    logger.info(
+        "Copied cached chapter %d direction from %s to %s",
+        chapter_number,
+        source_path,
+        direction_path,
+    )
+    return remapped, source_path
+
+
+def _direction_cache_hit_message(source_path: str, target_path: str) -> str:
+    if Path(source_path).resolve() == Path(target_path).resolve():
+        return f"voice direction cache hit: existing {target_path}"
+    return f"voice direction cache hit: copied from {source_path} -> {target_path}"
 
 
 def _log_torch_device_diagnostics(selected_device: str) -> None:
@@ -892,12 +1068,13 @@ def run_book(args) -> dict:
     print(f"Log file: {log_path}")
     logger.info(
         "dag run started epub=%s source=%s engine=%s rendition=%s "
-        "performance_direction=%s upload=%s dry_run=%s",
+        "performance_direction=%s new_voice_direction=%s upload=%s dry_run=%s",
         epub_path,
         args.source,
         args.engine,
         getattr(args, "rendition", None),
         args.performance_direction,
+        getattr(args, "new_voice_direction", False),
         getattr(args, "upload", False),
         getattr(args, "dry_run", False),
     )
@@ -1036,6 +1213,7 @@ def run_book(args) -> dict:
         performance_direction_mode=args.performance_direction,
         language=TTS_LANGUAGE,
         chapters=selected_chapter_numbers,
+        new_voice_direction=getattr(args, "new_voice_direction", False),
     )
     run_context_path = build_run_context_path(build_dir)
     prepare_run_context(
@@ -1147,57 +1325,92 @@ def run_book(args) -> dict:
         chunks = ch_data["chunks"]
 
         print(f"  [{ch_num:>2}/{len(chapters)}] {ch_title} ({len(chunks)} chunks)")
-        logger.info(
-            "Chapter %d/%d direction started: %s (%d chunks)",
-            ch_num,
-            len(chapters),
-            ch_title,
-            len(chunks),
-        )
+        chunk_texts = [c.text for c in chunks]
+        chapter_direction_path = _chapter_direction_path(build_dir, ch_num)
+        direction_payload = None
+        direction_source = None
 
-        with Heartbeat(logger, f"Directing chapter {ch_num}") as heartbeat:
-            heartbeat.update(f"Attributing speakers for chapter {ch_num} ({len(chunks)} chunks)")
-            windows = build_chunk_windows([c.text for c in chunks])
-            registry, directed_chunks = director.direct_chapter(ch_title, windows, registry)
-            heartbeat.update(f"Preparing directed chunk metadata for chapter {ch_num}")
-            direction_chapter = build_direction_chapter(
-                ch_data["number"],
-                ch_data["title"],
-                [c.text for c in chunks],
-                directed_chunks,
-                fallback_used=director.last_chapter_fallback_used,
-                fallback_error=director.last_chapter_error,
+        if getattr(args, "new_voice_direction", False):
+            cache_message = (
+                "voice direction cache disabled by --new-voice-direction; "
+                "generating fresh direction"
             )
-            voice_direction_payload["chapters"].append(direction_chapter)
-            chapter_direction_path = _chapter_direction_path(build_dir, ch_num)
-            _write_json(
-                chapter_direction_path,
-                build_voice_direction_payload(
+            print(f"    {cache_message}")
+            logger.info("Chapter %d %s", ch_num, cache_message)
+        else:
+            cached = _load_or_copy_chapter_direction(
+                book_dir=book_dir,
+                build_dir=build_dir,
+                chapter_number=ch_num,
+                engine_name=engine.name,
+                cast_mode=args.cast_mode,
+                chunk_texts=chunk_texts,
+                rendition=rendition,
+                build_id=build_id,
+                narrator_voice=narrator_voice,
+            )
+            if cached is not None:
+                direction_payload, direction_source = cached
+                cache_message = _direction_cache_hit_message(
+                    direction_source,
+                    chapter_direction_path,
+                )
+                print(f"    {cache_message}")
+                logger.info("Chapter %d %s", ch_num, cache_message)
+            else:
+                cache_message = "voice direction cache miss; generating fresh direction"
+                print(f"    {cache_message}")
+                logger.info("Chapter %d %s", ch_num, cache_message)
+
+        if direction_payload is None:
+            logger.info(
+                "Chapter %d/%d direction started: %s (%d chunks)",
+                ch_num,
+                len(chapters),
+                ch_title,
+                len(chunks),
+            )
+            with Heartbeat(logger, f"Directing chapter {ch_num}") as heartbeat:
+                heartbeat.update(f"Attributing speakers for chapter {ch_num} ({len(chunks)} chunks)")
+                windows = build_chunk_windows(chunk_texts)
+                registry, directed_chunks = director.direct_chapter(ch_title, windows, registry)
+                heartbeat.update(f"Preparing directed chunk metadata for chapter {ch_num}")
+                direction_chapter = build_direction_chapter(
+                    ch_data["number"],
+                    ch_data["title"],
+                    chunk_texts,
+                    directed_chunks,
+                    fallback_used=director.last_chapter_fallback_used,
+                    fallback_error=director.last_chapter_error,
+                )
+                direction_payload = build_voice_direction_payload(
                     rendition,
                     build_id,
                     engine.name,
                     args.cast_mode,
                     [direction_chapter],
-                ),
-            )
-            speed_summary = _direction_speed_summary(direction_chapter)
-            logger.info("Chapter %d direction snapshot written: %s", ch_num, chapter_direction_path)
-            logger.info(
-                "Chapter %d direction speed summary segments=%d speeds=%s "
-                "above_1x=%d narrator_above_1x=%d max_speed=%.2f",
-                ch_num,
-                speed_summary["segments"],
-                speed_summary["speed_counts"],
-                speed_summary["above_1x"],
-                speed_summary["narrator_above_1x"],
-                speed_summary["max_speed"],
-            )
-        logger.info("Chapter %d direction complete", ch_num)
+                )
+                _write_json(chapter_direction_path, direction_payload)
+                logger.info("Chapter %d direction snapshot written: %s", ch_num, chapter_direction_path)
+            logger.info("Chapter %d direction complete", ch_num)
+
+        direction_chapter = direction_payload["chapters"][0]
+        voice_direction_payload["chapters"].append(direction_chapter)
+        speed_summary = _direction_speed_summary(direction_chapter)
+        logger.info(
+            "Chapter %d direction speed summary segments=%d speeds=%s "
+            "above_1x=%d narrator_above_1x=%d max_speed=%.2f",
+            ch_num,
+            speed_summary["segments"],
+            speed_summary["speed_counts"],
+            speed_summary["above_1x"],
+            speed_summary["narrator_above_1x"],
+            speed_summary["max_speed"],
+        )
 
         directed_chunks_for_synthesis = directed_chunks_from_chapter_direction_artifact(
             chapter_direction_path
         )
-        chunk_texts = [c.text for c in chunks]
         ends_paragraph = [
             (ci == len(chunks) - 1) or (chunks[ci].para_end != chunks[ci + 1].para_start)
             for ci in range(len(chunks))
@@ -1383,6 +1596,11 @@ def add_run_arguments(parser: argparse.ArgumentParser, *, positional_epub: bool 
     parser.add_argument("--dry-run", action="store_true", help="Parse and chunk only, no audio")
     parser.add_argument("--keep-wav", action="store_true", help="Keep WAV files after encoding")
     parser.add_argument("--upload", action="store_true", help="Upload to Cloudflare R2 after conversion")
+    parser.add_argument(
+        "--new-voice-direction",
+        action="store_true",
+        help="Force fresh per-chapter voice direction instead of reusing local cached direction",
+    )
     parser.add_argument("--log-dir", default="logs", help="Local log directory (default: logs/)")
     parser.add_argument("--build-id", default=None, help="Target 16-hex build ID for resume/force runs")
     parser.add_argument("--resume", action="store_true", help="Resume an existing build only if run.json matches")

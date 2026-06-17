@@ -293,6 +293,18 @@ openshelf-pipeline dag run \
   --upload
 ```
 
+By default, `run` reuses local per-chapter direction when possible. For each
+selected chapter, before calling the chapter-direction LLM, it searches sibling
+local build directories for a `chapter-NN.voice_direction.json` from the same
+author/title, engine, and cast mode with matching chunk text. The cached
+build's voice/rendition do not need to match: the copied chapter artifact is
+remapped to the current build/rendition and current narrator voice before
+synthesis, so a reused Chatterbox direction plan can still render with a newly
+selected Chatterbox reference voice. Pass `--new-voice-direction` to force
+fresh chapter-direction LLM output for every chapter in the run.
+The run log records an explicit per-chapter direction-cache status: hit, miss,
+or disabled by `--new-voice-direction`.
+
 The equivalent manual stage sequence is:
 
 ```bash
@@ -314,7 +326,7 @@ sync is produced by `synth`.
 `run` accepts `--epub`, `--output`, `--source`, `--engine`, `--voice`,
 `--rendition`, `--cast-mode`, `--performance-direction`, `--device`,
 `--chapters`, `--dry-run`, `--keep-wav`, `--upload`, `--log-dir`, `--build-id`,
-`--resume`, and `--force`.
+`--resume`, `--force`, and `--new-voice-direction`.
 For engines with a device-aware adapter, `run --device cuda` passes `cuda` into
 the engine constructor before lazy model load; it also uses the same selected
 device for WhisperX forced alignment. If `--device` is omitted, `run` resolves
