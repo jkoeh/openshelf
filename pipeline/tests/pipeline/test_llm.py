@@ -18,6 +18,7 @@ from openshelf.pipeline.llm import (  # noqa: E402
     FixtureMissing,
     LLMClient,
     LLMError,
+    OllamaLLM,
     OpenAILLM,
     ReplayLLM,
     StubExhausted,
@@ -137,6 +138,83 @@ class TestOpenAILLM(unittest.TestCase):
 
     def test_create_llm_supports_openai_provider(self):
         self.assertIsInstance(create_llm("openai"), OpenAILLM)
+
+
+class TestOllamaLLM(unittest.TestCase):
+    def test_calls_ollama_chat_with_json_schema(self):
+        calls = []
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return json.dumps({
+                    "message": {
+                        "content": '{"ok": true}',
+                    },
+                }).encode("utf-8")
+
+        def fake_urlopen(request, timeout):
+            calls.append((request, timeout))
+            return FakeResponse()
+
+        with patch("urllib.request.urlopen", fake_urlopen):
+            llm = OllamaLLM(
+                model="local-test",
+                base_url="http://127.0.0.1:11434/",
+                timeout_seconds=7,
+            )
+            result = llm.complete_json(
+                system="system prompt",
+                user="user prompt",
+                schema={
+                    "type": "object",
+                    "x-openai-strict": True,
+                    "properties": {"ok": {"type": "boolean"}},
+                },
+            )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(calls[0][1], 7)
+        self.assertEqual(calls[0][0].full_url, "http://127.0.0.1:11434/api/chat")
+        body = json.loads(calls[0][0].data.decode("utf-8"))
+        self.assertEqual(body["model"], "local-test")
+        self.assertFalse(body["stream"])
+        self.assertEqual(body["messages"][0]["role"], "system")
+        self.assertEqual(body["messages"][1]["role"], "user")
+        self.assertNotIn("x-openai-strict", json.dumps(body["format"]))
+
+    def test_parses_thinking_and_fenced_json(self):
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return json.dumps({
+                    "message": {
+                        "content": '<think>scratch</think>\n```json\n{"ok": true}\n```',
+                    },
+                }).encode("utf-8")
+
+        with patch("urllib.request.urlopen", lambda request, timeout: FakeResponse()):
+            result = OllamaLLM(model="local-test").complete_json(
+                system="s",
+                user="u",
+                schema={"type": "object"},
+            )
+
+        self.assertEqual(result, {"ok": True})
+
+    def test_create_llm_supports_ollama_provider(self):
+        self.assertIsInstance(create_llm("ollama"), OllamaLLM)
+        self.assertIsInstance(create_llm("local"), OllamaLLM)
 
 
 class TestAlignerProtocol(unittest.TestCase):

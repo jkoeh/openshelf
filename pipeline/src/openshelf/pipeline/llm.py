@@ -9,6 +9,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -16,6 +19,9 @@ from openshelf.config import (
     ANTHROPIC_API_KEY,
     ANTHROPIC_MODEL,
     LLM_PROVIDER,
+    OLLAMA_BASE_URL,
+    OLLAMA_MODEL,
+    OLLAMA_TIMEOUT_SECONDS,
     OPENAI_API_KEY,
     OPENAI_MAX_OUTPUT_TOKENS,
     OPENAI_MODEL,
@@ -183,6 +189,64 @@ class OpenAILLM:
             raise LLMError("OpenAI response was not valid JSON") from e
 
 
+class OllamaLLM:
+    name = "ollama"
+
+    def __init__(
+        self,
+        model: str | None = None,
+        base_url: str | None = None,
+        timeout_seconds: float | None = None,
+    ):
+        self.model = model or OLLAMA_MODEL
+        self.base_url = (base_url or OLLAMA_BASE_URL).rstrip("/")
+        self.timeout_seconds = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else OLLAMA_TIMEOUT_SECONDS
+        )
+
+    def complete_json(self, *, system: str, user: str, schema: dict) -> dict:
+        api_schema = _strip_schema_metadata(schema)
+        prompt = (
+            f"{user}\n\nReturn JSON matching this schema only:\n"
+            f"{json.dumps(api_schema, sort_keys=True)}"
+        )
+        payload = {
+            "model": self.model,
+            "stream": False,
+            "format": api_schema or "json",
+            "options": {"temperature": 0},
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+        }
+        body = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.base_url}/api/chat",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                raw = response.read().decode("utf-8")
+        except urllib.error.URLError as e:
+            raise LLMError(f"Ollama request failed: {e}") from e
+
+        try:
+            response_payload = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise LLMError("Ollama response envelope was not valid JSON") from e
+
+        message = response_payload.get("message", {})
+        text = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(text, str) or not text.strip():
+            raise LLMError("Ollama response did not include message.content")
+        return _parse_json_response_text(text, provider="Ollama")
+
+
 def _response_text(response: object) -> str:
     """Extract text from a Responses API object without depending on SDK internals."""
     parts: list[str] = []
@@ -210,12 +274,32 @@ def _strip_schema_metadata(schema: dict) -> dict:
     return strip(schema)
 
 
+def _parse_json_response_text(text: str, *, provider: str) -> dict:
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE)
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+        if not match:
+            raise LLMError(f"{provider} response was not valid JSON")
+        try:
+            parsed = json.loads(match.group(0))
+        except json.JSONDecodeError as e:
+            raise LLMError(f"{provider} response was not valid JSON") from e
+    if not isinstance(parsed, dict):
+        raise LLMError(f"{provider} response JSON was not an object")
+    return parsed
+
+
 def create_llm(provider: str | None = None) -> LLMClient:
     selected = (provider or LLM_PROVIDER or os.getenv("LLM_PROVIDER", "anthropic")).lower()
     if selected == "anthropic":
         return AnthropicLLM()
     if selected == "openai":
         return OpenAILLM()
+    if selected in {"ollama", "local"}:
+        return OllamaLLM()
     if selected == "replay":
         fixtures = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "llm"
         return ReplayLLM(fixtures)

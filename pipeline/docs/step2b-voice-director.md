@@ -400,9 +400,10 @@ Production uses the provider selected by `LLM_PROVIDER`, loaded from `pipeline/.
 
 - `LLM_PROVIDER=anthropic`: uses `AnthropicLLM` with `ANTHROPIC_API_KEY`; model comes from `ANTHROPIC_MODEL`, then `LLM_MODEL`, then the adapter default.
 - `LLM_PROVIDER=openai`: uses `OpenAILLM` with `OPENAI_API_KEY`; model comes from `OPENAI_MODEL`, then `LLM_MODEL`, then `gpt-5-nano`.
+- `LLM_PROVIDER=ollama`: uses `OllamaLLM` against a local Ollama-compatible HTTP server. The base URL comes from `OLLAMA_BASE_URL` and defaults to `http://127.0.0.1:11434`; the model comes from `OLLAMA_MODEL`, then `LLM_MODEL`, then `llama3.1`. The adapter sends the same JSON schema through Ollama's native chat `format` field and returns parsed JSON through the shared protocol.
 - `LLM_PROVIDER=replay`: uses local JSON fixtures and never calls the network.
 
-The OpenAI adapter uses the Responses API with a `json_schema` text format so registry, span, and performance-direction calls still return parsed JSON through the same `LLMClient.complete_json(...)` protocol. Provider adapters must not leak provider-specific response objects past `llm.py`.
+The OpenAI adapter uses the Responses API with a `json_schema` text format so registry, span, and performance-direction calls still return parsed JSON through the same `LLMClient.complete_json(...)` protocol. The Ollama adapter uses the local server's native JSON-schema chat format and then parses the assistant message content. Provider adapters must not leak provider-specific response objects past `llm.py`.
 
 Offline tests use:
 
