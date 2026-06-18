@@ -46,6 +46,11 @@ def audio_key(author: str, title: str, rendition: str, build: str, chapter_numbe
     return f"{build_prefix(author, title, rendition, build)}/chapter-{chapter_number:02d}.m4a"
 
 
+def synthesis_units_key(author: str, title: str, rendition: str, build: str, chapter_number: int) -> str:
+    """The private seam/unit audit for one chapter under a specific build."""
+    return f"{build_prefix(author, title, rendition, build)}/chapter-{chapter_number:02d}.synthesis_units.json"
+
+
 def chapter_data_key(author: str, title: str, rendition: str, build: str) -> str:
     """The per-chunk text + word timestamps JSON for one (rendition, build)."""
     return f"{build_prefix(author, title, rendition, build)}/chapter_data.json"

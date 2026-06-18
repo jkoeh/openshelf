@@ -55,6 +55,11 @@ def _make_direction_artifacts(tmp_dir: str) -> tuple[str, str]:
     return character_registry_path, voice_direction_path
 
 
+def _make_synthesis_units(audio_dir: str, n_chapters: int = 1) -> None:
+    for i in range(1, n_chapters + 1):
+        open(os.path.join(audio_dir, f"chapter-{i:02d}.synthesis_units.json"), "w").close()
+
+
 def _make_run_context(tmp_dir: str) -> str:
     run_context_path = os.path.join(tmp_dir, "run.json")
     open(run_context_path, "w").close()
@@ -166,6 +171,26 @@ class TestUploadRenditionBuildKeys(unittest.TestCase):
         keys = [c[0][2] for c in client.upload_file.call_args_list]
         self.assertIn(
             "books/kafka/the-trial/audio/kokoro-af-heart/builds/2a4f9c1/chapter_data.json",
+            keys,
+        )
+
+    @patch("openshelf.pipeline.r2.key_exists", return_value=False)
+    def test_synthesis_units_keys_under_build_prefix_when_present(self, _exists):
+        client = MagicMock()
+        with tempfile.TemporaryDirectory() as tmp:
+            audio_dir, cd, rm = _make_build_dir(tmp, n_chapters=2)
+            _make_synthesis_units(audio_dir, n_chapters=2)
+            upload_rendition_build(
+                client, BUCKET, AUTHOR, TITLE, RENDITION, BUILD,
+                audio_dir, cd, rm,
+            )
+        keys = [c[0][2] for c in client.upload_file.call_args_list]
+        self.assertIn(
+            "books/kafka/the-trial/audio/kokoro-af-heart/builds/2a4f9c1/chapter-01.synthesis_units.json",
+            keys,
+        )
+        self.assertIn(
+            "books/kafka/the-trial/audio/kokoro-af-heart/builds/2a4f9c1/chapter-02.synthesis_units.json",
             keys,
         )
 

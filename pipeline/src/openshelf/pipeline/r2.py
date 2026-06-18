@@ -6,8 +6,8 @@ the single-gate idempotency check, and the per-uploader force semantics.
 
 Key invariants enforced here:
 
-- Per-build artifacts (audio, chapter_data, character_registry,
-  voice_direction, rendition-manifest) all live
+- Per-build artifacts (audio, synthesis unit audits, chapter_data,
+  character_registry, voice_direction, rendition-manifest) all live
   under the same `audio/{rendition}/builds/{build}/` prefix and are written
   in a single call to `upload_rendition_build`. The rendition-manifest is
   always uploaded last so its presence on R2 signals the build is complete.
@@ -131,7 +131,31 @@ def upload_rendition_build(
         logger.info("Uploaded: %s", key)
         uploaded.append(key)
 
-    # 2. chapter_data.json.
+    # 2. Private synthesis-unit seam audits, when present.
+    for filename in sorted(f for f in os.listdir(audio_dir) if f.endswith(".synthesis_units.json")):
+        chapter_number = int(
+            filename.removeprefix("chapter-").removesuffix(".synthesis_units.json")
+        )
+        key = r2_keys.synthesis_units_key(
+            author_slug,
+            title_slug,
+            rendition,
+            build_id,
+            chapter_number,
+        )
+        client.upload_file(
+            os.path.join(audio_dir, filename),
+            bucket,
+            key,
+            ExtraArgs={
+                "ContentType": "application/json",
+                "CacheControl": R2_CACHE_CONTROL_IMMUTABLE,
+            },
+        )
+        logger.info("Uploaded: %s", key)
+        uploaded.append(key)
+
+    # 3. chapter_data.json.
     cd_key = r2_keys.chapter_data_key(author_slug, title_slug, rendition, build_id)
     client.upload_file(
         chapter_data_path,
@@ -145,7 +169,7 @@ def upload_rendition_build(
     logger.info("Uploaded: %s", cd_key)
     uploaded.append(cd_key)
 
-    # 3. Optional artifacts are uploaded before the manifest completion signal.
+    # 4. Optional artifacts are uploaded before the manifest completion signal.
     if character_registry_path and os.path.exists(character_registry_path):
         registry_key = r2_keys.character_registry_key(author_slug, title_slug, rendition, build_id)
         client.upload_file(
@@ -188,7 +212,7 @@ def upload_rendition_build(
         logger.info("Uploaded: %s", run_key)
         uploaded.append(run_key)
 
-    # 4. rendition-manifest.json LAST: completion signal.
+    # 5. rendition-manifest.json LAST: completion signal.
     client.upload_file(
         rendition_manifest_path,
         bucket,

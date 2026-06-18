@@ -12,8 +12,13 @@ Generate chapter audio from directed text segments. The public output contract i
 - `chunk_audio_starts`
 - `chunk_words: list[list[WordTimestamp]]`
 - `chapter-NN.sync.json` as the durable per-chapter word timing artifact
+- `chapter-NN.synthesis_units.json` as the private seam/unit audit artifact
 
-The client, worker, R2 key layout, `chapter_data.json`, `manifest.json`, and `rendition-manifest.json` schemas do not change when the TTS engine changes.
+The client, worker, `chapter_data.json`, `manifest.json`, and
+`rendition-manifest.json` schemas do not change when the TTS engine changes.
+The synthesis-unit artifact is not a reader contract; it exists so repair tools
+can modify seam pauses without rerunning the LLM or TTS when exact seam metadata
+is available.
 
 ## Engine Boundary
 
@@ -123,10 +128,13 @@ units. The generic TTS layer lets Chatterbox see the full directed segment
 instead of first splitting true paragraph breaks into separate synthesis calls;
 then Chatterbox's optional `split_synthesis_units(text)` hook packs prose into
 sentence-sized generation units bounded by its max character window before
-`generate(...)` is called. The split is internal to TTS and alignment; reader
-text and `chapter_data.json` stay unchanged. Kokoro keeps the generic paragraph
-break behavior because its lower per-call overhead and native timing path make
-explicit paragraph pauses useful.
+`generate(...)` is called. Internal Chatterbox unit joins use the shared
+`PausePolicy`, not an adapter-local constant, so sentence boundaries, phrase
+breaks, and word-level technical splits follow the same audiobook cadence rules
+as chunk and directed-segment seams. The split is internal to TTS and alignment;
+reader text and `chapter_data.json` stay unchanged. Kokoro keeps the generic
+paragraph break behavior because its lower per-call overhead and native timing
+path make explicit paragraph pauses useful.
 Before generation, the adapter disables upstream `tqdm` progress bars inside
 Chatterbox model modules so unattended pipeline runs cannot fail because a
 caller-owned stderr stream was closed or invalidated while synthesis continues.
@@ -193,6 +201,7 @@ class SynthesisResult:
     skipped_chunks: int
     chunk_audio_starts: list[float]
     chunk_words: list[list[WordTimestamp]]
+    synthesis_units: list[ChunkSynthesisAudit]
 ```
 
 `ChunkInfo.directed_segments` is optional for backward compatibility. If absent, `synthesize_chapter` wraps `ChunkInfo.text` in a single narrator segment using the legacy Kokoro voice path so existing tests and scripts keep working.
@@ -259,6 +268,83 @@ Coverage metrics are diagnostics only. They help identify partial WhisperX
 alignment during development and repair, but they do not block upload and do
 not create a separate build health state.
 
+## Synthesis Units Artifact
+
+Every successful chapter synthesis writes a private seam audit beside the audio:
+
+```text
+audio/{rendition}/builds/{build}/chapter-NN.synthesis_units.json
+```
+
+The artifact records exact frame ranges for chunk seams, directed-segment
+seams, and engine-owned synthesis-unit seams after generated boundary silence
+has been trimmed and before the final AAC encode. It is uploaded with the build
+for audit and repair tooling, but the worker/client do not read it.
+
+```json
+{
+  "version": 1,
+  "number": 9,
+  "audio_filename": "chapter-09.m4a",
+  "sample_rate": 24000,
+  "policy": "audiobook-v1",
+  "chunks": [
+    {
+      "chunk_index": 0,
+      "start_frame": 1200,
+      "end_frame": 365120,
+      "segments": [
+        {
+          "segment_index": 0,
+          "speaker": "narrator",
+          "emotion": "neutral",
+          "start_frame": 1200,
+          "end_frame": 365120,
+          "units": [
+            {
+              "unit_index": 0,
+              "text": "A large rose-tree ... red.",
+              "start_frame": 1200,
+              "end_frame": 302400
+            }
+          ]
+        }
+      ],
+      "seams": [
+        {
+          "kind": "engine_unit",
+          "break_type": "sentence",
+          "after_chunk_index": 0,
+          "after_segment_index": 0,
+          "after_unit_index": 0,
+          "pause_start_frame": 302400,
+          "pause_end_frame": 308400,
+          "pause_ms": 250,
+          "before_text": "... painting them red.",
+          "after_text": "Alice thought this ..."
+        }
+      ]
+    }
+  ]
+}
+```
+
+`PausePolicy` is the single owner of pause durations. Splitters identify text
+boundaries; they do not choose final millisecond values. The default
+`audiobook-v1` policy is:
+
+| Break type | Pause |
+|---|---:|
+| Paragraph or true double-newline break | 400 ms |
+| Sentence boundary (`.`, `?`, `!`) | 250 ms |
+| Phrase boundary (comma, semicolon, colon, dash) | 180 ms |
+| Quote/dialogue-tag boundary | 180 ms |
+| Inner thought transition | 180 ms |
+| Mid-sentence word-level technical split | 120 ms |
+
+The policy is deterministic. It does not use random jitter, because repair,
+resume, and artifact comparison need stable outputs.
+
 The default cast mode also supplies a single narrator `DirectedSegment` per
 chunk. This is distinct from a fallback: the character registry may still exist
 for audit/future style guidance, but the audio does not switch narrator identity
@@ -322,9 +408,10 @@ For each segment:
    Before this call, engines may optionally split a long synthesis unit into
    smaller engine-owned units with `split_synthesis_units(text)`. Chatterbox
    uses this to avoid long paragraph prompts that approach the upstream
-   1000-token decode ceiling. The split units are still aligned against the
-   corresponding original reader text slices and do not change public data
-   shape.
+   1000-token decode ceiling. Engine splitters return only unit text; seam
+   pauses are assigned by the shared `PausePolicy`. The split units are still
+   aligned against the corresponding original reader text slices and do not
+   change public data shape.
 4. If contextual synthesis succeeds and the aligner declares context-trim
    support, align the generated audio against
    `context + current_segment_text`, trim away the context audio, and keep only
@@ -345,9 +432,12 @@ For each segment:
    multi-voice chunks than either one vague whole-chunk block or many isolated
    tiny clips. If segment-aware alignment is unavailable, fall back to the
    legacy single-text alignment path.
-10. Insert engine-configured silence when the voice changes between adjacent
-    segments, unless the next segment's `join_policy` asks for a tight join.
-11. Offset word timestamps by the chunk's absolute frame position.
+10. Insert seam silence from `PausePolicy` at directed-segment and engine-unit
+    boundaries. Engine-configured voice-transition silence remains limited to
+    actual voice changes unless the next segment's `join_policy` asks for a
+    tight join.
+11. Record every emitted unit and seam in `chapter-NN.synthesis_units.json`.
+12. Offset word timestamps by the chunk's absolute frame position.
 
 If a forced-alignment unit fails, the aligner returns `[]` for that unit and
 the pipeline continues with the rest of the chunk. A bad LLM response cannot
@@ -357,16 +447,21 @@ against LLM-rewritten reader text.
 
 ## Timing Model
 
-A short lead-in silence (`LEAD_IN_SILENCE_MS`, 50ms) is prepended to every chapter. Variable silence is then inserted between chunks, but the defaults are intentionally short because EPUB chunk boundaries are implementation details rather than audiobook scene breaks:
+A short lead-in silence (`LEAD_IN_SILENCE_MS`, 50ms) is prepended to every
+chapter. Variable silence is then inserted between chunks by `PausePolicy`, so
+implementation chunk boundaries follow the same seam rules as directed segments
+and engine-owned synthesis units:
 
 ```
 [lead_in_silence][chunk0_audio][paragraph_gap][chunk1_audio][mid_para_gap][chunk2_audio]
 ```
 
 - Lead-in: `LEAD_IN_SILENCE_MS`
-- Paragraph break: `SILENCE_PARAGRAPH_BREAK_MS`
-- Mid-paragraph: `SILENCE_MID_PARAGRAPH_MS`
-- Internal paragraph break inside a packed chunk: `SILENCE_INTERNAL_PARAGRAPH_BREAK_MS`
+- Paragraph/newline seam: 400 ms
+- Sentence seam: 250 ms
+- Phrase/quote/inner-thought seam: 180 ms
+- Word-level technical seam: 120 ms
+- Internal paragraph break inside a packed chunk: 400 ms
 - `chunk_audio_start = frames_so_far / sample_rate`
 
 Voice-transition silence is internal to a chunk and configured by the engine.

@@ -236,7 +236,7 @@ use engine-level speed defaults and tight joins, but it must not receive
 LLM-written inline cues, bracket directions, SSML-like tags, or rewritten
 performance text.
 
-These annotations are never reader text. They may modify `DirectedSegment.text` for synthesis only, while `ChunkInfo.text` remains the original chunk text and is the only text serialized to `chapter_data.json`.
+These annotations are never reader text. They may modify `DirectedSegment.text` for synthesis only, while `ChunkInfo.text` remains the original chunk text and is the only text serialized to `chapter_data.json`. The LLM may return `pause_after_ms` for audit/backward compatibility, but final seam pause durations are owned by the TTS `PausePolicy`, not by voice direction.
 
 Direction is capability-gated:
 
@@ -370,7 +370,7 @@ The final aggregate shape is:
 }
 ```
 
-`text` and `original_text` are copied from the unmodified EPUB-derived chunk text. `synthesis_text` is the only field that may include engine-owned delivery hints. `delivery_type`, `voice_policy`, and `join_policy` describe the internal performance decision that produced the segment. For Kokoro in this phase, `synthesis_text` must match the source segment text because Kokoro skips LLM performance direction. The reader UI must continue to render `chapter_data.json`, not `voice_direction.json`.
+`text` and `original_text` are copied from the unmodified EPUB-derived chunk text. `synthesis_text` is the only field that may include engine-owned delivery hints. `delivery_type`, `voice_policy`, and `join_policy` describe the internal performance decision that produced the segment. `pause_after_ms` is preserved in the artifact for compatibility and audit, but synthesis uses the shared seam pause policy for actual emitted silence. For Kokoro in this phase, `synthesis_text` must match the source segment text because Kokoro skips LLM performance direction. The reader UI must continue to render `chapter_data.json`, not `voice_direction.json`.
 
 ## AudioDirector
 

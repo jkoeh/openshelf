@@ -16,7 +16,7 @@ flowchart LR
         P2 --> P3[text_chunker<br/>ChunkInfo per chunk]
         P3 --> P3B[voice_director<br/>registry + speaker spans + engine-aware direction]
         P3B --> P4[TTSEngine adapter<br/>Kokoro, F5-TTS, or Chatterbox]
-        P4 -->|WAV + chunk_words<br/>+ chunk_audio_starts| P5[encode_to_aac<br/>m4a]
+        P4 -->|WAV + chunk_words<br/>+ chunk_audio_starts<br/>+ synthesis seam audit| P5[encode_to_aac<br/>m4a]
         P3B --> P6A[character_registry.json<br/>voices + aliases]
         P3B --> P6B[voice_direction.json<br/>speaker + performance audit]
         P4 --> P6[chapter_data.json<br/>chunks + words]
@@ -36,6 +36,7 @@ flowchart LR
         R_BOOKMAN[manifest.json<br/>book-level pointer · MUTABLE]
         R_REG[audio/{rendition}/builds/{build}/<br/>character_registry.json]
         R_DIR[audio/{rendition}/builds/{build}/<br/>voice_direction.json]
+        R_SYN[audio/{rendition}/builds/{build}/<br/>chapter-NN.synthesis_units.json]
         R_RUN[audio/{rendition}/builds/{build}/<br/>run.json]
         R_RMAN[audio/{rendition}/builds/{build}/<br/>rendition-manifest.json]
         R_M4A[audio/{rendition}/builds/{build}/<br/>chapter-NN.m4a]
@@ -47,6 +48,7 @@ flowchart LR
     P6 --> R_CD
     P6A --> R_REG
     P6B --> R_DIR
+    P4 --> R_SYN
     P0 --> R_RUN
     P7 --> R_RMAN
     P10 --> R_BOOKMAN
@@ -102,7 +104,7 @@ flowchart LR
 Notes:
 
 - The `chapter_data.json` produced in step P6 is the single source for both chunk text and word timestamps the client needs — there is no separate alignment fetch on the happy path.
-- Voice direction writes auditable per-build artifacts to R2. `character_registry.json` carries the narrator, character aliases, descriptions, and assigned voices for future client features. `voice_direction.json` carries the cast mode plus speaker/performance plan used for synthesis. The reader still consumes `chapter_data.json` for text and word sync.
+- Voice direction writes auditable per-build artifacts to R2. `character_registry.json` carries the narrator, character aliases, descriptions, and assigned voices for future client features. `voice_direction.json` carries the cast mode plus speaker/performance plan used for synthesis. TTS also writes `chapter-NN.synthesis_units.json` as a per-chapter seam audit with internal unit boundaries and inserted pause metadata for repair tooling. The reader still consumes `chapter_data.json` for text and word sync.
 - The default cast mode is **solo narrator**: the LLM may choose the narrator and build/expand the character registry, but synthesis keeps one narrator voice for the whole audiobook. Character data is used for audit and future style guidance rather than hard voice switching. **Multicast** is opt-in via config/CLI and may switch voices by character; it is experimental because prose dialogue tags can sound stitched when rendered as separate synthetic actors. WhisperX is the canonical word-timestamp source for every engine; Kokoro native token timestamps are not used for the final sync contract.
 - `catalog.json` is the preferred fast path for `GET /catalog`; when it is missing, the worker may derive the same catalog rows from root book manifests plus each selected rendition's current `rendition-manifest.json`. Catalog rows include the backend default rendition and current build so the client can open a book on a coherent default build.
 - `GET /books/:a/:t/builds` is the no-cache discovery API for build selection. It reads the book manifest's retained `available_builds`, enriches each retained build from its own `rendition-manifest.json`, and returns `uploaded_at` from the R2 object's upload timestamp. Omitting `build` in client URLs still means use the rendition's `current_build`.

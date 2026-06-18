@@ -27,6 +27,15 @@ export const r2Key = {
 		chapter: string | number,
 	) => `${r2Key.buildPrefix(author, title, rendition, build)}/${chapterFilename(chapter)}`,
 
+	synthesisUnits: (
+		author: string,
+		title: string,
+		rendition: string,
+		build: string,
+		chapter: string | number,
+	) =>
+		`${r2Key.buildPrefix(author, title, rendition, build)}/chapter-${String(chapter).padStart(2, "0")}.synthesis_units.json`,
+
 	chapterData: (author: string, title: string, rendition: string, build: string) =>
 		`${r2Key.buildPrefix(author, title, rendition, build)}/chapter_data.json`,
 

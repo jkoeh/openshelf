@@ -85,6 +85,12 @@ class TestBuildScopedKeys(unittest.TestCase):
             "books/franz-kafka/the-metamorphosis/audio/kokoro-af-heart/builds/2a4f9c1/chapter-42.m4a",
         )
 
+    def test_synthesis_units_key(self):
+        self.assertEqual(
+            r2_keys.synthesis_units_key(AUTHOR, TITLE, RENDITION, BUILD, 1),
+            "books/franz-kafka/the-metamorphosis/audio/kokoro-af-heart/builds/2a4f9c1/chapter-01.synthesis_units.json",
+        )
+
     def test_chapter_data_key(self):
         self.assertEqual(
             r2_keys.chapter_data_key(AUTHOR, TITLE, RENDITION, BUILD),
@@ -137,6 +143,9 @@ class TestRoutingThroughBookPrefix(unittest.TestCase):
 
     def test_audio_under_prefix(self):
         self._starts_with_book_prefix(r2_keys.audio_key(AUTHOR, TITLE, RENDITION, BUILD, 1))
+
+    def test_synthesis_units_under_prefix(self):
+        self._starts_with_book_prefix(r2_keys.synthesis_units_key(AUTHOR, TITLE, RENDITION, BUILD, 1))
 
     def test_chapter_data_under_prefix(self):
         self._starts_with_book_prefix(r2_keys.chapter_data_key(AUTHOR, TITLE, RENDITION, BUILD))

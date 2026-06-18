@@ -186,10 +186,7 @@ class TestChatterboxAdapter(unittest.TestCase):
         self.assertEqual(runtime.calls[1]["exaggeration"], 0.38)
         self.assertEqual(runtime.calls[1]["cfg_weight"], 0.58)
 
-    @mock.patch.dict(os.environ, {
-        "OPENSHELF_CHATTERBOX_MAX_CHARS": "80",
-        "OPENSHELF_CHATTERBOX_SPLIT_PAUSE_MS": "12",
-    })
+    @mock.patch.dict(os.environ, {"OPENSHELF_CHATTERBOX_MAX_CHARS": "80"})
     def test_split_synthesis_units_packs_long_text(self):
         engine = ChatterboxAdapter()
         text = (
@@ -201,10 +198,9 @@ class TestChatterboxAdapter(unittest.TestCase):
         units = engine.split_synthesis_units(text)
 
         self.assertGreater(len(units), 1)
-        self.assertTrue(all(len(unit) <= 80 for unit, _pause in units))
-        self.assertTrue(all(pause == 12 for _unit, pause in units[:-1]))
-        self.assertEqual(units[-1][1], 0)
-        self.assertEqual(" ".join(unit for unit, _pause in units), text)
+        self.assertTrue(all(len(unit) <= 80 for unit in units))
+        self.assertTrue(all(isinstance(unit, str) for unit in units))
+        self.assertEqual(" ".join(units), text)
 
     def test_synthesize_rejects_missing_reference_audio_before_model_load(self):
         runtime = FakeChatterboxRuntime()

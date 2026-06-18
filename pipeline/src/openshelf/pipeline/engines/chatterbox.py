@@ -49,7 +49,6 @@ DEFAULT_REF_TEXT = (
     "neutral expressive tone."
 )
 DEFAULT_MAX_SYNTHESIS_CHARS = 320
-DEFAULT_SPLIT_PAUSE_MS = 80
 _SENTENCE_RE = re.compile(r".+?(?:[.!?][\"'\u201d\u2019)\]]*(?=\s+|$)|$)", re.DOTALL)
 PROFILES_FILENAME = "profiles.json"
 
@@ -403,11 +402,10 @@ class ChatterboxAdapter:
             },
         )
 
-    def split_synthesis_units(self, text: str) -> list[tuple[str, int]]:
+    def split_synthesis_units(self, text: str) -> list[str]:
         max_chars = _int_env("OPENSHELF_CHATTERBOX_MAX_CHARS", DEFAULT_MAX_SYNTHESIS_CHARS)
-        pause_ms = _int_env("OPENSHELF_CHATTERBOX_SPLIT_PAUSE_MS", DEFAULT_SPLIT_PAUSE_MS)
         if len(text) <= max_chars:
-            return [(text, 0)]
+            return [text]
 
         sentences = _sentence_units(text)
         packed: list[str] = []
@@ -429,17 +427,14 @@ class ChatterboxAdapter:
             packed.append(current)
 
         if len(packed) <= 1:
-            return [(text, 0)]
+            return [text]
         logger.info(
             "Chatterbox split long synthesis unit chars=%d units=%d max_chars=%d",
             len(text),
             len(packed),
             max_chars,
         )
-        return [
-            (unit, pause_ms if index < len(packed) - 1 else 0)
-            for index, unit in enumerate(packed)
-        ]
+        return packed
 
     def synthesize(self, segment: DirectedSegment) -> TTSResult:
         segment = self.apply_performance_controls(segment)

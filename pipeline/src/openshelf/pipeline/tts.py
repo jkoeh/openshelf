@@ -15,11 +15,17 @@ from openshelf.config import (
     TTS_VOICE,
     TTS_LANGUAGE,
     TTS_SAMPLE_RATE,
-    SILENCE_PARAGRAPH_BREAK_MS,
-    SILENCE_MID_PARAGRAPH_MS,
-    SILENCE_INTERNAL_PARAGRAPH_BREAK_MS,
     CROSSFADE_MS,
     LEAD_IN_SILENCE_MS,
+)
+from openshelf.pipeline.seams import (
+    ChunkSynthesisAudit,
+    PausePolicy,
+    SeamAudit,
+    SegmentSynthesisAudit,
+    SynthesisUnitAudit,
+    TextUnit,
+    pause_frames,
 )
 from openshelf.pipeline.tts_engine import (
     DirectedSegment,
@@ -111,6 +117,7 @@ class SynthesisResult:
     skipped_chunks: int
     chunk_audio_starts: list[float]   # len == len(input chunks); -1.0 for skipped chunks
     chunk_words: list[list[WordTimestamp]]  # per-chunk word timestamps (empty list for skipped)
+    synthesis_units: list[ChunkSynthesisAudit]
 
 
 def get_device() -> str:
@@ -313,19 +320,19 @@ def _join_synthesis_fragments(left: str, right: str) -> str:
     return f"{left_clean} {right_clean}".strip()
 
 
-def _split_synthesis_units(text: str) -> list[tuple[str, int]]:
+def _split_synthesis_units(text: str) -> list[TextUnit]:
     parts = [part.strip() for part in _PARAGRAPH_BREAK_RE.split(text) if part.strip()]
     if len(parts) <= 1:
-        return [(text, 0)]
-    units: list[tuple[str, int]] = []
+        return [TextUnit(text)]
+    units: list[TextUnit] = []
     current = parts[0]
     for part in parts[1:]:
         if _is_true_internal_paragraph_break(current, part):
-            units.append((current, SILENCE_INTERNAL_PARAGRAPH_BREAK_MS))
+            units.append(TextUnit(current, "paragraph"))
             current = part
         else:
             current = _join_synthesis_fragments(current, part)
-    units.append((current, 0))
+    units.append(TextUnit(current))
     return units
 
 
@@ -459,6 +466,72 @@ def _synthesize_with_rolling_context(
         return _synthesize_segment_with_fallback(engine, segment)
 
 
+@dataclass(frozen=True)
+class _RenderUnit:
+    segment: DirectedSegment
+    segment_index: int
+    unit_index: int
+    text: str
+    break_type_after: str | None = None
+
+
+def _as_text_unit(value: Any) -> TextUnit:
+    if isinstance(value, TextUnit):
+        return value
+    if isinstance(value, (list, tuple)) and value:
+        break_type = value[1] if len(value) > 1 and isinstance(value[1], str) else None
+        return TextUnit(str(value[0]), break_type)
+    return TextUnit(str(value))
+
+
+def _engine_text_units(engine: Any, text: str) -> list[TextUnit]:
+    split_units = getattr(engine, "split_synthesis_units", None)
+    if not callable(split_units):
+        return [TextUnit(text)]
+    raw_units = split_units(text)
+    if not raw_units:
+        return []
+    return [_as_text_unit(unit) for unit in raw_units]
+
+
+def _render_units_for_segments(
+    engine: Any,
+    segments: list[DirectedSegment],
+    policy: PausePolicy,
+) -> list[_RenderUnit]:
+    render_units: list[_RenderUnit] = []
+    for segment_index, segment in enumerate(segments):
+        base_units = (
+            [TextUnit(segment.text)]
+            if getattr(engine, "prefer_packed_synthesis_units", False)
+            else _split_synthesis_units(segment.text)
+        )
+        unit_index = 0
+        for base_unit in base_units:
+            engine_units = _engine_text_units(engine, base_unit.text)
+            if not engine_units:
+                continue
+            for split_index, engine_unit in enumerate(engine_units):
+                is_last_engine_unit = split_index == len(engine_units) - 1
+                if is_last_engine_unit:
+                    break_type_after = engine_unit.break_type_after or base_unit.break_type_after
+                else:
+                    next_unit = engine_units[split_index + 1]
+                    break_type_after = engine_unit.break_type_after or policy.classify(
+                        engine_unit.text,
+                        next_unit.text,
+                    )
+                render_units.append(_RenderUnit(
+                    segment=segment,
+                    segment_index=segment_index,
+                    unit_index=unit_index,
+                    text=engine_unit.text,
+                    break_type_after=break_type_after,
+                ))
+                unit_index += 1
+    return render_units
+
+
 def _synthesize_segments(
     engine: Any,
     aligner: WordAligner,
@@ -467,7 +540,9 @@ def _synthesize_segments(
     sample_rate: int,
     prior_audio_frames: int,
     rolling_context: list[str] | None = None,
-) -> tuple[np.ndarray, list[WordTimestamp]]:
+    chunk_index: int = 0,
+    return_audit: bool = False,
+) -> tuple[np.ndarray, list[WordTimestamp]] | tuple[np.ndarray, list[WordTimestamp], ChunkSynthesisAudit]:
     """Synthesize directed segments. Returns (audio, absolute word timestamps)."""
     if not segments:
         raise RuntimeError("No directed segments to synthesize")
@@ -478,94 +553,142 @@ def _synthesize_segments(
     forced_align_starts: list[float] = []
     frames_so_far = 0
     prev_voice_id: str | None = None
+    policy = PausePolicy()
+    render_units = _render_units_for_segments(engine, segments, policy)
+    segment_audits: dict[int, SegmentSynthesisAudit] = {}
+    seams: list[SeamAudit] = []
 
-    for segment in segments:
-        if getattr(engine, "prefer_packed_synthesis_units", False):
-            units = [(segment.text, 0)]
-        else:
-            units = _split_synthesis_units(segment.text)
-        split_units = getattr(engine, "split_synthesis_units", None)
-        if callable(split_units):
-            expanded_units: list[tuple[str, int]] = []
-            for unit_text, unit_pause_ms in units:
-                engine_units = split_units(unit_text)
-                if not engine_units:
-                    continue
-                for split_index, (split_text, split_pause_ms) in enumerate(engine_units):
-                    pause_ms = unit_pause_ms if split_index == len(engine_units) - 1 else split_pause_ms
-                    expanded_units.append((split_text, pause_ms))
-            units = expanded_units
-        for unit_index, (unit_text, unit_pause_ms) in enumerate(units):
-            unit_segment = replace(segment, text=unit_text)
-            synth_segment = _segment_for_synthesis(unit_segment)
-            apply_controls = getattr(engine, "apply_performance_controls", None)
-            if callable(apply_controls):
-                synth_segment = apply_controls(synth_segment)
-            is_last_unit = unit_index == len(units) - 1
-            pause_after_ms = segment.pause_after_ms if is_last_unit else unit_pause_ms
-            if not _has_spoken_content(synth_segment.text):
-                if pause_after_ms > 0:
-                    pause = _generate_silence(sample_rate, pause_after_ms)
-                    audio_parts.append(pause)
-                    frames_so_far += len(pause)
-                continue
-
-            context_text = rolling_context[0] if rolling_context else ""
-            result = _synthesize_with_rolling_context(
-                engine,
-                aligner,
-                synth_segment,
-                post_cfg,
-                context_text,
-            )
-            audio = np.asarray(result.audio, dtype=np.float32)
-            audio = _limit_boundary_silence(
-                audio,
-                sample_rate,
-                post_cfg.max_generated_boundary_silence_ms,
-            )
-            audio = _normalize(audio, cross_voice=post_cfg.normalize_cross_voice)
-            audio = _apply_boundary_fades(audio, sample_rate)
-
-            voice_id = segment.voice.id
-            if prev_voice_id is not None and voice_id != prev_voice_id:
-                transition_ms = 0 if segment.join_policy == "tight" else post_cfg.voice_transition_silence_ms
-                if transition_ms > 0:
-                    silence = _generate_silence(sample_rate, transition_ms)
-                    audio_parts.append(silence)
-                    frames_so_far += len(silence)
-
-            if post_cfg.needs_forced_alignment:
-                forced_align_texts.append(synth_segment.text)
-                forced_align_starts.append(frames_so_far / sample_rate)
-            else:
-                raw_words = result.words
-                if raw_words is None:
-                    raw_words = aligner.align(audio, synth_segment.text, sample_rate)
-
-                offset_s = (prior_audio_frames + frames_so_far) / sample_rate
-                all_words.extend([
-                    WordTimestamp(
-                        word=w.word,
-                        start=round(w.start + offset_s, 4),
-                        end=round(w.end + offset_s, 4),
-                    )
-                    for w in raw_words
-                ])
-
-            audio_parts.append(audio)
-            frames_so_far += len(audio)
-            prev_voice_id = voice_id
-            if rolling_context is not None:
-                rolling_context[0] = _last_sentence(synth_segment.original_text or synth_segment.text)
-
-            if pause_after_ms > 0:
-                pause = _generate_silence(sample_rate, pause_after_ms)
+    for render_index, render_unit in enumerate(render_units):
+        segment = render_unit.segment
+        unit_segment = replace(segment, text=render_unit.text)
+        synth_segment = _segment_for_synthesis(unit_segment)
+        apply_controls = getattr(engine, "apply_performance_controls", None)
+        if callable(apply_controls):
+            synth_segment = apply_controls(synth_segment)
+        if not _has_spoken_content(synth_segment.text):
+            if segment.pause_after_ms > 0:
+                pause = _generate_silence(sample_rate, segment.pause_after_ms)
                 audio_parts.append(pause)
                 frames_so_far += len(pause)
+            continue
+
+        voice_id = segment.voice.id
+        if prev_voice_id is not None and voice_id != prev_voice_id:
+            transition_ms = 0 if segment.join_policy == "tight" else post_cfg.voice_transition_silence_ms
+            if transition_ms > 0:
+                silence = _generate_silence(sample_rate, transition_ms)
+                audio_parts.append(silence)
+                frames_so_far += len(silence)
+
+        context_text = rolling_context[0] if rolling_context else ""
+        result = _synthesize_with_rolling_context(
+            engine,
+            aligner,
+            synth_segment,
+            post_cfg,
+            context_text,
+        )
+        audio = np.asarray(result.audio, dtype=np.float32)
+        audio = _limit_boundary_silence(
+            audio,
+            sample_rate,
+            post_cfg.max_generated_boundary_silence_ms,
+        )
+        audio = _normalize(audio, cross_voice=post_cfg.normalize_cross_voice)
+        audio = _apply_boundary_fades(audio, sample_rate)
+
+        unit_start = prior_audio_frames + frames_so_far
+        if post_cfg.needs_forced_alignment:
+            forced_align_texts.append(synth_segment.text)
+            forced_align_starts.append(frames_so_far / sample_rate)
+        else:
+            raw_words = result.words
+            if raw_words is None:
+                raw_words = aligner.align(audio, synth_segment.text, sample_rate)
+
+            offset_s = (prior_audio_frames + frames_so_far) / sample_rate
+            all_words.extend([
+                WordTimestamp(
+                    word=w.word,
+                    start=round(w.start + offset_s, 4),
+                    end=round(w.end + offset_s, 4),
+                )
+                for w in raw_words
+            ])
+
+        audio_parts.append(audio)
+        frames_so_far += len(audio)
+        unit_end = prior_audio_frames + frames_so_far
+        prev_voice_id = voice_id
+        if rolling_context is not None:
+            rolling_context[0] = _last_sentence(synth_segment.original_text or synth_segment.text)
+
+        segment_audit = segment_audits.get(render_unit.segment_index)
+        if segment_audit is None:
+            segment_audit = SegmentSynthesisAudit(
+                segment_index=render_unit.segment_index,
+                speaker=segment.speaker,
+                emotion=segment.emotion,
+                start_frame=unit_start,
+                end_frame=unit_end,
+            )
+            segment_audits[render_unit.segment_index] = segment_audit
+        segment_audit.end_frame = unit_end
+        segment_audit.units.append(SynthesisUnitAudit(
+            unit_index=render_unit.unit_index,
+            text=synth_segment.text,
+            start_frame=unit_start,
+            end_frame=unit_end,
+        ))
+
+        if render_index + 1 >= len(render_units):
+            continue
+        next_unit = render_units[render_index + 1]
+        kind = (
+            "engine_unit"
+            if next_unit.segment_index == render_unit.segment_index
+            else "directed_segment"
+        )
+        if kind == "directed_segment" and next_unit.segment.join_policy == "tight":
+            pause_ms = 0
+            break_type = "word"
+        else:
+            break_type = render_unit.break_type_after or policy.classify(
+                synth_segment.text,
+                next_unit.text,
+                current_delivery_type=segment.delivery_type,
+                next_delivery_type=next_unit.segment.delivery_type,
+            )
+            pause_ms = policy.pause_ms(break_type)
+        pause_start = prior_audio_frames + frames_so_far
+        if pause_ms > 0:
+            pause = _generate_silence(sample_rate, pause_ms)
+            audio_parts.append(pause)
+            frames_so_far += len(pause)
+        pause_end = prior_audio_frames + frames_so_far
+        seams.append(SeamAudit(
+            kind=kind,
+            break_type=break_type,
+            after_chunk_index=chunk_index,
+            after_segment_index=render_unit.segment_index,
+            after_unit_index=render_unit.unit_index,
+            pause_start_frame=pause_start,
+            pause_end_frame=pause_end,
+            pause_ms=pause_ms,
+            before_text=synth_segment.text[-120:],
+            after_text=next_unit.text[:120],
+        ))
 
     if not audio_parts:
-        return _generate_silence(sample_rate, 80), all_words
+        silent = _generate_silence(sample_rate, 80)
+        audit = ChunkSynthesisAudit(
+            chunk_index=chunk_index,
+            start_frame=prior_audio_frames,
+            end_frame=prior_audio_frames + len(silent),
+        )
+        if return_audit:
+            return silent, all_words, audit
+        return silent, all_words
     chunk_audio = np.concatenate(audio_parts)
     if post_cfg.needs_forced_alignment and forced_align_texts:
         if hasattr(aligner, "align_segments"):
@@ -590,6 +713,15 @@ def _synthesize_segments(
             )
             for w in raw_words
         ]
+    audit = ChunkSynthesisAudit(
+        chunk_index=chunk_index,
+        start_frame=prior_audio_frames,
+        end_frame=prior_audio_frames + len(chunk_audio),
+        segments=[segment_audits[index] for index in sorted(segment_audits)],
+        seams=seams,
+    )
+    if return_audit:
+        return chunk_audio, all_words, audit
     return chunk_audio, all_words
 
 
@@ -612,7 +744,9 @@ def synthesize_chapter(
     frames_so_far = len(lead_in)
     chunk_audio_starts: list[float] = []
     chunk_words: list[list[WordTimestamp]] = []
+    synthesis_units: list[ChunkSynthesisAudit] = []
     prior_chunk_emitted = False
+    policy = PausePolicy()
 
     if isinstance(getattr(pipeline, "capabilities", None), TTSCapabilities):
         engine = pipeline
@@ -629,15 +763,29 @@ def synthesize_chapter(
     for i, chunk_info in enumerate(chunks):
         try:
             pending_gap: np.ndarray | None = None
+            pending_gap_seam: SeamAudit | None = None
             chunk_start_frames = frames_so_far
 
             if prior_chunk_emitted:
-                # Variable silence: longer at paragraph breaks, shorter mid-paragraph
-                if chunks[i - 1].ends_paragraph:
-                    gap_ms = SILENCE_PARAGRAPH_BREAK_MS
-                else:
-                    gap_ms = SILENCE_MID_PARAGRAPH_MS
+                break_type = policy.classify(
+                    chunks[i - 1].text,
+                    chunk_info.text,
+                    paragraph=chunks[i - 1].ends_paragraph,
+                )
+                gap_ms = policy.pause_ms(break_type)
                 pending_gap = _generate_silence(sample_rate, gap_ms)
+                pending_gap_seam = SeamAudit(
+                    kind="chunk",
+                    break_type=break_type,
+                    after_chunk_index=i - 1,
+                    after_segment_index=None,
+                    after_unit_index=None,
+                    pause_start_frame=frames_so_far,
+                    pause_end_frame=frames_so_far + len(pending_gap),
+                    pause_ms=gap_ms,
+                    before_text=chunks[i - 1].text[-120:],
+                    after_text=chunk_info.text[:120],
+                )
                 chunk_start_frames += len(pending_gap)
 
             segments = chunk_info.directed_segments
@@ -648,7 +796,7 @@ def synthesize_chapter(
                     speaker="narrator",
                 )]
 
-            chunk_audio, words = _synthesize_segments(
+            chunk_audio, words, chunk_audit = _synthesize_segments(
                 engine=engine,
                 aligner=aligner,
                 segments=segments,
@@ -656,9 +804,14 @@ def synthesize_chapter(
                 sample_rate=sample_rate,
                 prior_audio_frames=chunk_start_frames,
                 rolling_context=rolling_context,
+                chunk_index=i,
+                return_audit=True,
             )
 
             if pending_gap is not None:
+                if pending_gap_seam is not None and synthesis_units:
+                    synthesis_units[-1].seams.append(pending_gap_seam)
+                    synthesis_units[-1].end_frame += len(pending_gap)
                 frames_so_far += len(pending_gap)
                 audio_segments.append(pending_gap)
 
@@ -678,6 +831,7 @@ def synthesize_chapter(
 
             audio_segments.append(chunk_audio)
             frames_so_far += len(chunk_audio)
+            synthesis_units.append(chunk_audit)
             prior_chunk_emitted = True
         except Exception:
             logger.warning("Chunk %d failed, skipping: %.40s...", i, chunk_info.text, exc_info=True)
@@ -697,6 +851,7 @@ def synthesize_chapter(
         skipped_chunks=skipped,
         chunk_audio_starts=chunk_audio_starts,
         chunk_words=chunk_words,
+        synthesis_units=synthesis_units,
     )
 
 
@@ -729,6 +884,7 @@ def synthesize_chapter_to_files(
     wav_path: str,
     m4a_path: str,
     sync_path: str,
+    synthesis_units_path: str | None,
     chapter_number: int,
     chunk_texts: list[str],
     voice: str | None = None,
@@ -744,6 +900,7 @@ def synthesize_chapter_to_files(
     returned for manifest accounting.
     """
     from openshelf.pipeline.encoder import encode_to_aac
+    from openshelf.pipeline.seams import write_synthesis_units_artifact
     from openshelf.pipeline.word_aligner import write_chapter_sync_artifact
 
     # Any existing m4a is leftover from an aborted attempt; regenerate cleanly so
@@ -766,4 +923,13 @@ def synthesize_chapter_to_files(
         chunk_texts=chunk_texts,
         force=force,
     )
+    if synthesis_units_path is not None:
+        write_synthesis_units_artifact(
+            synthesis_units_path,
+            chapter_number,
+            os.path.basename(m4a_path),
+            TTS_SAMPLE_RATE,
+            result.synthesis_units,
+            force=force,
+        )
     return result, duration

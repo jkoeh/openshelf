@@ -5,7 +5,7 @@
 
 ## Purpose
 
-Upload all pipeline artifacts to Cloudflare R2 (S3-compatible object storage) under a build-versioned key layout. Per-build artifacts (audio, chapter_data, character_registry, voice_direction, run context, rendition-manifest) live under `audio/{rendition}/builds/{build}/...` and are immutable once written. The per-book `manifest.json` is the single mutable pointer that names the `current_build` per rendition and is always overwritten on upload.
+Upload all pipeline artifacts to Cloudflare R2 (S3-compatible object storage) under a build-versioned key layout. Per-build artifacts (audio, chapter_data, character_registry, voice_direction, synthesis-unit seam audits, run context, rendition-manifest) live under `audio/{rendition}/builds/{build}/...` and are immutable once written. The per-book `manifest.json` is the single mutable pointer that names the `current_build` per rendition and is always overwritten on upload.
 
 ```mermaid
 graph TD
@@ -22,7 +22,8 @@ graph TD
     E --> E1{rendition-manifest.json for build on R2?}
     E1 -->|Yes| E2[Skip entire build]
     E1 -->|No| E3[PUT all m4a files]
-    E3 --> E4[PUT chapter_data.json]
+    E3 --> E3A[PUT chapter-NN.synthesis_units.json]
+    E3A --> E4[PUT chapter_data.json]
     E4 --> E4A[PUT character_registry.json]
     E4A --> E4B[PUT voice_direction.json]
     E4B --> E4C[PUT run.json]
@@ -95,7 +96,9 @@ books/{author_slug}/{title_slug}/
       builds/
         {build_id}/                                      # 16-hex build ID
           chapter-01.m4a                                 # immutable
+          chapter-01.synthesis_units.json                 # immutable seam/unit audit
           chapter-02.m4a
+          chapter-02.synthesis_units.json
           chapter_data.json                              # immutable
           character_registry.json                        # immutable
           voice_direction.json                           # immutable
@@ -103,7 +106,7 @@ books/{author_slug}/{title_slug}/
           rendition-manifest.json                        # immutable; written last
 ```
 
-Every key under a `builds/{build_id}/` prefix is part of a coherent atomic snapshot: the audio bytes, the chapter_data word timestamps, the character registry, the voice direction audit, the run context, and the rendition-manifest's chapter durations all describe the same build. A client that pins to a build hash for a chapter session is guaranteed not to see a mid-listen mismatch.
+Every key under a `builds/{build_id}/` prefix is part of a coherent atomic snapshot: the audio bytes, the chapter_data word timestamps, the synthesis-unit seam audits, the character registry, the voice direction audit, the run context, and the rendition-manifest's chapter durations all describe the same build. A client that pins to a build hash for a chapter session is guaranteed not to see a mid-listen mismatch.
 
 For local quality checks, `openshelf-pipeline dag run --chapters` may restrict generation to
 one chapter or a comma/range list such as `2` or `2,4-5`. This writes the same
@@ -154,6 +157,12 @@ per-chunk speaker and performance-direction plan used for synthesis. In default
 `solo` mode those segments use the narrator voice; in opt-in `multicast` mode
 they may switch voices by character. It preserves original reader text
 separately from synthesis-only text, so steering cues never become reader text.
+
+`chapter-NN.synthesis_units.json` is a private TTS audit artifact. It records
+the exact generated unit frame ranges, seam break types, inserted pause frame
+ranges, and pause policy used for one chapter. The worker/client do not read it,
+but repair tooling can use it to replace seam pauses and shift sync metadata
+without rerunning TTS.
 
 `run.json` records the EPUB hash and immutable invocation settings used for a
 local resumable build. It is uploaded before `rendition-manifest.json` when

@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 from openshelf.config import TTS_SAMPLE_RATE  # noqa: E402
 from openshelf.pipeline.engines.kokoro import KokoroAdapter  # noqa: E402
+from openshelf.pipeline.seams import PausePolicy  # noqa: E402
 from openshelf.pipeline.tts import ChunkInfo, _synthesize_segments, _synthesize_single_chunk  # noqa: E402
 from openshelf.pipeline.tts_engine import DirectedSegment, NullAligner, VoiceSpec  # noqa: E402
 
@@ -58,6 +59,10 @@ def _segment(text: str, voice_id: str) -> DirectedSegment:
     )
 
 
+def _pause_samples(break_type: str) -> int:
+    return int(TTS_SAMPLE_RATE * PausePolicy().pause_ms(break_type) / 1000)
+
+
 class TestKokoroSegmentSynthesis(unittest.TestCase):
     def test_kokoro_does_not_advertise_llm_performance_direction(self):
         engine = KokoroAdapter(pipeline=FakeKPipeline())
@@ -82,7 +87,7 @@ class TestKokoroSegmentSynthesis(unittest.TestCase):
         )
 
         transition = int(TTS_SAMPLE_RATE * post_cfg.voice_transition_silence_ms / 1000)
-        self.assertEqual(len(audio), 200 + transition + 100)
+        self.assertEqual(len(audio), 200 + _pause_samples("word") + transition + 100)
 
     def test_kokoro_native_words_not_used_for_final_sync(self):
         pipeline = FakeKPipeline()
@@ -139,7 +144,7 @@ class TestKokoroSegmentSynthesis(unittest.TestCase):
         )
 
         transition = int(TTS_SAMPLE_RATE * post_cfg.voice_transition_silence_ms / 1000)
-        self.assertEqual(len(audio), 100 + transition + 100)
+        self.assertEqual(len(audio), 100 + _pause_samples("word") + transition + 100)
 
     def test_tight_join_suppresses_voice_transition_silence(self):
         pipeline = FakeKPipeline()
@@ -163,7 +168,7 @@ class TestKokoroSegmentSynthesis(unittest.TestCase):
 
         self.assertEqual(len(audio), 200)
 
-    def test_same_voice_no_silence(self):
+    def test_same_voice_uses_word_level_seam_pause(self):
         pipeline = FakeKPipeline()
         engine = KokoroAdapter(pipeline=pipeline)
         audio, _ = _synthesize_segments(
@@ -175,7 +180,7 @@ class TestKokoroSegmentSynthesis(unittest.TestCase):
             prior_audio_frames=0,
         )
 
-        self.assertEqual(len(audio), 200)
+        self.assertEqual(len(audio), 100 + _pause_samples("word") + 100)
 
 
 if __name__ == "__main__":

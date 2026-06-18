@@ -22,6 +22,7 @@ from openshelf.pipeline.dag.cli import (  # noqa: E402
     collect_coverage,
     direct_chapter,
     main,
+    repair_pauses_chapter,
     run_book,
     sync_chapter,
     synth_chapter,
@@ -932,6 +933,7 @@ class TestDagCliSynth(unittest.TestCase):
             skipped_chunks=0,
             chunk_audio_starts=[0.0],
             chunk_words=[[WordTimestamp("hello", 0.0, 0.4), WordTimestamp("world", 0.4, 0.8)]],
+            synthesis_units=[],
         )
 
         def fake_encode(wav_path, m4a_path, delete_wav=True):
@@ -955,6 +957,7 @@ class TestDagCliSynth(unittest.TestCase):
                 )
 
             self.assertTrue(os.path.exists(os.path.join(build_dir, "chapter-01.m4a")))
+            self.assertTrue(os.path.exists(os.path.join(build_dir, "chapter-01.synthesis_units.json")))
             with open(path, encoding="utf-8") as f:
                 payload = json.load(f)
             self.assertEqual(
@@ -976,7 +979,7 @@ class TestDagCliSynth(unittest.TestCase):
                     patch("openshelf.pipeline.encoder.encode_to_aac", side_effect=fake_encode):
                 synth_chapter(build_dir, 1, engine=SimpleNamespace(name="kokoro"), aligner=object())
 
-            # Second run with both artifacts present and no force must not synthesize.
+            # Second run with all synthesis artifacts present and no force must not synthesize.
             with patch("openshelf.pipeline.tts.synthesize_chapter") as mock_synth, \
                     patch("openshelf.pipeline.encoder.encode_to_aac") as mock_encode:
                 synth_chapter(build_dir, 1, engine=SimpleNamespace(name="kokoro"), aligner=object())
@@ -1044,6 +1047,100 @@ class TestDagCliSynth(unittest.TestCase):
             )
             with self.assertRaises(FileNotFoundError):
                 synth_chapter(build_dir, 1, engine=object(), aligner=object())
+
+
+class TestDagCliRepairPauses(unittest.TestCase):
+
+    def _setup(self, tmp: str) -> str:
+        build_dir = os.path.join(tmp, "audio", "kokoro-af-heart", "builds", "abc123")
+        os.makedirs(build_dir)
+        write_chapter_chunks_artifact(
+            os.path.join(build_dir, "chapter-01.chunks.json"),
+            1, "Chapter One",
+            [Chunk("hello world", 0, 0, "ch1-el0000", "ch1-el0000")],
+        )
+        _write_sync(
+            os.path.join(build_dir, "chapter-01.sync.json"),
+            1,
+            {"reader_word_count": 2, "aligned_word_count": 2, "coverage_ratio": 1.0},
+            chunks=[
+                {
+                    "index": 0,
+                    "words": [{"word": "hello", "start": 0.0, "end": 0.4}],
+                },
+            ],
+        )
+        with open(os.path.join(build_dir, "chapter-01.synthesis_units.json"), "w", encoding="utf-8") as f:
+            json.dump({"version": 1, "chunks": []}, f)
+        open(os.path.join(build_dir, "chapter-01.m4a"), "w").close()
+        with open(os.path.join(build_dir, "chapter_data.json"), "w", encoding="utf-8") as f:
+            json.dump({"stale": True}, f)
+        with open(os.path.join(build_dir, "rendition-manifest.json"), "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "build": "abc123",
+                    "rendition": "kokoro-af-heart",
+                    "voice": "af_heart",
+                    "engine": "kokoro",
+                    "pipeline_version": "test",
+                    "total_duration_seconds": 3.0,
+                    "chapters": [
+                        {
+                            "number": 1,
+                            "title": "Chapter One",
+                            "filename": "chapter-01.m4a",
+                            "duration_seconds": 1.0,
+                            "word_count": 2,
+                        },
+                        {
+                            "number": 2,
+                            "title": "Chapter Two",
+                            "filename": "chapter-02.m4a",
+                            "duration_seconds": 2.0,
+                            "word_count": 4,
+                        },
+                    ],
+                },
+                f,
+            )
+        return build_dir
+
+    def test_repair_refreshes_existing_aggregate_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build_dir = self._setup(tmp)
+
+            with patch(
+                "openshelf.pipeline.seams.repair_chapter_pause_files",
+                return_value=[object()],
+            ) as mock_repair, patch(
+                "openshelf.pipeline.encoder.audio_duration",
+                return_value=1.25,
+            ):
+                path = repair_pauses_chapter(build_dir, 1, force=True)
+
+            self.assertEqual(path, os.path.join(build_dir, "chapter-01.sync.json"))
+            mock_repair.assert_called_once()
+            self.assertEqual(mock_repair.call_args.kwargs["chunk_texts"], ["hello world"])
+
+            with open(os.path.join(build_dir, "chapter_data.json"), encoding="utf-8") as f:
+                chapter_data = json.load(f)
+            self.assertEqual(chapter_data["rendition"], "kokoro-af-heart")
+            self.assertEqual(chapter_data["build"], "abc123")
+            self.assertEqual(
+                chapter_data["chapters"][0]["chunks"][0]["words"][0]["word"],
+                "hello",
+            )
+
+            with open(os.path.join(build_dir, "rendition-manifest.json"), encoding="utf-8") as f:
+                manifest = json.load(f)
+            self.assertEqual(manifest["chapters"][0]["duration_seconds"], 1.25)
+            self.assertEqual(manifest["total_duration_seconds"], 3.25)
+
+    def test_repair_requires_force(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build_dir = self._setup(tmp)
+            with self.assertRaises(ValueError):
+                repair_pauses_chapter(build_dir, 1, force=False)
 
 
 class TestDagCliSync(unittest.TestCase):

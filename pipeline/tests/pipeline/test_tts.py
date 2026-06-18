@@ -30,19 +30,24 @@ from openshelf.pipeline.tts_engine import (
     TTSResult,
     VoiceSpec,
 )
+from openshelf.pipeline.seams import PausePolicy
 from openshelf.config import (
     TTS_LANGUAGE,
     TTS_VOICE,
     TTS_SAMPLE_RATE,
     SILENCE_PARAGRAPH_BREAK_MS,
     SILENCE_MID_PARAGRAPH_MS,
-    SILENCE_INTERNAL_PARAGRAPH_BREAK_MS,
     CROSSFADE_MS,
     LEAD_IN_SILENCE_MS,
 )
 
 
 _LEAD_IN_SAMPLES = int(TTS_SAMPLE_RATE * LEAD_IN_SILENCE_MS / 1000)
+_PAUSE_POLICY = PausePolicy()
+
+
+def _pause_samples(break_type: str) -> int:
+    return int(TTS_SAMPLE_RATE * _PAUSE_POLICY.pause_ms(break_type) / 1000)
 
 
 def _fake_audio(n_samples: int, peak: float = 0.5) -> np.ndarray:
@@ -178,15 +183,15 @@ class TestSynthesizeChapter(unittest.TestCase):
         synthesize_chapter(pipeline, chunks, "/tmp/out.wav")
 
         written_audio = mock_sf_write.call_args[0][1]
-        para_silence = int(TTS_SAMPLE_RATE * SILENCE_PARAGRAPH_BREAK_MS / 1000)
+        para_silence = _pause_samples("paragraph")
         fade_samples = int(TTS_SAMPLE_RATE * CROSSFADE_MS / 1000)
         # Each chunk is 1000 samples; fades don't change length
         expected_len = _LEAD_IN_SAMPLES + 3 * 1000 + 2 * para_silence
         self.assertEqual(len(written_audio), expected_len)
 
     @patch("openshelf.pipeline.tts.sf.write")
-    def test_mid_paragraph_gets_shorter_silence(self, mock_sf_write):
-        """Chunks within the same paragraph get shorter silence."""
+    def test_same_paragraph_sentence_boundary_uses_sentence_pause(self, mock_sf_write):
+        """Chunks within the same paragraph use the seam pause policy."""
         def make_iter(text, voice=None):
             return iter([("g", "p", _fake_audio(1000))])
 
@@ -199,8 +204,8 @@ class TestSynthesizeChapter(unittest.TestCase):
         synthesize_chapter(pipeline, chunks, "/tmp/out.wav")
 
         written_audio = mock_sf_write.call_args[0][1]
-        mid_silence = int(TTS_SAMPLE_RATE * SILENCE_MID_PARAGRAPH_MS / 1000)
-        expected_len = _LEAD_IN_SAMPLES + 2 * 1000 + mid_silence
+        sentence_silence = _pause_samples("sentence")
+        expected_len = _LEAD_IN_SAMPLES + 2 * 1000 + sentence_silence
         self.assertEqual(len(written_audio), expected_len)
 
     @patch("openshelf.pipeline.tts.sf.write")
@@ -218,16 +223,16 @@ class TestSynthesizeChapter(unittest.TestCase):
 
         result = synthesize_chapter(pipeline, chunks, "/tmp/out.wav")
 
-        mid_silence = int(TTS_SAMPLE_RATE * SILENCE_MID_PARAGRAPH_MS / 1000)
-        para_silence = int(TTS_SAMPLE_RATE * SILENCE_PARAGRAPH_BREAK_MS / 1000)
+        sentence_silence = _pause_samples("sentence")
+        para_silence = _pause_samples("paragraph")
 
         # Chunk 0 starts after the lead-in silence
         self.assertAlmostEqual(result.chunk_audio_starts[0], _LEAD_IN_SAMPLES / TTS_SAMPLE_RATE)
         # Chunk 1 starts after chunk 0 audio + mid-paragraph silence
-        expected_1 = (_LEAD_IN_SAMPLES + 1000 + mid_silence) / TTS_SAMPLE_RATE
+        expected_1 = (_LEAD_IN_SAMPLES + 1000 + sentence_silence) / TTS_SAMPLE_RATE
         self.assertAlmostEqual(result.chunk_audio_starts[1], expected_1)
         # Chunk 2 starts after chunk 1 audio + paragraph break silence
-        expected_2 = (_LEAD_IN_SAMPLES + 1000 + mid_silence + 1000 + para_silence) / TTS_SAMPLE_RATE
+        expected_2 = (_LEAD_IN_SAMPLES + 1000 + sentence_silence + 1000 + para_silence) / TTS_SAMPLE_RATE
         self.assertAlmostEqual(result.chunk_audio_starts[2], expected_2)
 
     @patch("openshelf.pipeline.tts.sf.write")
@@ -338,7 +343,7 @@ class TestSynthesizeChapterAudioStarts(unittest.TestCase):
     @patch("openshelf.pipeline.tts.sf.write")
     def test_two_chunks_correct_offsets(self, mock_sf_write):
         chunk_samples = 1000
-        para_silence = int(TTS_SAMPLE_RATE * SILENCE_PARAGRAPH_BREAK_MS / 1000)
+        para_silence = _pause_samples("paragraph")
 
         def make_iter(text, voice=None):
             return iter([("g", "p", _fake_audio(chunk_samples))])
@@ -380,7 +385,7 @@ class TestSynthesizeChapterAudioStarts(unittest.TestCase):
     @patch("openshelf.pipeline.tts.sf.write")
     def test_offsets_accumulate_correctly_three_chunks(self, mock_sf_write):
         samples_per_chunk = [500, 800, 300]
-        para_silence = int(TTS_SAMPLE_RATE * SILENCE_PARAGRAPH_BREAK_MS / 1000)
+        para_silence = _pause_samples("paragraph")
         call_idx = [0]
 
         def make_iter(text, voice=None):
@@ -771,7 +776,7 @@ class TestSynthesizeChapterWords(unittest.TestCase):
             ["First paragraph ends.", "Second paragraph begins here."],
         )
         written = mock_sf_write.call_args[0][1]
-        internal_gap = int(TTS_SAMPLE_RATE * SILENCE_INTERNAL_PARAGRAPH_BREAK_MS / 1000)
+        internal_gap = _pause_samples("paragraph")
         self.assertEqual(len(written), _LEAD_IN_SAMPLES + 2000 + internal_gap)
 
     @patch("openshelf.pipeline.tts.sf.write")
@@ -874,9 +879,54 @@ class TestSynthesizeChapterWords(unittest.TestCase):
         self.assertEqual(engine.texts, ["First split.", "Second split."])
         self.assertEqual(aligner.texts, ["First split.", "Second split."])
         self.assertEqual([w.word for w in result.chunk_words[0]], ["First", "split.", "Second", "split."])
-        split_pause = int(TTS_SAMPLE_RATE * 20 / 1000)
+        split_pause = _pause_samples("sentence")
         written = mock_sf_write.call_args[0][1]
         self.assertEqual(len(written), _LEAD_IN_SAMPLES + 12000 + split_pause)
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_engine_split_synthesis_units_records_policy_seam(self, mock_sf_write):
+        class FakeEngine:
+            capabilities = TTSCapabilities(
+                emotion_control=False,
+                paralinguistic_markers=False,
+                speed_control=False,
+                provides_timestamps=False,
+                voice_cloning=False,
+            )
+
+            def post_processing_config(self):
+                return PostProcessingConfig(
+                    needs_forced_alignment=True,
+                    voice_transition_silence_ms=0,
+                    normalize_cross_voice=False,
+                )
+
+            def split_synthesis_units(self, text):
+                return ["First split.", "Second split."]
+
+            def synthesize(self, segment):
+                return TTSResult(
+                    audio=_fake_audio(1000),
+                    sample_rate=TTS_SAMPLE_RATE,
+                    words=None,
+                )
+
+        chunk = ChunkInfo(
+            text="First split. Second split.",
+            directed_segments=[DirectedSegment(
+                text="First split. Second split.",
+                voice=VoiceSpec(id="voice-a"),
+                speaker="narrator",
+            )],
+        )
+
+        result = synthesize_chapter(FakeEngine(), [chunk], "/tmp/out.wav", aligner=_RecordingAligner())
+
+        seam = result.synthesis_units[0].seams[0]
+        self.assertEqual(seam.kind, "engine_unit")
+        self.assertEqual(seam.break_type, "sentence")
+        self.assertEqual(seam.pause_ms, _PAUSE_POLICY.pause_ms("sentence"))
+        self.assertEqual(seam.pause_end_frame - seam.pause_start_frame, _pause_samples("sentence"))
 
     @patch("openshelf.pipeline.tts.sf.write")
     def test_engine_can_pack_internal_paragraph_breaks_before_split(self, mock_sf_write):
@@ -1022,7 +1072,7 @@ class TestSynthesizeChapterWords(unittest.TestCase):
 
         self.assertEqual(engine.calls, ["Before.", "Before. After."])
         written = mock_sf_write.call_args[0][1]
-        gap = int(TTS_SAMPLE_RATE * SILENCE_PARAGRAPH_BREAK_MS / 1000)
+        gap = _pause_samples("paragraph")
         expected = _LEAD_IN_SAMPLES + 1000 + gap + 1000
         self.assertEqual(len(written), expected)
         self.assertIn("Before. After.", aligner.texts)

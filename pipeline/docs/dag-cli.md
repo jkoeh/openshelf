@@ -141,7 +141,7 @@ Input (all local, already produced by earlier stages):
 
 - `audio/{rendition}/builds/{build}/chapter-NN.m4a`, `chapter_data.json`,
   `rendition-manifest.json` (and optional `character_registry.json`,
-  `voice_direction.json`, `run.json`)
+  `voice_direction.json`, `chapter-NN.synthesis_units.json`, `run.json`)
 - book-level `cover.{jpg,png}` and `book-annotated.epub` when present
 - book-level `manifest.json` carrying the rendition entry
 
@@ -224,16 +224,17 @@ Input:
 
 Output:
 
-- `chapter-NN.m4a` and `chapter-NN.sync.json`
+- `chapter-NN.m4a`, `chapter-NN.sync.json`, and
+  `chapter-NN.synthesis_units.json`
 
 Behavior:
 
 - Builds the per-chunk `ChunkInfo` list from the chunks artifact (paragraph
   boundaries) and the voice-direction artifact (segments), runs TTS + WhisperX
-  alignment, encodes to AAC, and writes the sync artifact. Covers both fresh
-  synthesis and pause/stitch-policy **restitch** repair — there are no durable
-  WAV/unit intermediates to restitch from, so audio is regenerated from the
-  existing direction (no separate `restitch` verb).
+  alignment, encodes to AAC, and writes the sync and synthesis-unit artifacts.
+  Covers fresh synthesis and full audio regeneration from existing direction.
+  Seam-only pause changes should use `repair-pauses` when a synthesis-unit
+  artifact exists.
 - `--device` is the selected runtime device for both the TTS engine adapter
   when that engine accepts a device (Kokoro, F5-TTS, Chatterbox) and the
   WhisperX aligner when forced alignment is required.
@@ -245,6 +246,45 @@ Behavior:
   **skips** unless `--force` (TTS is expensive and not deterministic, so the
   file-exists gate stands in for an input fingerprint).
 - Does not call the LLM. After `synth`, run `assemble` then `upload`.
+
+### `repair-pauses`
+
+```bash
+openshelf-pipeline dag repair-pauses \
+  --build-dir audio/{rendition}/builds/{build} \
+  --chapter 2 --force
+```
+
+Input:
+
+- `chapter-NN.m4a`
+- `chapter-NN.sync.json`
+- `chapter-NN.synthesis_units.json`
+
+Output:
+
+- rewritten `chapter-NN.m4a`
+- rewritten `chapter-NN.sync.json`
+- rewritten `chapter-NN.synthesis_units.json`
+- refreshed `chapter_data.json` when the build already has one
+- updated repaired chapter duration in `rendition-manifest.json` when present
+
+Behavior:
+
+- Repairs seam cadence without calling the LLM, TTS, or WhisperX. The command
+  decodes the existing AAC audio to PCM, reads exact pause regions from
+  `chapter-NN.synthesis_units.json`, replaces each recorded pause with the
+  current `PausePolicy` target for that seam's break type, shifts all later word
+  timestamps and chunk starts by the cumulative delta, re-encodes the chapter,
+  and rewrites the sync and synthesis-unit artifacts. It also refreshes local
+  aggregate artifacts that already exist so a repaired build stays coherent.
+- The repair is exact only for builds that have `chapter-NN.synthesis_units.json`.
+  Older builds without the audit artifact must use `synth --force` for full TTS
+  regeneration or a future best-effort inferred repair mode.
+- The command requires `--force` because it intentionally rewrites immutable
+  build-local artifacts. After `repair-pauses`, use `upload --force` if the
+  repaired build has already been published.
+- Does not call R2. Upload remains a separate explicit command.
 
 ### `sync`
 
@@ -316,15 +356,17 @@ pipeline chunk   --book-parse book_parse.json --build-dir {build_dir}
 pipeline registry --book-parse book_parse.json --build-dir {build_dir} --engine kokoro --voice af_heart
 pipeline direct  --build-dir {build_dir} --chapter N --engine kokoro
 pipeline synth   --build-dir {build_dir} --chapter N --engine kokoro --device cuda
+pipeline repair-pauses --build-dir {build_dir} --chapter N --force
 pipeline assemble --build-dir {build_dir} --rendition {r} --build-id {b}
 pipeline upload  --book-dir {book_dir} --rendition {r} --build-id {b}
 ```
 
-`direct`, `synth`, and `sync` run per chapter and are safe to parallelize across
-chapters once `character_registry.json` exists. `assemble`, `coverage`, and
-`upload` operate on the whole build. `registry` runs once per book/build before
-chapter direction. `sync` is a later re-alignment repair command; initial word
-sync is produced by `synth`.
+`direct`, `synth`, `repair-pauses`, and `sync` run per chapter and are safe to
+parallelize across chapters once `character_registry.json` exists. `assemble`,
+`coverage`, and `upload` operate on the whole build. `registry` runs once per
+book/build before chapter direction. `repair-pauses` is a no-TTS seam-cadence
+repair for builds with synthesis-unit artifacts. `sync` is a later re-alignment
+repair command; initial word sync is produced by `synth`.
 
 `run` accepts `--epub`, `--output`, `--source`, `--engine`, `--voice`,
 `--rendition`, `--cast-mode`, `--performance-direction`, `--device`,

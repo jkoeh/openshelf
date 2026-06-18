@@ -91,6 +91,10 @@ def _chapter_sync_path(build_dir: str, chapter_number: int) -> str:
     return os.path.join(build_dir, f"chapter-{chapter_number:02d}.sync.json")
 
 
+def _chapter_synthesis_units_path(build_dir: str, chapter_number: int) -> str:
+    return os.path.join(build_dir, f"chapter-{chapter_number:02d}.synthesis_units.json")
+
+
 def _direction_speed_summary(chapter_payload: dict) -> dict:
     speed_counts: dict[str, int] = {}
     total_segments = 0
@@ -799,12 +803,18 @@ def synth_chapter(
     m4a_path = os.path.join(build_dir, f"chapter-{chapter_number:02d}.m4a")
     wav_path = os.path.join(build_dir, f"chapter-{chapter_number:02d}.wav")
     sync_path = os.path.join(build_dir, f"chapter-{chapter_number:02d}.sync.json")
+    synthesis_units_path = _chapter_synthesis_units_path(build_dir, chapter_number)
 
     for required in (chunks_path, direction_path):
         if not os.path.exists(required):
             raise FileNotFoundError(f"missing required input for synth: {required}")
 
-    if not force and os.path.exists(m4a_path) and os.path.exists(sync_path):
+    if (
+        not force
+        and os.path.exists(m4a_path)
+        and os.path.exists(sync_path)
+        and os.path.exists(synthesis_units_path)
+    ):
         return sync_path
 
     chunk_payload = read_chapter_chunks_artifact(chunks_path)
@@ -842,6 +852,7 @@ def synth_chapter(
         wav_path,
         m4a_path,
         sync_path,
+        synthesis_units_path,
         chapter_number,
         chunk_texts,
         voice=voice,
@@ -907,6 +918,111 @@ def sync_chapter(
         chunk_texts=chunk_texts,
         force=force,
     )
+
+
+def _refresh_repaired_rendition_manifest(
+    build_dir: str,
+    chapter_number: int,
+    m4a_path: str,
+) -> str | None:
+    manifest_path = os.path.join(build_dir, "rendition-manifest.json")
+    if not os.path.exists(manifest_path):
+        return None
+
+    from openshelf.pipeline.encoder import audio_duration
+
+    payload = _read_json(manifest_path)
+    chapters = payload.get("chapters", [])
+    duration_seconds = audio_duration(m4a_path)
+    updated = False
+    for chapter in chapters:
+        if int(chapter.get("number", -1)) == chapter_number:
+            chapter["duration_seconds"] = duration_seconds
+            updated = True
+            break
+    if not updated:
+        logger.warning(
+            "Skipping rendition manifest duration refresh; chapter %d not found in %s",
+            chapter_number,
+            manifest_path,
+        )
+        return None
+
+    payload["total_duration_seconds"] = sum(
+        float(chapter.get("duration_seconds", 0.0) or 0.0)
+        for chapter in chapters
+    )
+    _write_json(manifest_path, payload)
+    return manifest_path
+
+
+def _refresh_repaired_chapter_data(build_dir: str) -> str | None:
+    chapter_data_path = os.path.join(build_dir, "chapter_data.json")
+    if not os.path.exists(chapter_data_path):
+        return None
+
+    rendition, build_id = _rendition_build_from_build_dir(build_dir)
+    return assemble_chapter_data(
+        build_dir,
+        rendition,
+        build_id,
+        output_path=chapter_data_path,
+        force=True,
+    )
+
+
+def repair_pauses_chapter(
+    build_dir: str,
+    chapter_number: int,
+    force: bool = False,
+) -> str:
+    """Repair recorded seam pauses for one synthesized chapter without TTS."""
+    if not force:
+        raise ValueError("repair-pauses rewrites audio/timing artifacts and requires --force")
+
+    from openshelf.pipeline.seams import repair_chapter_pause_files
+
+    chunks_path = _chapter_chunks_path(build_dir, chapter_number)
+    sync_path = _chapter_sync_path(build_dir, chapter_number)
+    synthesis_units_path = _chapter_synthesis_units_path(build_dir, chapter_number)
+    m4a_path = os.path.join(build_dir, f"chapter-{chapter_number:02d}.m4a")
+
+    for required in (chunks_path, sync_path, synthesis_units_path, m4a_path):
+        if not os.path.exists(required):
+            raise FileNotFoundError(f"missing required input for pause repair: {required}")
+
+    chunk_payload = read_chapter_chunks_artifact(chunks_path)
+    chunk_texts = [chunk["text"] for chunk in chunk_payload.get("chunks", [])]
+    edits = repair_chapter_pause_files(
+        m4a_path=m4a_path,
+        sync_path=sync_path,
+        synthesis_units_path=synthesis_units_path,
+        chunk_texts=chunk_texts,
+        force=True,
+    )
+    refreshed_chapter_data = None
+    refreshed_manifest = None
+    if edits:
+        refreshed_chapter_data = _refresh_repaired_chapter_data(build_dir)
+        refreshed_manifest = _refresh_repaired_rendition_manifest(
+            build_dir,
+            chapter_number,
+            m4a_path,
+        )
+    logger.info(
+        (
+            "Chapter %d pause repair complete edits=%d m4a=%s sync=%s "
+            "synthesis_units=%s chapter_data=%s rendition_manifest=%s"
+        ),
+        chapter_number,
+        len(edits),
+        m4a_path,
+        sync_path,
+        synthesis_units_path,
+        refreshed_chapter_data or "",
+        refreshed_manifest or "",
+    )
+    return sync_path
 
 
 def upload_build(
@@ -1422,6 +1538,7 @@ def run_book(args) -> dict:
         m4a_path = os.path.join(build_dir, f"chapter-{ch_num:02d}.m4a")
         wav_path = os.path.join(build_dir, f"chapter-{ch_num:02d}.wav")
         sync_path = _chapter_sync_path(build_dir, ch_num)
+        synthesis_units_path = _chapter_synthesis_units_path(build_dir, ch_num)
 
         print("    synthesizing + aligning ...", end=" ", flush=True)
         with Heartbeat(logger, f"Synthesizing and aligning chapter {ch_num}"):
@@ -1431,6 +1548,7 @@ def run_book(args) -> dict:
                 wav_path,
                 m4a_path,
                 sync_path,
+                synthesis_units_path,
                 ch_num,
                 chunk_texts,
                 voice=narrator_voice_id,
@@ -1455,6 +1573,11 @@ def run_book(args) -> dict:
             m4a_path,
         )
         logger.info("Chapter %d sync artifact written: %s", ch_num, sync_path)
+        logger.info(
+            "Chapter %d synthesis units artifact written: %s",
+            ch_num,
+            synthesis_units_path,
+        )
 
     elapsed = time.time() - start
     print(f"\nDone. {total_duration / 60:.1f} min of audio in {elapsed:.0f}s.")
@@ -1677,6 +1800,11 @@ def _build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--language", default="en")
     sync.add_argument("--force", action="store_true")
 
+    repair_pauses = subparsers.add_parser("repair-pauses")
+    repair_pauses.add_argument("--build-dir", required=True)
+    repair_pauses.add_argument("--chapter", type=int, required=True)
+    repair_pauses.add_argument("--force", action="store_true")
+
     upload = subparsers.add_parser("upload")
     upload.add_argument("--book-dir", required=True)
     upload.add_argument("--rendition", required=True)
@@ -1782,6 +1910,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             chapter_number=args.chapter,
             device=args.device,
             language=args.language,
+            force=args.force,
+        )
+        print(path)
+        return 0
+
+    if args.command == "repair-pauses":
+        path = repair_pauses_chapter(
+            build_dir=args.build_dir,
+            chapter_number=args.chapter,
             force=args.force,
         )
         print(path)
