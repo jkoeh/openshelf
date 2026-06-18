@@ -109,6 +109,7 @@ Notes:
 - The client stores the user's preferred build per book locally and uses that preference on the next book-detail load when the retained build still exists. Reading progress is keyed by book, rendition, and build so progress from one build cannot leak into another. The book-detail selector is collapsed by default, always shows the selected engine, groups choices by engine then voice, and lists builds by upload time while keeping raw build IDs internal.
 - The client does not poll status for sync; `useSyncEngine` reads `player.currentTime` directly inside `requestAnimationFrame` and only re-renders when the active word index changes.
 - Tap-to-seek in the reader looks up `words[i].start` and calls `player.seekTo`.
+- When chapter audio finishes, the reader advances to the next chapter in the same selected rendition/build and starts playback only after the next chapter's audio source has loaded.
 
 ### Rendition vs build invariant
 
