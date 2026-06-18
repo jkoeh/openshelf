@@ -11,6 +11,10 @@ import SettingsPanel from "../../../components/SettingsPanel";
 import { useSyncEngine } from "../../../hooks/useSyncEngine";
 import { useTheme } from "../../../hooks/useTheme";
 import { audioUrl, fetchBook, fetchBookBuilds, fetchChapter } from "../../../lib/api";
+import {
+  nextAutoplayChapterAfterFinish,
+  shouldPlayPendingChapter,
+} from "../../../lib/chapter-autoplay";
 import { selectRendition } from "../../../lib/renditions";
 import {
   getSavedFontSize,
@@ -62,7 +66,9 @@ export default function ReaderPage() {
   const [rate, setRate] = useState(getSavedPlaybackRate);
   const [syncEnabled] = useState(getIsSyncEnabled);
   const scrollRef = useRef<ScrollView>(null);
-  const autoplayTriggered = useRef(false);
+  const initialAutoplayDone = useRef(false);
+  const pendingAutoplayChapter = useRef<number | null>(null);
+  const handledFinishKey = useRef<string | null>(null);
 
   // Audio player
   const audioSrc =
@@ -177,30 +183,57 @@ export default function ReaderPage() {
 
   // Auto-play on first load if autoplay param is set
   useEffect(() => {
-    if (autoplay === "1" && status.isLoaded && !autoplayTriggered.current) {
-      autoplayTriggered.current = true;
+    if (
+      autoplay === "1" &&
+      status.isLoaded &&
+      audioSrc &&
+      pinnedBuild?.chapter === currentChapter &&
+      !initialAutoplayDone.current
+    ) {
+      initialAutoplayDone.current = true;
       player.play();
     }
-  }, [autoplay, status.isLoaded, player]);
+  }, [autoplay, status.isLoaded, audioSrc, pinnedBuild?.chapter, currentChapter, player]);
 
   // Auto-advance to next chapter when audio finishes
   useEffect(() => {
-    if (status.didJustFinish && totalChapters > 0) {
-      if (currentChapter < totalChapters) {
-        setCurrentChapter((prev) => prev + 1);
-        // New chapter will auto-play since didJustFinish means we were playing
-        autoplayTriggered.current = true;
-      }
+    if (!status.didJustFinish) {
+      handledFinishKey.current = null;
+      return;
     }
-  }, [status.didJustFinish, totalChapters, currentChapter]);
+
+    const transition = nextAutoplayChapterAfterFinish({
+      didJustFinish: status.didJustFinish,
+      currentChapter,
+      totalChapters,
+      pinnedChapter: pinnedBuild?.chapter,
+      rendition: pinnedBuild?.rendition,
+      build: pinnedBuild?.build,
+      handledFinishKey: handledFinishKey.current,
+      pendingAutoplayChapter: pendingAutoplayChapter.current,
+    });
+
+    if (!transition) return;
+    handledFinishKey.current = transition.handledFinishKey;
+    pendingAutoplayChapter.current = transition.pendingAutoplayChapter;
+    setCurrentChapter(transition.nextChapter);
+  }, [status.didJustFinish, totalChapters, currentChapter, pinnedBuild]);
 
   // When chapter changes and audio was playing, auto-play the new chapter
   useEffect(() => {
-    if (autoplayTriggered.current && status.isLoaded) {
+    if (
+      shouldPlayPendingChapter({
+        pendingAutoplayChapter: pendingAutoplayChapter.current,
+        currentChapter,
+        pinnedChapter: pinnedBuild?.chapter,
+        isLoaded: status.isLoaded,
+        hasAudioSource: Boolean(audioSrc),
+      })
+    ) {
       player.play();
-      autoplayTriggered.current = false;
+      pendingAutoplayChapter.current = null;
     }
-  }, [status.isLoaded, player]);
+  }, [currentChapter, pinnedBuild?.chapter, status.isLoaded, audioSrc, player]);
 
   // Fetch manifest.
   useEffect(() => {
@@ -367,7 +400,7 @@ export default function ReaderPage() {
       if (clamped !== currentChapter) {
         // If audio was playing, flag to auto-play new chapter
         if (status.playing) {
-          autoplayTriggered.current = true;
+          pendingAutoplayChapter.current = clamped;
         }
         player.pause();
         setCurrentChapter(clamped);
