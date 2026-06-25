@@ -280,13 +280,26 @@ class TestAudioDirector(unittest.TestCase):
         self.assertIn("chunk_index", llm.calls[0]["user"])
 
     def test_default_batched_performance_direction_can_split_chunk_units(self):
-        windows = [ChunkWindow("", "Calm. Then fear.", "")]
+        text = (
+            "Calm narration settles the room with measured detail before the sudden interruption. "
+            "\"Then fear!\""
+        )
+        windows = [ChunkWindow("", text, "")]
         llm = StubLLM([{"chunks": [{
             "chunk_index": 0,
             "mode": "split",
             "units": [
-                {"text": "Calm. ", "emotion": "neutral", "speed": "normal"},
-                {"text": "Then fear.", "emotion": "anxious", "speed": "normal", "intensity": 0.8},
+                {
+                    "text": "Calm narration settles the room with measured detail before the sudden interruption. ",
+                    "emotion": "neutral",
+                    "speed": "normal",
+                },
+                {
+                    "text": "\"Then fear!\"",
+                    "emotion": "anxious",
+                    "speed": "normal",
+                    "intensity": 0.8,
+                },
             ],
         }]}])
         director = AudioDirector(FakePerformanceEngine(), llm, NullAligner())
@@ -294,10 +307,16 @@ class TestAudioDirector(unittest.TestCase):
         _registry_after, directed = director.direct_chapter("I", windows, _registry())
 
         self.assertEqual(len(llm.calls), 1)
-        self.assertEqual([segment.text for segment in directed[0]], ["Calm. ", "Then fear."])
+        self.assertEqual(
+            [segment.text for segment in directed[0]],
+            [
+                "Calm narration settles the room with measured detail before the sudden interruption. ",
+                "\"Then fear!\"",
+            ],
+        )
         self.assertEqual("".join(segment.text for segment in directed[0]), windows[0].text)
         self.assertEqual([segment.emotion for segment in directed[0]], ["neutral", "anxious"])
-        self.assertEqual(directed[0][1].engine_controls["intensity"], 0.8)
+        self.assertEqual(directed[0][1].engine_controls["intensity"], 0.6)
         self.assertEqual(directed[0][1].engine_controls["applied_emotion"], "anxious")
 
     def test_chunk_performance_direction_preserves_per_chunk_calls(self):

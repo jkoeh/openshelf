@@ -248,9 +248,15 @@ Direction is capability-gated:
   optional intensity, pace metadata, and adapter-owned mapping to
   `exaggeration`/`cfg_weight`.
 
-The LLM returns one annotation per existing segment and must not split segments.
-It may include `intensity` as a normalized `0.0`-to-`1.0` hint. Speed labels
-map deterministically to audiobook-safe values:
+The default batched performance pass may choose one whole-chunk annotation or
+split a single parent segment into smaller performance units when the split
+marks a meaningful delivery change. Splits are still conservative: complete
+quoted speech, inner thought, and self-talk may stand alone when that sounds
+natural, but punctuation-driven fragments and tiny prose tails are merged back
+into nearby context or rejected. The validator caps intensity for short units so
+brief quoted lines can be expressive without becoming melodramatic. It may
+include `intensity` as a normalized `0.0`-to-`1.0` hint. Speed labels map
+deterministically to audiobook-safe values:
 
 ```python
 {"slow": 0.85, "normal": 0.95, "fast": 1.05}
@@ -277,7 +283,8 @@ controls (`exaggeration` and `cfg_weight`). These controls are serialized in
 `voice_direction.json` under `engine_controls` for audit and must not be
 serialized into `chapter_data.json`.
 
-On any direction failure, return the original segments unchanged.
+On any direction failure, return a conservative neutral direction for the
+affected chunk rather than preserving an unsafe overactive split.
 
 TTS synthesis also has a final steering firewall. For engines without safe
 inline-marker support, synthesis strips bracket cues and SSML-like tags before

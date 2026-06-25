@@ -30,7 +30,7 @@ from openshelf.pipeline.tts_engine import (
     TTSResult,
     VoiceSpec,
 )
-from openshelf.pipeline.seams import PausePolicy
+from openshelf.pipeline.seams import PausePolicy, TextUnit
 from openshelf.config import (
     TTS_LANGUAGE,
     TTS_VOICE,
@@ -927,6 +927,56 @@ class TestSynthesizeChapterWords(unittest.TestCase):
         self.assertEqual(seam.break_type, "sentence")
         self.assertEqual(seam.pause_ms, _PAUSE_POLICY.pause_ms("sentence"))
         self.assertEqual(seam.pause_end_frame - seam.pause_start_frame, _pause_samples("sentence"))
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_engine_technical_split_synthesis_units_have_no_inserted_pause(self, mock_sf_write):
+        class FakeEngine:
+            capabilities = TTSCapabilities(
+                emotion_control=False,
+                paralinguistic_markers=False,
+                speed_control=False,
+                provides_timestamps=False,
+                voice_cloning=False,
+            )
+
+            def post_processing_config(self):
+                return PostProcessingConfig(
+                    needs_forced_alignment=True,
+                    voice_transition_silence_ms=0,
+                    normalize_cross_voice=False,
+                )
+
+            def split_synthesis_units(self, text):
+                return [
+                    TextUnit("not less than two", "technical"),
+                    TextUnit("hundred!"),
+                ]
+
+            def synthesize(self, segment):
+                return TTSResult(
+                    audio=_fake_audio(1000),
+                    sample_rate=TTS_SAMPLE_RATE,
+                    words=None,
+                )
+
+        chunk = ChunkInfo(
+            text="not less than two hundred!",
+            directed_segments=[DirectedSegment(
+                text="not less than two hundred!",
+                voice=VoiceSpec(id="voice-a"),
+                speaker="narrator",
+            )],
+        )
+
+        result = synthesize_chapter(FakeEngine(), [chunk], "/tmp/out.wav", aligner=_RecordingAligner())
+
+        seam = result.synthesis_units[0].seams[0]
+        self.assertEqual(seam.kind, "engine_unit")
+        self.assertEqual(seam.break_type, "technical")
+        self.assertEqual(seam.pause_ms, 0)
+        self.assertEqual(seam.pause_start_frame, seam.pause_end_frame)
+        written = mock_sf_write.call_args[0][1]
+        self.assertEqual(len(written), _LEAD_IN_SAMPLES + 2000)
 
     @patch("openshelf.pipeline.tts.sf.write")
     def test_engine_can_pack_internal_paragraph_breaks_before_split(self, mock_sf_write):

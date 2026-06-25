@@ -320,6 +320,13 @@ PERFORMANCE_DIRECTION_MODES = {"batched", "chunk", "off"}
 PERFORMANCE_DIRECTION_BATCH_WORDS = 1500
 PERFORMANCE_DIRECTION_BATCH_CHARS = 10000
 MAX_ADAPTIVE_UNITS_PER_SEGMENT = 8
+MIN_STANDALONE_SPLIT_WORDS = 12
+MIN_STANDALONE_SPLIT_CHARS = 60
+MEDIUM_SPLIT_WORDS = 24
+SHORT_EXPRESSIVE_INTENSITY_CAP = 0.6
+SHORT_PROSE_INTENSITY_CAP = 0.45
+MEDIUM_EXPRESSIVE_INTENSITY_CAP = 0.65
+LONG_EXPRESSIVE_INTENSITY_CAP = 0.8
 DELIVERY_TYPES = {
     "spoken_dialogue",
     "internal_thought",
@@ -381,6 +388,57 @@ def _directed_intensity(value: Any) -> float:
     return intensity
 
 
+def _performance_word_count(text: str) -> int:
+    return len(re.findall(r"[\w']+", text))
+
+
+def _is_complete_quoted_unit(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if stripped[0] not in {'"', "\u201c", "\u2018"}:
+        return False
+    without_trailing_punctuation = stripped.rstrip(" \t\r\n,.;:!?)]}")
+    return bool(without_trailing_punctuation) and without_trailing_punctuation[-1] in {
+        '"',
+        "\u201d",
+        "\u2019",
+    }
+
+
+def _allows_short_performance_unit(segment: DirectedSegment, text: str) -> bool:
+    return segment.delivery_type in {"internal_thought", "self_talk"} or _is_complete_quoted_unit(text)
+
+
+def _is_short_performance_unit(text: str) -> bool:
+    return (
+        _performance_word_count(text) < MIN_STANDALONE_SPLIT_WORDS
+        or len(text.strip()) < MIN_STANDALONE_SPLIT_CHARS
+    )
+
+
+def _intensity_cap_for_text(segment: DirectedSegment, text: str) -> float:
+    words = _performance_word_count(text)
+    if words < MIN_STANDALONE_SPLIT_WORDS or len(text.strip()) < MIN_STANDALONE_SPLIT_CHARS:
+        if _allows_short_performance_unit(segment, text):
+            return SHORT_EXPRESSIVE_INTENSITY_CAP
+        return SHORT_PROSE_INTENSITY_CAP
+    if words < MEDIUM_SPLIT_WORDS:
+        return MEDIUM_EXPRESSIVE_INTENSITY_CAP
+    return LONG_EXPRESSIVE_INTENSITY_CAP
+
+
+def _cap_directed_intensity(
+    emotion: str,
+    intensity: float,
+    segment: DirectedSegment,
+) -> float:
+    if emotion == "neutral":
+        return intensity
+    text = segment.original_text if segment.original_text is not None else segment.text
+    return min(intensity, _intensity_cap_for_text(segment, text))
+
+
 def _directed_pause_after_ms(value: Any, segment: DirectedSegment) -> int:
     try:
         pause_after_ms = int(value or 0)
@@ -413,9 +471,10 @@ def _adaptive_performance_system_prompt(cfg: EmotionPromptConfig) -> str:
         "You are directing an audiobook performance. For each chunk, decide "
         "whether one shared performance setting is best or whether the chunk "
         "needs smaller performance units with different controls. Use split "
-        "mode only for meaningful shifts in delivery, such as emotionally "
-        "charged close-POV narration, inner thought, or a sharp tonal change. "
-        "Most chunks should use whole mode, often neutral. Do not rewrite text; "
+        "mode only for complete quoted speech, inner thought, self-talk, or a "
+        "meaningful shift in delivery. Do not isolate punctuation-driven "
+        "fragments or tiny prose tails. Most chunks should use whole mode, "
+        "often neutral. Do not rewrite text; "
         "split unit text must be copied exactly and concatenate to the parent "
         "segment text.\n"
         f"{cfg.injection_rules}\n"
@@ -452,6 +511,7 @@ def _apply_emotion_annotation(
     if cfg.marker_format:
         marker = cfg.marker_format.format(emotion=emotion)
         text = f"{marker} {text}"
+    intensity = _cap_directed_intensity(emotion, intensity, segment)
     pause_after_ms = _directed_pause_after_ms(
         item.get("pause_after_ms", 0),
         segment,
@@ -1891,6 +1951,52 @@ def _apply_whole_chunk_annotation(
     return [_apply_emotion_annotation(segment, item, cfg) for segment in segments]
 
 
+def _merge_split_units(
+    segment: DirectedSegment,
+    units: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    guarded = [dict(unit) for unit in units]
+    original_count = len(guarded)
+    index = 0
+    while index < len(guarded):
+        text = guarded[index].get("text")
+        if not isinstance(text, str):
+            raise ValueError("split unit requires text")
+        if not _is_short_performance_unit(text) or _allows_short_performance_unit(segment, text):
+            index += 1
+            continue
+        if len(guarded) <= 1:
+            raise ValueError("split direction collapsed to one unsafe short unit")
+
+        prev_words = (
+            _performance_word_count(str(guarded[index - 1].get("text", "")))
+            if index > 0
+            else -1
+        )
+        next_words = (
+            _performance_word_count(str(guarded[index + 1].get("text", "")))
+            if index + 1 < len(guarded)
+            else -1
+        )
+        merge_previous = prev_words >= next_words
+        if index == 0:
+            merge_previous = False
+        elif index + 1 >= len(guarded):
+            merge_previous = True
+
+        if merge_previous:
+            guarded[index - 1]["text"] = f"{guarded[index - 1]['text']}{text}"
+            del guarded[index]
+            index = max(index - 1, 0)
+        else:
+            guarded[index + 1]["text"] = f"{text}{guarded[index + 1]['text']}"
+            del guarded[index]
+
+    if len(guarded) == 1 and original_count > 1:
+        raise ValueError("split direction collapsed to one performance unit")
+    return guarded
+
+
 def _split_segment_by_adaptive_units(
     segment: DirectedSegment,
     units: Any,
@@ -1901,15 +2007,24 @@ def _split_segment_by_adaptive_units(
     if len(units) > MAX_ADAPTIVE_UNITS_PER_SEGMENT:
         raise ValueError("split direction has too many units")
 
-    unit_texts: list[str] = []
-    directed: list[DirectedSegment] = []
+    raw_units: list[dict[str, Any]] = []
     for unit in units:
         if not isinstance(unit, dict):
             raise ValueError("split unit must be an object")
         text = unit.get("text")
         if not isinstance(text, str) or not text:
             raise ValueError("split unit requires text")
-        unit_texts.append(text)
+        raw_units.append(unit)
+
+    unit_texts = [str(unit["text"]) for unit in raw_units]
+    if "".join(unit_texts) != segment.text:
+        raise ValueError("split unit text must preserve parent segment text exactly")
+
+    guarded_units = _merge_split_units(segment, raw_units)
+
+    directed: list[DirectedSegment] = []
+    for unit in guarded_units:
+        text = str(unit["text"])
         unit_segment = replace(
             segment,
             text=text,
@@ -1917,8 +2032,8 @@ def _split_segment_by_adaptive_units(
         )
         directed.append(_apply_emotion_annotation(unit_segment, unit, cfg))
 
-    if "".join(unit_texts) != segment.text:
-        raise ValueError("split unit text must preserve parent segment text exactly")
+    if "".join(unit.text for unit in directed) != segment.text:
+        raise ValueError("guarded split units must preserve parent segment text exactly")
     return directed
 
 
@@ -1993,11 +2108,13 @@ def add_batched_emotion_direction(
             "For each chunk choose mode='whole' when one shared emotion, pace, "
             "and intensity should apply to the whole chunk, neutral or otherwise. "
             "Choose mode='split' only when materially different performance "
-            "controls are needed within a single parent segment, such as calm "
-            "narration plus anxious inner thought. For split mode, return ordered "
-            "units whose text values concatenate exactly to the parent segment "
-            "text; do not rewrite, omit, normalize, or add text. Prefer whole "
-            "and neutral unless a split is clearly beneficial.\n\n"
+            "controls are needed within a single parent segment. Complete quoted "
+            "speech, inner thought, and self-talk may stand alone when that "
+            "sounds natural. Do not isolate punctuation-driven fragments, "
+            "partial phrases, or tiny prose tails. For split mode, return "
+            "ordered units whose text values concatenate exactly to the parent "
+            "segment text; do not rewrite, omit, normalize, or add text. Prefer "
+            "whole and neutral unless a split is clearly beneficial.\n\n"
             "Chunks:\n"
             f"{json.dumps(_batched_performance_prompt_items(windows, result, batch), ensure_ascii=False)}"
         )

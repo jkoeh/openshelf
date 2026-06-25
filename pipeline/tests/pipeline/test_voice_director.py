@@ -645,8 +645,16 @@ class TestPerformanceDirection(unittest.TestCase):
     def test_batched_emotion_direction_maps_annotations_to_chunks(self):
         cfg = self._cfg()
         windows = [
-            ChunkWindow("", "A sudden sound.", ""),
-            ChunkWindow("", "A sad reply.", ""),
+            ChunkWindow(
+                "",
+                "A sudden sound moved through the corridor while the narrator kept describing the room in steady detail.",
+                "",
+            ),
+            ChunkWindow(
+                "",
+                "A sad reply followed after enough plain narration to avoid the short-unit intensity cap.",
+                "",
+            ),
         ]
         directed_chunks = [
             [DirectedSegment(text=window.text, voice=VoiceSpec(id="narrator"), speaker="narrator")]
@@ -661,7 +669,7 @@ class TestPerformanceDirection(unittest.TestCase):
 
         self.assertEqual(len(llm.calls), 1)
         self.assertEqual(directed[0][0].emotion, "anxious")
-        self.assertEqual(directed[0][0].engine_controls["intensity"], 0.8)
+        self.assertEqual(directed[0][0].engine_controls["intensity"], 0.65)
         self.assertEqual(directed[1][0].emotion, "sad")
         self.assertEqual(directed[1][0].speed, 0.85)
         self.assertIn("chunk_index", llm.calls[0]["user"])
@@ -710,33 +718,104 @@ class TestPerformanceDirection(unittest.TestCase):
 
     def test_batched_emotion_direction_splits_single_parent_segment(self):
         cfg = self._cfg()
-        windows = [ChunkWindow("", "Calm. Then terror.", "")]
+        text = (
+            "Calm narration settles the room with measured detail before the sudden interruption. "
+            "\"Then terror!\""
+        )
+        windows = [ChunkWindow("", text, "")]
         directed_chunks = [[
             DirectedSegment(
-                text="Calm. Then terror.",
+                text=text,
                 voice=VoiceSpec(id="narrator"),
                 speaker="narrator",
-                original_text="Calm. Then terror.",
+                original_text=text,
             )
         ]]
         llm = StubLLM([{"chunks": [{
             "chunk_index": 0,
             "mode": "split",
             "units": [
-                {"text": "Calm. ", "emotion": "neutral", "speed": "normal", "intensity": 0.2},
-                {"text": "Then terror.", "emotion": "anxious", "speed": "normal", "intensity": 0.8},
+                {
+                    "text": "Calm narration settles the room with measured detail before the sudden interruption. ",
+                    "emotion": "neutral",
+                    "speed": "normal",
+                    "intensity": 0.2,
+                },
+                {
+                    "text": "\"Then terror!\"",
+                    "emotion": "anxious",
+                    "speed": "normal",
+                    "intensity": 0.8,
+                },
             ],
         }]}])
 
         directed = add_batched_emotion_direction(directed_chunks, windows, llm, cfg)
 
-        self.assertEqual([segment.text for segment in directed[0]], ["Calm. ", "Then terror."])
+        self.assertEqual(
+            [segment.text for segment in directed[0]],
+            [
+                "Calm narration settles the room with measured detail before the sudden interruption. ",
+                "\"Then terror!\"",
+            ],
+        )
         self.assertEqual("".join(segment.text for segment in directed[0]), windows[0].text)
         self.assertEqual([segment.voice.id for segment in directed[0]], ["narrator", "narrator"])
         self.assertEqual([segment.speaker for segment in directed[0]], ["narrator", "narrator"])
         self.assertEqual(directed[0][0].emotion, "neutral")
         self.assertEqual(directed[0][1].emotion, "anxious")
-        self.assertEqual(directed[0][1].engine_controls["intensity"], 0.8)
+        self.assertEqual(directed[0][1].engine_controls["intensity"], 0.6)
+
+    def test_batched_emotion_direction_merges_short_nonquoted_split_unit(self):
+        cfg = self._cfg()
+        first = "A careful sentence gave the scene enough context before the small phrase arrived in the doorway "
+        short = "and to her great delight it fitted!"
+        third = (
+            " then ordinary narration continued for several steady words afterward with no sudden emotional change."
+        )
+        text = first + short + third
+        windows = [ChunkWindow("", text, "")]
+        directed_chunks = [[
+            DirectedSegment(text=text, voice=VoiceSpec(id="narrator"), speaker="narrator")
+        ]]
+        llm = StubLLM([{"chunks": [{
+            "chunk_index": 0,
+            "mode": "split",
+            "units": [
+                {"text": first, "emotion": "neutral", "speed": "normal", "intensity": 0.2},
+                {"text": short, "emotion": "anxious", "speed": "normal", "intensity": 0.8},
+                {"text": third, "emotion": "neutral", "speed": "normal", "intensity": 0.2},
+            ],
+        }]}])
+
+        directed = add_batched_emotion_direction(directed_chunks, windows, llm, cfg)
+
+        self.assertEqual(len(directed[0]), 2)
+        self.assertEqual("".join(segment.text for segment in directed[0]), text)
+        self.assertNotIn(short, [segment.text for segment in directed[0]])
+        self.assertEqual(directed[0][0].text, first + short)
+        self.assertEqual(directed[0][0].emotion, "neutral")
+
+    def test_batched_emotion_direction_rejects_all_short_nonquoted_split_units(self):
+        cfg = self._cfg()
+        windows = [ChunkWindow("", "Calm. Then fear.", "")]
+        directed_chunks = [[
+            DirectedSegment(text="Calm. Then fear.", voice=VoiceSpec(id="narrator"), speaker="narrator")
+        ]]
+        llm = StubLLM([{"chunks": [{
+            "chunk_index": 0,
+            "mode": "split",
+            "units": [
+                {"text": "Calm. ", "emotion": "neutral", "speed": "normal"},
+                {"text": "Then fear.", "emotion": "anxious", "speed": "normal", "intensity": 0.8},
+            ],
+        }]}])
+
+        directed = add_batched_emotion_direction(directed_chunks, windows, llm, cfg)
+
+        self.assertEqual(len(directed[0]), 1)
+        self.assertEqual(directed[0][0].text, "Calm. Then fear.")
+        self.assertEqual(directed[0][0].emotion, "neutral")
 
     def test_batched_emotion_direction_rejects_split_that_rewrites_text(self):
         cfg = self._cfg()

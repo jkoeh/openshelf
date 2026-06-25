@@ -202,6 +202,21 @@ class TestChatterboxAdapter(unittest.TestCase):
         self.assertTrue(all(isinstance(unit, str) for unit in units))
         self.assertEqual(" ".join(units), text)
 
+    @mock.patch.dict(os.environ, {"OPENSHELF_CHATTERBOX_MAX_CHARS": "320"})
+    def test_split_synthesis_units_rebalances_short_trailing_orphan(self):
+        engine = ChatterboxAdapter()
+        text = (
+            "Upon this imaginary creature rested the responsibility of all these shipwrecks, which unfortunately were "
+            "considerable; for of three thousand ships whose loss was annually recorded at Lloyd's, the number of "
+            "sailing and steam ships supposed to be totally lost, from the absence of all news, amounted to not less "
+            "than two hundred!"
+        )
+
+        units = engine.split_synthesis_units(text)
+
+        self.assertEqual(units, [text])
+        self.assertNotIn("hundred!", [getattr(unit, "text", unit) for unit in units])
+
     def test_synthesize_rejects_missing_reference_audio_before_model_load(self):
         runtime = FakeChatterboxRuntime()
         engine = ChatterboxAdapter(model=runtime)

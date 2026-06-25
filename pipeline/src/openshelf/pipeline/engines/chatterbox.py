@@ -21,6 +21,7 @@ from openshelf.pipeline.engines.kokoro import (
     KOKORO_VOICES,
     KokoroAdapter,
 )
+from openshelf.pipeline.seams import TextUnit
 from openshelf.pipeline.tts_engine import (
     AnnotationPromptConfig,
     DirectedSegment,
@@ -49,6 +50,8 @@ DEFAULT_REF_TEXT = (
     "neutral expressive tone."
 )
 DEFAULT_MAX_SYNTHESIS_CHARS = 320
+MIN_SYNTHESIS_UNIT_WORDS = 8
+MIN_SYNTHESIS_UNIT_CHARS = 40
 _SENTENCE_RE = re.compile(r".+?(?:[.!?][\"'\u201d\u2019)\]]*(?=\s+|$)|$)", re.DOTALL)
 PROFILES_FILENAME = "profiles.json"
 
@@ -402,13 +405,13 @@ class ChatterboxAdapter:
             },
         )
 
-    def split_synthesis_units(self, text: str) -> list[str]:
+    def split_synthesis_units(self, text: str) -> list[str | TextUnit]:
         max_chars = _int_env("OPENSHELF_CHATTERBOX_MAX_CHARS", DEFAULT_MAX_SYNTHESIS_CHARS)
         if len(text) <= max_chars:
             return [text]
 
         sentences = _sentence_units(text)
-        packed: list[str] = []
+        packed: list[str | TextUnit] = []
         current = ""
         for sentence in sentences:
             if len(sentence) > max_chars:
@@ -500,7 +503,30 @@ def _sentence_units(text: str) -> list[str]:
     return [match.group(0).strip() for match in _SENTENCE_RE.finditer(clean) if match.group(0).strip()]
 
 
-def _word_pack(text: str, max_chars: int) -> list[str]:
+def _unit_word_count(text: str) -> int:
+    return len(re.findall(r"[\w']+", text))
+
+
+def _is_short_synthesis_unit(text: str) -> bool:
+    return _unit_word_count(text) < MIN_SYNTHESIS_UNIT_WORDS or len(text) < MIN_SYNTHESIS_UNIT_CHARS
+
+
+def _soft_max_chars(max_chars: int) -> int:
+    return max_chars + min(80, max(24, int(max_chars * 0.15)))
+
+
+def _rebalance_short_tail(units: list[str], max_chars: int) -> list[str]:
+    soft_max = _soft_max_chars(max_chars)
+    while len(units) > 1 and _is_short_synthesis_unit(units[-1]):
+        candidate = f"{units[-2]} {units[-1]}".strip()
+        if len(candidate) > soft_max:
+            break
+        units[-2] = candidate
+        units.pop()
+    return units
+
+
+def _word_pack(text: str, max_chars: int) -> list[TextUnit]:
     words = text.split()
     units: list[str] = []
     current = ""
@@ -513,7 +539,11 @@ def _word_pack(text: str, max_chars: int) -> list[str]:
             current = candidate
     if current:
         units.append(current)
-    return units
+    units = _rebalance_short_tail(units, max_chars)
+    return [
+        TextUnit(unit, "technical" if index + 1 < len(units) else None)
+        for index, unit in enumerate(units)
+    ]
 
 
 @contextmanager

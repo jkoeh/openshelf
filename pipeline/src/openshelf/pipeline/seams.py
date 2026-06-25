@@ -25,6 +25,7 @@ PauseBreakType = Literal[
     "quote",
     "inner_thought",
     "word",
+    "technical",
 ]
 SeamKind = Literal["chunk", "directed_segment", "engine_unit"]
 
@@ -100,6 +101,7 @@ class PausePolicy:
         "quote": 180,
         "inner_thought": 180,
         "word": 120,
+        "technical": 0,
     }
 
     _sentence_end = (".", "?", "!")

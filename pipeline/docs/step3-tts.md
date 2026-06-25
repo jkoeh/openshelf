@@ -128,11 +128,13 @@ units. The generic TTS layer lets Chatterbox see the full directed segment
 instead of first splitting true paragraph breaks into separate synthesis calls;
 then Chatterbox's optional `split_synthesis_units(text)` hook packs prose into
 sentence-sized generation units bounded by its max character window before
-`generate(...)` is called. Internal Chatterbox unit joins use the shared
-`PausePolicy`, not an adapter-local constant, so sentence boundaries, phrase
-breaks, and word-level technical splits follow the same audiobook cadence rules
-as chunk and directed-segment seams. The split is internal to TTS and alignment;
-reader text and `chapter_data.json` stay unchanged. Kokoro keeps the generic
+`generate(...)` is called. The packer rebalances short trailing fragments so a
+natural phrase such as `two hundred` is not separated into an audible orphan
+unit. Internal Chatterbox unit joins use the shared `PausePolicy`, not an
+adapter-local constant: sentence, phrase, and paragraph joins keep the normal
+audiobook cadence, while unavoidable in-sentence technical splits are labeled
+`technical` and receive no inserted silence. The split is internal to TTS and
+alignment; reader text and `chapter_data.json` stay unchanged. Kokoro keeps the generic
 paragraph break behavior because its lower per-call overhead and native timing
 path make explicit paragraph pauses useful.
 Before generation, the adapter disables upstream `tqdm` progress bars inside
