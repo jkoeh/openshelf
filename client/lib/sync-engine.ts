@@ -28,5 +28,5 @@ export function findWordAtTime(words: WordEntry[], time: number): number {
 export function findChunkAtTime(words: WordEntry[], time: number): number {
   const wordIdx = findWordAtTime(words, time);
   if (wordIdx === -1) return -1;
-  return words[wordIdx].chunk_idx;
+  return words[wordIdx].chunk_idx ?? -1;
 }

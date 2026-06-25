@@ -15,11 +15,11 @@ import {
   View,
 } from "react-native";
 import { useTheme } from "../hooks/useTheme";
-import type { WordEntry } from "../types";
+import type { SectionHeading, WordEntry } from "../types";
 import SyncedText from "./SyncedText";
 
 interface ReadingPaneProps {
-  chapterTitle: string;
+  heading: SectionHeading;
   chunks: string[];
   fontSize: number;
   words?: WordEntry[];
@@ -28,46 +28,49 @@ interface ReadingPaneProps {
   onWordPress?: (wordIndex: number) => void;
 }
 
-const CHAPTER_PREFIX = /^(chapter\s+[\w]+)(.*)/i;
-
 function ChapterHeading({
-  title,
+  heading,
   fontSize,
   color,
-}: { title: string; fontSize: number; color: string }) {
-  const match = title.match(CHAPTER_PREFIX);
-  if (match && match[2].trim()) {
-    return (
-      <View style={{ alignItems: "center", marginBottom: 24 }}>
+  active,
+  onPress,
+}: {
+  heading: SectionHeading;
+  fontSize: number;
+  color: string;
+  active: boolean;
+  onPress?: () => void;
+}) {
+  return (
+    <View
+      onTouchEnd={onPress}
+      style={{
+        alignItems: "center",
+        marginBottom: 24,
+        borderRadius: 6,
+        padding: 8,
+        backgroundColor: active ? "rgba(255, 213, 79, 0.35)" : "transparent",
+      }}
+    >
+      {heading.display_label ? (
         <Text style={{ color, fontSize: fontSize + 4, fontWeight: "700", textAlign: "center" }}>
-          {match[1]}
+          {heading.display_label}
         </Text>
+      ) : null}
+      {heading.display_title ? (
         <Text
           style={{
             color,
             fontSize: fontSize + 2,
             fontWeight: "600",
             textAlign: "center",
-            marginTop: 8,
+            marginTop: heading.display_label ? 8 : 0,
           }}
         >
-          {match[2].trim()}
+          {heading.display_title}
         </Text>
-      </View>
-    );
-  }
-  return (
-    <Text
-      style={{
-        color,
-        fontSize: fontSize + 4,
-        fontWeight: "700",
-        textAlign: "center",
-        marginBottom: 24,
-      }}
-    >
-      {title}
-    </Text>
+      ) : null}
+    </View>
   );
 }
 
@@ -76,7 +79,7 @@ const AUTO_SCROLL_RESUME_DELAY = 5000;
 const ReadingPane = forwardRef<ScrollView, ReadingPaneProps>(
   (
     {
-      chapterTitle,
+      heading,
       chunks,
       fontSize,
       words,
@@ -89,6 +92,10 @@ const ReadingPane = forwardRef<ScrollView, ReadingPaneProps>(
     const { colors } = useTheme();
     const lineHeight = Math.round(fontSize * 1.7);
     const hasSyncData = words && words.length > 0;
+    const headingWordIndex = words?.findIndex((word) => word.region === "heading") ?? -1;
+    const headingActive = Boolean(
+      activeWordIndex >= 0 && words?.[activeWordIndex]?.region === "heading",
+    );
 
     const innerScrollRef = useRef<ScrollView>(null);
     const chunkPositions = useRef<Map<number, number>>(new Map());
@@ -162,7 +169,17 @@ const ReadingPane = forwardRef<ScrollView, ReadingPaneProps>(
           alignSelf: "center",
         }}
       >
-        <ChapterHeading title={chapterTitle} fontSize={fontSize} color={colors.text} />
+        <ChapterHeading
+          heading={heading}
+          fontSize={fontSize}
+          color={colors.text}
+          active={headingActive}
+          onPress={
+            headingWordIndex >= 0 && onWordPress
+              ? () => onWordPress(headingWordIndex)
+              : undefined
+          }
+        />
         {hasSyncData ? (
           <SyncedText
             chunks={chunks}

@@ -10,10 +10,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 from openshelf.pipeline.text_chunker import (
     Chunk,
-    build_chapter_chunks_artifact,
+    build_section_chunks_artifact,
     chunk_text,
-    read_chapter_chunks_artifact,
-    write_chapter_chunks_artifact,
+    read_section_chunks_artifact,
+    write_section_chunks_artifact,
 )
 from openshelf.config import CHUNK_MAX_WORDS
 
@@ -332,7 +332,7 @@ class TestChunkTextElementIds(unittest.TestCase):
             chunk_text([_words(50), _words(50)], element_ids=["ch1-el0000"])
 
 
-class TestChapterChunksArtifact(unittest.TestCase):
+class TestSectionChunksArtifact(unittest.TestCase):
 
     def test_builds_indexed_chunk_artifact_with_text_hashes(self):
         chunks = [
@@ -340,14 +340,28 @@ class TestChapterChunksArtifact(unittest.TestCase):
             Chunk("Second paragraph.", 1, 1, "ch1-el0001", "ch1-el0001"),
         ]
 
-        artifact = build_chapter_chunks_artifact(1, "Chapter One", chunks)
+        heading = {
+            "display_label": "I",
+            "display_title": "Chapter One",
+            "spoken_text": "Chapter One.",
+            "element_ids": ["sec1-el0000"],
+        }
+        artifact = build_section_chunks_artifact(
+            1,
+            "chapter",
+            1,
+            heading,
+            chunks,
+        )
 
         self.assertEqual(
             artifact,
             {
-                "version": 1,
-                "number": 1,
-                "title": "Chapter One",
+                "version": 2,
+                "sequence": 1,
+                "section_type": "chapter",
+                "ordinal": 1,
+                "heading": heading,
                 "chunks": [
                     {
                         "index": 0,
@@ -382,15 +396,28 @@ class TestChapterChunksArtifact(unittest.TestCase):
         changed_chunks = [Chunk("Changed paragraph.", 0, 0)]
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "chapter-01.chunks.json")
+            path = os.path.join(tmp, "section-01.chunks.json")
+            heading = {
+                "display_label": "I",
+                "display_title": "",
+                "spoken_text": "Chapter One.",
+                "element_ids": ["sec1-el0000"],
+            }
 
-            write_chapter_chunks_artifact(path, 1, "Chapter One", chunks)
-            write_chapter_chunks_artifact(path, 1, "Chapter One", chunks)
-            persisted = read_chapter_chunks_artifact(path)
+            write_section_chunks_artifact(path, 1, "chapter", 1, heading, chunks)
+            write_section_chunks_artifact(path, 1, "chapter", 1, heading, chunks)
+            persisted = read_section_chunks_artifact(path)
 
             self.assertEqual(persisted["chunks"][0]["text"], "First paragraph.")
             with self.assertRaises(FileExistsError):
-                write_chapter_chunks_artifact(path, 1, "Chapter One", changed_chunks)
+                write_section_chunks_artifact(
+                    path,
+                    1,
+                    "chapter",
+                    1,
+                    heading,
+                    changed_chunks,
+                )
 
 
 if __name__ == "__main__":

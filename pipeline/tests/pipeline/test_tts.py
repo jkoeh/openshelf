@@ -2,6 +2,7 @@
 
 import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 
@@ -269,11 +270,17 @@ class TestSynthesizeChapter(unittest.TestCase):
         pipeline.assert_called_with("text", voice=TTS_VOICE)
 
     @patch("openshelf.pipeline.tts.sf.write")
-    def test_custom_voice(self, mock_sf_write):
+    def test_custom_narrator_voice(self, mock_sf_write):
         pipeline = MagicMock()
         pipeline.return_value = iter([("g", "p", _fake_audio(100))])
+        narrator_voice = VoiceSpec(id="bf_emma", preset_name="bf_emma")
 
-        synthesize_chapter(pipeline, _make_chunks(["text"]), "/tmp/out.wav", voice="bf_emma")
+        synthesize_chapter(
+            pipeline,
+            _make_chunks(["text"]),
+            "/tmp/out.wav",
+            narrator_voice=narrator_voice,
+        )
 
         pipeline.assert_called_with("text", voice="bf_emma")
 
@@ -650,6 +657,166 @@ class TestSynthesizeChapterWords(unittest.TestCase):
             result.chunk_audio_starts[1],
             places=3,
         )
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_heading_is_synthesized_and_aligned_before_body_without_merging(self, mock_sf_write):
+        calls: list[str] = []
+
+        class CompactAligner(_FakeAligner):
+            def align_segments(self, audio, texts, starts, sample_rate):
+                aligned = []
+                for text, start in zip(texts, starts):
+                    aligned.extend([
+                        WordTimestamp(
+                            word=word,
+                            start=start + index * 0.005,
+                            end=start + index * 0.005 + 0.004,
+                        )
+                        for index, word in enumerate(text.split())
+                    ])
+                return aligned
+
+        def make_iter(text, voice=None):
+            calls.append(text)
+            return iter([_FakeResult("g", "p", _fake_audio(1000), [
+                _FakeToken(text.split()[0], 0.0, 0.2),
+            ])])
+
+        result = synthesize_chapter(
+            MagicMock(side_effect=make_iter),
+            _make_chunks(["Alice was beginning to get very tired."]),
+            "/tmp/out.wav",
+            aligner=CompactAligner(),
+            heading_text="Chapter One. Down the Rabbit-Hole.",
+        )
+
+        self.assertEqual(
+            calls,
+            [
+                "Chapter One. Down the Rabbit-Hole.",
+                "Alice was beginning to get very tired.",
+            ],
+        )
+        self.assertEqual(result.heading_words[0].word, "Chapter")
+        self.assertEqual(result.chunk_words[0][0].word, "Alice")
+        self.assertGreater(
+            result.chunk_audio_starts[0] - result.heading_words[-1].end,
+            0.7,
+        )
+
+    @patch("openshelf.pipeline.tts.sf.write")
+    def test_complete_narrator_voice_is_reused_for_all_engine_heading_paths(self, mock_sf_write):
+        from openshelf.pipeline.engines.chatterbox import ChatterboxAdapter
+        from openshelf.pipeline.engines.f5tts import F5TTSAdapter
+        from openshelf.pipeline.engines.kokoro import KokoroAdapter
+
+        class F5Runtime:
+            def __init__(self):
+                self.calls = []
+
+            def infer(self, **kwargs):
+                self.calls.append(kwargs)
+                return _fake_audio(1000), TTS_SAMPLE_RATE, object()
+
+        class ChatterboxRuntime:
+            sr = TTS_SAMPLE_RATE
+
+            def __init__(self):
+                self.calls = []
+                self.prepare_calls = []
+
+            def prepare_conditionals(self, audio_prompt_path, exaggeration=0.5):
+                self.prepare_calls.append({
+                    "audio_prompt_path": audio_prompt_path,
+                    "exaggeration": exaggeration,
+                })
+
+            def generate(self, **kwargs):
+                self.calls.append(kwargs)
+                return _fake_audio(1000)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ref_audio = os.path.join(tmp, "narrator.wav")
+            with open(ref_audio, "wb") as file:
+                file.write(b"RIFF")
+
+            kokoro_pipeline = MagicMock(
+                side_effect=lambda text, voice=None, **kwargs: iter([
+                    ("g", "p", _fake_audio(1000)),
+                ])
+            )
+            f5_runtime = F5Runtime()
+            chatterbox_runtime = ChatterboxRuntime()
+            cases = [
+                (
+                    "kokoro",
+                    KokoroAdapter(pipeline=kokoro_pipeline),
+                    VoiceSpec(id="af_heart", preset_name="af_heart"),
+                ),
+                (
+                    "f5tts",
+                    F5TTSAdapter(f5tts=f5_runtime),
+                    VoiceSpec(
+                        id="f5tts-test",
+                        ref_audio_path=ref_audio,
+                        ref_text="Complete narrator reference text.",
+                    ),
+                ),
+                (
+                    "chatterbox",
+                    ChatterboxAdapter(model=chatterbox_runtime),
+                    VoiceSpec(
+                        id="chatterbox-test",
+                        ref_audio_path=ref_audio,
+                        ref_text="Complete narrator reference text.",
+                    ),
+                ),
+            ]
+
+            for engine_name, engine, narrator_voice in cases:
+                with self.subTest(engine=engine_name):
+                    observed_voices = []
+                    original_synthesize = engine.synthesize
+
+                    def record_synthesize(segment, original=original_synthesize):
+                        observed_voices.append(segment.voice)
+                        return original(segment)
+
+                    engine.synthesize = record_synthesize
+                    result = synthesize_chapter(
+                        engine,
+                        _make_chunks(["Alice was beginning."]),
+                        os.path.join(tmp, f"{engine_name}.wav"),
+                        narrator_voice=narrator_voice,
+                        aligner=_FakeAligner(),
+                        heading_text="Chapter One.",
+                    )
+
+                    self.assertEqual(len(observed_voices), 2)
+                    self.assertTrue(all(voice is narrator_voice for voice in observed_voices))
+                    self.assertEqual(result.heading_words[0].word, "Chapter")
+                    self.assertEqual(result.chunk_words[0][0].word, "Alice")
+
+            self.assertEqual(
+                [call.kwargs["voice"] for call in kokoro_pipeline.call_args_list],
+                ["af_heart", "af_heart"],
+            )
+            self.assertEqual(
+                [call["ref_file"] for call in f5_runtime.calls],
+                [ref_audio, ref_audio],
+            )
+            self.assertEqual(
+                [call["ref_text"] for call in f5_runtime.calls],
+                [
+                    "Complete narrator reference text.",
+                    "Complete narrator reference text.",
+                ],
+            )
+            self.assertEqual(
+                chatterbox_runtime.prepare_calls[0]["audio_prompt_path"],
+                ref_audio,
+            )
+            self.assertEqual(len(chatterbox_runtime.calls), 2)
 
     @patch("openshelf.pipeline.tts.sf.write")
     def test_skipped_chunk_has_empty_words(self, mock_sf_write):

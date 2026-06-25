@@ -26,11 +26,14 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ChapterMeta:
-    """Per-chapter metadata as produced by the pipeline orchestrator."""
-    number: int
-    title: str
-    filename: str           # e.g. "chapter-01.m4a"
+class SectionMeta:
+    """Per-section metadata as produced by the pipeline orchestrator."""
+    sequence: int
+    section_type: str
+    ordinal: int | None
+    display_label: str
+    display_title: str
+    filename: str           # e.g. "section-01.m4a"
     duration_seconds: float
     word_count: int
 
@@ -150,13 +153,16 @@ def merge_book_manifest(
 # ---------------------------------------------------------------------------
 
 
-def _chapter_meta_to_dict(chapter: ChapterMeta) -> dict:
+def _section_meta_to_dict(section: SectionMeta) -> dict:
     return {
-        "number": chapter.number,
-        "title": chapter.title,
-        "filename": chapter.filename,
-        "duration_seconds": chapter.duration_seconds,
-        "word_count": chapter.word_count,
+        "sequence": section.sequence,
+        "section_type": section.section_type,
+        "ordinal": section.ordinal,
+        "display_label": section.display_label,
+        "display_title": section.display_title,
+        "filename": section.filename,
+        "duration_seconds": section.duration_seconds,
+        "word_count": section.word_count,
     }
 
 
@@ -166,7 +172,7 @@ def generate_rendition_manifest(
     voice: str,
     engine: str,
     pipeline_version: str,
-    chapters: list[ChapterMeta],
+    sections: list[SectionMeta],
     output_dir: str,
 ) -> str:
     """Write a rendition-manifest.json for one (rendition, build). Returns the path.
@@ -175,13 +181,15 @@ def generate_rendition_manifest(
     contains no wall-clock fields so the artifact describes only the build output.
     """
     manifest = {
+        "version": 2,
         "build": build_id,
         "rendition": rendition,
         "voice": voice,
         "engine": engine,
         "pipeline_version": pipeline_version,
-        "total_duration_seconds": sum(ch.duration_seconds for ch in chapters),
-        "chapters": [_chapter_meta_to_dict(ch) for ch in chapters],
+        "total_duration_seconds": sum(section.duration_seconds for section in sections),
+        "section_count": len(sections),
+        "sections": [_section_meta_to_dict(section) for section in sections],
     }
     os.makedirs(output_dir, exist_ok=True)
     path = os.path.join(output_dir, "rendition-manifest.json")

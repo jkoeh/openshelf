@@ -243,17 +243,21 @@ def sync_coverage_metrics(
     }
 
 
-def build_chapter_sync_artifact(
-    chapter_number: int,
+def build_section_sync_artifact(
+    sequence: int,
     audio_filename: str,
     chunk_audio_starts: list[float],
     chunk_words: list[list[WordTimestamp]],
     chunk_texts: list[str] | None = None,
+    heading_words: list[WordTimestamp] | None = None,
 ) -> dict:
     return {
-        "version": 1,
-        "number": chapter_number,
+        "version": 2,
+        "sequence": sequence,
         "audio_filename": audio_filename,
+        "heading_words": [
+            dataclasses.asdict(word) for word in (heading_words or [])
+        ],
         "chunk_audio_starts": chunk_audio_starts,
         "coverage": sync_coverage_metrics(chunk_words, chunk_texts),
         "chunks": [
@@ -266,29 +270,36 @@ def build_chapter_sync_artifact(
     }
 
 
-def read_chapter_sync_artifact(path: str) -> dict:
+def read_section_sync_artifact(path: str) -> dict:
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        payload = json.load(f)
+    if payload.get("version") != 2:
+        raise ValueError(
+            f"incompatible section sync version: {payload.get('version')}; expected 2"
+        )
+    return payload
 
 
-def write_chapter_sync_artifact(
+def write_section_sync_artifact(
     path: str,
-    chapter_number: int,
+    sequence: int,
     audio_filename: str,
     chunk_audio_starts: list[float],
     chunk_words: list[list[WordTimestamp]],
     chunk_texts: list[str] | None = None,
+    heading_words: list[WordTimestamp] | None = None,
     force: bool = False,
 ) -> str:
-    payload = build_chapter_sync_artifact(
-        chapter_number,
+    payload = build_section_sync_artifact(
+        sequence,
         audio_filename,
         chunk_audio_starts,
         chunk_words,
         chunk_texts=chunk_texts,
+        heading_words=heading_words,
     )
     if os.path.exists(path) and not force:
-        existing = read_chapter_sync_artifact(path)
+        existing = read_section_sync_artifact(path)
         if existing == payload:
             return path
         raise FileExistsError(f"sync artifact already exists with different payload: {path}")

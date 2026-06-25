@@ -2,22 +2,28 @@ import { useRouter } from "expo-router";
 import { ChevronRight } from "lucide-react-native";
 import { Pressable, Text, View } from "react-native";
 import { useTheme } from "../hooks/useTheme";
-import { formatDuration } from "../lib/format";
-import type { ManifestChapter } from "../types";
+import { formatDuration, sectionDisplayTitle } from "../lib/format";
+import type { ManifestSection } from "../types";
 
-interface ChapterListProps {
-	chapters: ManifestChapter[];
+interface SectionListProps {
+	sections: ManifestSection[];
 	author: string;
 	title: string;
 	rendition?: string;
 	build?: string;
 }
 
-export default function ChapterList({ chapters, author, title, rendition, build }: ChapterListProps) {
+export default function ChapterList({
+	sections,
+	author,
+	title,
+	rendition,
+	build,
+}: SectionListProps) {
 	const { colors } = useTheme();
 	const router = useRouter();
-	const chapterUrl = (chapter: number) => {
-		const search = new URLSearchParams({ chapter: String(chapter), autoplay: "1" });
+	const sectionUrl = (sequence: number) => {
+		const search = new URLSearchParams({ section: String(sequence), autoplay: "1" });
 		if (rendition) search.set("rendition", rendition);
 		if (build) search.set("build", build);
 		return `/read/${author}/${title}?${search}`;
@@ -35,12 +41,12 @@ export default function ChapterList({ chapters, author, title, rendition, build 
 					paddingBottom: 8,
 				}}
 			>
-				Chapters
+				Sections
 			</Text>
-			{chapters.map((ch) => (
+			{sections.map((section) => (
 				<Pressable
-					key={ch.number}
-					onPress={() => router.push(chapterUrl(ch.number))}
+					key={section.sequence}
+					onPress={() => router.push(sectionUrl(section.sequence))}
 					style={({ pressed }) => ({
 						flexDirection: "row",
 						justifyContent: "space-between",
@@ -50,23 +56,15 @@ export default function ChapterList({ chapters, author, title, rendition, build 
 						backgroundColor: pressed ? colors.surface : "transparent",
 					})}
 				>
-					<View style={{ flex: 1, marginRight: 12 }}>
-						<Text
-							style={{ color: colors.text, fontSize: 17, letterSpacing: -0.2 }}
-							numberOfLines={1}
-						>
-							{ch.number}. {ch.title}
-						</Text>
-					</View>
+					<Text
+						style={{ color: colors.text, fontSize: 17, letterSpacing: -0.2, flex: 1 }}
+						numberOfLines={1}
+					>
+						{sectionDisplayTitle(section)}
+					</Text>
 					<View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-						<Text
-							style={{
-								color: colors.textSecondary,
-								fontSize: 14,
-								fontVariant: ["tabular-nums"],
-							}}
-						>
-							{formatDuration(ch.duration_seconds)}
+						<Text style={{ color: colors.textSecondary, fontSize: 14 }}>
+							{formatDuration(section.duration_seconds)}
 						</Text>
 						<ChevronRight size={16} color={colors.textSecondary} strokeWidth={2.4} />
 					</View>

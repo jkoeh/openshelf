@@ -14,10 +14,10 @@ from openshelf.pipeline.tts_engine import WordTimestamp
 from openshelf.pipeline.word_aligner import (
     WordEntry,
     align_chapter,
-    build_chapter_sync_artifact,
-    read_chapter_sync_artifact,
+    build_section_sync_artifact,
+    read_section_sync_artifact,
     validate_alignment,
-    write_chapter_sync_artifact,
+    write_section_sync_artifact,
     write_word_alignment,
     _next_start,
 )
@@ -276,16 +276,20 @@ class TestWriteWordAlignment(unittest.TestCase):
         self.assertEqual(mtime1, mtime2)
 
 
-class TestChapterSyncArtifact(unittest.TestCase):
+class TestSectionSyncArtifact(unittest.TestCase):
     def test_includes_coverage_metrics(self):
-        artifact = build_chapter_sync_artifact(
+        artifact = build_section_sync_artifact(
             1,
-            "chapter-01.m4a",
+            "section-01.m4a",
             [0.0],
             [[WordTimestamp("Reader", 0.0, 0.4)]],
             chunk_texts=["Reader text."],
+            heading_words=[WordTimestamp("Chapter", 0.0, 0.3)],
         )
 
+        self.assertEqual(artifact["version"], 2)
+        self.assertEqual(artifact["sequence"], 1)
+        self.assertEqual(artifact["heading_words"][0]["word"], "Chapter")
         self.assertEqual(
             artifact["coverage"],
             {
@@ -307,23 +311,23 @@ class TestChapterSyncArtifact(unittest.TestCase):
 
     def test_write_round_trips_and_is_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "chapter-01.sync.json")
-            args = (path, 1, "chapter-01.m4a", [0.0],
+            path = os.path.join(tmp, "section-01.sync.json")
+            args = (path, 1, "section-01.m4a", [0.0],
                     [[WordTimestamp("Reader", 0.0, 0.4)]])
 
-            write_chapter_sync_artifact(*args, chunk_texts=["Reader text."])
+            write_section_sync_artifact(*args, chunk_texts=["Reader text."])
             # Identical payload: no error.
-            write_chapter_sync_artifact(*args, chunk_texts=["Reader text."])
+            write_section_sync_artifact(*args, chunk_texts=["Reader text."])
 
-            payload = read_chapter_sync_artifact(path)
-            self.assertEqual(payload["number"], 1)
+            payload = read_section_sync_artifact(path)
+            self.assertEqual(payload["sequence"], 1)
             self.assertEqual(payload["chunks"][0]["words"][0]["word"], "Reader")
 
             with self.assertRaises(FileExistsError):
-                write_chapter_sync_artifact(
+                write_section_sync_artifact(
                     *args, chunk_texts=["Different reader text entirely."]
                 )
-            write_chapter_sync_artifact(
+            write_section_sync_artifact(
                 *args, chunk_texts=["Different reader text entirely."], force=True
             )
 

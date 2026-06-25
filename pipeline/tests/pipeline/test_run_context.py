@@ -30,7 +30,7 @@ def _context(tmp: str, **overrides):
     epub_path = overrides.pop("epub_path", _write_epub_fixture(tmp))
     params = {
         "build": "2a4f9c1b3d8e7f60",
-        "pipeline_version": "1",
+        "pipeline_version": "2",
         "epub_path": epub_path,
         "author_slug": "lewis-carroll",
         "title_slug": "alice",
@@ -42,7 +42,7 @@ def _context(tmp: str, **overrides):
         "cast_mode": "solo",
         "performance_direction_mode": "batched",
         "language": "en",
-        "chapters": [2, 1],
+        "sections": [2, 1],
     }
     params.update(overrides)
     return make_run_context(**params)
@@ -58,12 +58,12 @@ class TestBuildIdValidation(unittest.TestCase):
 
 
 class TestRunContext(unittest.TestCase):
-    def test_make_run_context_hashes_epub_and_sorts_chapters(self):
+    def test_make_run_context_hashes_epub_and_sorts_sections(self):
         with tempfile.TemporaryDirectory() as tmp:
             context = _context(tmp)
 
         data = context.to_dict()
-        self.assertEqual(data["chapters"], [1, 2])
+        self.assertEqual(data["sections"], [1, 2])
         self.assertEqual(data["performance_direction_mode"], "batched")
         self.assertFalse(data["new_voice_direction"])
         self.assertEqual(data["epub_sha256"], "92719fe0cf8cd51592af31ee8a5736d79f7273777fa3f7b70bfe993a4cd32180")

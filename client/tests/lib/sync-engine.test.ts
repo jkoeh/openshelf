@@ -3,7 +3,14 @@ import { findChunkAtTime, findWordAtTime } from "../../lib/sync-engine";
 import type { WordEntry } from "../../types";
 
 function word(start: number, end: number, chunk_idx: number): WordEntry {
-  return { word: `w${start}`, start, end, chunk_idx, element_id: `e${start}` };
+  return {
+    word: `w${start}`,
+    start,
+    end,
+    region: "body",
+    chunk_idx,
+    element_id: `e${start}`,
+  };
 }
 
 const words: WordEntry[] = [
@@ -55,6 +62,13 @@ describe("findWordAtTime", () => {
 });
 
 describe("findChunkAtTime", () => {
+  it("returns -1 while a heading word is active", () => {
+    const heading: WordEntry[] = [
+      { word: "Chapter", start: 0, end: 0.4, region: "heading", chunk_idx: null },
+    ];
+    expect(findChunkAtTime(heading, 0.2)).toBe(-1);
+  });
+
   it("returns -1 before any words", () => {
     expect(findChunkAtTime(words, -1)).toBe(-1);
   });

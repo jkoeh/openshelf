@@ -33,15 +33,19 @@ def _chunk_text_hash(text: str) -> str:
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def build_chapter_chunks_artifact(
-    chapter_number: int,
-    title: str,
+def build_section_chunks_artifact(
+    sequence: int,
+    section_type: str,
+    ordinal: int | None,
+    heading: dict,
     chunks: list[Chunk],
 ) -> dict:
     return {
-        "version": 1,
-        "number": chapter_number,
-        "title": title,
+        "version": 2,
+        "sequence": sequence,
+        "section_type": section_type,
+        "ordinal": ordinal,
+        "heading": dict(heading),
         "chunks": [
             {
                 "index": index,
@@ -53,24 +57,39 @@ def build_chapter_chunks_artifact(
     }
 
 
-def read_chapter_chunks_artifact(path: str) -> dict:
+def read_section_chunks_artifact(path: str) -> dict:
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        payload = json.load(f)
+    if payload.get("version") != 2:
+        raise ValueError(
+            f"incompatible section chunks version: {payload.get('version')}; expected 2"
+        )
+    return payload
 
 
-def write_chapter_chunks_artifact(
+def write_section_chunks_artifact(
     path: str,
-    chapter_number: int,
-    title: str,
+    sequence: int,
+    section_type: str,
+    ordinal: int | None,
+    heading: dict,
     chunks: list[Chunk],
     force: bool = False,
 ) -> str:
-    payload = build_chapter_chunks_artifact(chapter_number, title, chunks)
+    payload = build_section_chunks_artifact(
+        sequence,
+        section_type,
+        ordinal,
+        heading,
+        chunks,
+    )
     if os.path.exists(path) and not force:
-        existing = read_chapter_chunks_artifact(path)
+        existing = read_section_chunks_artifact(path)
         if existing == payload:
             return path
-        raise FileExistsError(f"chunk artifact already exists with different payload: {path}")
+        raise FileExistsError(
+            f"section chunk artifact already exists with different payload: {path}"
+        )
 
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:

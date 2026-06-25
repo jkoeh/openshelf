@@ -17,19 +17,20 @@ def _write_json(path: str, payload: dict):
         json.dump(payload, f)
 
 
-def _write_complete_chapter(build_dir: str, number: int, coverage_ratio: float = 1.0):
+def _write_complete_section(build_dir: str, number: int, coverage_ratio: float = 1.0):
     _write_json(
-        os.path.join(build_dir, f"chapter-{number:02d}.chunks.json"),
-        {"number": number, "chunks": [{"text": "hello world"}]},
+        os.path.join(build_dir, f"section-{number:02d}.chunks.json"),
+        {"version": 2, "sequence": number, "chunks": [{"text": "hello world"}]},
     )
     _write_json(
-        os.path.join(build_dir, f"chapter-{number:02d}.voice_direction.json"),
-        {"chapters": [{"number": number}]},
+        os.path.join(build_dir, f"section-{number:02d}.voice_direction.json"),
+        {"version": 2, "sections": [{"sequence": number}]},
     )
     _write_json(
-        os.path.join(build_dir, f"chapter-{number:02d}.sync.json"),
+        os.path.join(build_dir, f"section-{number:02d}.sync.json"),
         {
-            "number": number,
+            "version": 2,
+            "sequence": number,
             "chunk_audio_starts": [0.0],
             "coverage": {
                 "coverage_ratio": coverage_ratio,
@@ -38,28 +39,28 @@ def _write_complete_chapter(build_dir: str, number: int, coverage_ratio: float =
             },
         },
     )
-    with open(os.path.join(build_dir, f"chapter-{number:02d}.m4a"), "wb") as f:
+    with open(os.path.join(build_dir, f"section-{number:02d}.m4a"), "wb") as f:
         f.write(b"audio")
 
 
-def _write_book_artifacts(build_dir: str, chapters: list[int]):
+def _write_book_artifacts(build_dir: str, sections: list[int]):
     for name in ("run.json", "character_registry.json", "voice_direction.json"):
         _write_json(os.path.join(build_dir, name), {})
     _write_json(
-        os.path.join(build_dir, "chapter_data.json"),
-        {"chapters": [{"number": number} for number in chapters]},
+        os.path.join(build_dir, "section_data.json"),
+        {"version": 2, "sections": [{"sequence": number} for number in sections]},
     )
     _write_json(
         os.path.join(build_dir, "rendition-manifest.json"),
-        {"chapters": [{"number": number} for number in chapters]},
+        {"version": 2, "sections": [{"sequence": number} for number in sections]},
     )
 
 
 class TestPipelineDoctor(unittest.TestCase):
     def test_complete_build_is_ok(self):
         with tempfile.TemporaryDirectory() as tmp:
-            _write_complete_chapter(tmp, 1)
-            _write_complete_chapter(tmp, 2)
+            _write_complete_section(tmp, 1)
+            _write_complete_section(tmp, 2)
             _write_book_artifacts(tmp, [1, 2])
 
             report = diagnose_build(tmp)
@@ -71,8 +72,8 @@ class TestPipelineDoctor(unittest.TestCase):
     def test_missing_audio_and_sync_fail(self):
         with tempfile.TemporaryDirectory() as tmp:
             _write_json(
-                os.path.join(tmp, "chapter-01.chunks.json"),
-                {"number": 1, "chunks": [{"text": "hello"}]},
+                os.path.join(tmp, "section-01.chunks.json"),
+                {"version": 2, "sequence": 1, "chunks": [{"text": "hello"}]},
             )
             _write_book_artifacts(tmp, [1])
 
@@ -85,7 +86,7 @@ class TestPipelineDoctor(unittest.TestCase):
 
     def test_low_coverage_is_warning(self):
         with tempfile.TemporaryDirectory() as tmp:
-            _write_complete_chapter(tmp, 1, coverage_ratio=0.5)
+            _write_complete_section(tmp, 1, coverage_ratio=0.5)
             _write_book_artifacts(tmp, [1])
 
             report = diagnose_build(tmp)
@@ -95,7 +96,7 @@ class TestPipelineDoctor(unittest.TestCase):
 
     def test_known_ffmpeg_probe_traceback_is_warning_not_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
-            _write_complete_chapter(tmp, 1)
+            _write_complete_section(tmp, 1)
             _write_book_artifacts(tmp, [1])
             log = os.path.join(tmp, "run.log")
             with open(log, "w", encoding="utf-8") as f:
@@ -114,7 +115,7 @@ class TestPipelineDoctor(unittest.TestCase):
 
     def test_real_log_error_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
-            _write_complete_chapter(tmp, 1)
+            _write_complete_section(tmp, 1)
             _write_book_artifacts(tmp, [1])
             log = os.path.join(tmp, "run.log")
             with open(log, "w", encoding="utf-8") as f:

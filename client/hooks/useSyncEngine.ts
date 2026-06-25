@@ -32,7 +32,7 @@ export function useSyncEngine(
   const [activeChunkIndex, setActiveChunkIndex] = useState(-1);
   const lastChapter = useRef<number | null>(null);
 
-  // Use inline words from chapter_data.json.
+  // Use inline heading/body words from section_data.json.
   useEffect(() => {
     if (!author || !title || !syncEnabled) {
       setWords([]);
@@ -66,7 +66,7 @@ export function useSyncEngine(
     const tick = () => {
       const t = typeof playbackTime === "number" ? playbackTime : player.currentTime;
       const newWord = findWordAtTime(words, t);
-      const newChunk = newWord >= 0 ? words[newWord].chunk_idx : -1;
+      const newChunk = newWord >= 0 ? (words[newWord].chunk_idx ?? -1) : -1;
       setActiveWordIndex((prev) => (prev === newWord ? prev : newWord));
       setActiveChunkIndex((prev) => (prev === newChunk ? prev : newChunk));
       raf = requestAnimationFrame(tick);

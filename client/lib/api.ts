@@ -2,7 +2,7 @@ import { API_BASE } from "../constants/config";
 import type {
 	BookBuildsResponse,
 	CatalogResponse,
-	ChapterResponse,
+	SectionResponse,
 	Manifest,
 } from "../types";
 
@@ -65,29 +65,28 @@ export function fetchBookBuilds(author: string, title: string): Promise<BookBuil
 	});
 }
 
-export function fetchChapter(
+export function fetchSection(
 	author: string,
 	title: string,
-	chapter: number,
+	sequence: number,
 	rendition: string,
 	build: string,
-): Promise<ChapterResponse> {
+): Promise<SectionResponse> {
 	const search = new URLSearchParams({ rendition, build });
-	return fetchJson<ChapterResponse>(
-		`${API_BASE}/books/${author}/${title}/chapters/${chapter}?${search}`,
+	return fetchJson<SectionResponse>(
+		`${API_BASE}/books/${author}/${title}/sections/${sequence}?${search}`,
 	);
 }
 
 export function audioUrl(
 	author: string,
 	title: string,
-	chapter: number,
+	sequence: number,
 	rendition: string,
 	build: string,
 ): string {
-	const ch = String(chapter).padStart(2, "0");
 	const search = new URLSearchParams({ rendition, build });
-	return `${API_BASE}/books/${author}/${title}/audio/${ch}?${search}`;
+	return `${API_BASE}/books/${author}/${title}/sections/${sequence}/audio?${search}`;
 }
 
 export function coverUrl(author: string, title: string): string {

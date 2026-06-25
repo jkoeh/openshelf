@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 
-RUN_CONTEXT_VERSION = 1
+RUN_CONTEXT_VERSION = 2
 _BUILD_ID_RE = re.compile(r"^[0-9a-f]{16}$")
 _MATCH_FIELDS = (
     "version",
@@ -27,7 +27,7 @@ _MATCH_FIELDS = (
     "performance_direction_mode",
     "new_voice_direction",
     "language",
-    "chapters",
+    "sections",
 )
 
 
@@ -51,7 +51,7 @@ class RunContext:
     cast_mode: str
     performance_direction_mode: str
     language: str
-    chapters: list[int]
+    sections: list[int]
     new_voice_direction: bool = False
     version: int = RUN_CONTEXT_VERSION
 
@@ -73,7 +73,7 @@ class RunContext:
             "performance_direction_mode": self.performance_direction_mode,
             "new_voice_direction": self.new_voice_direction,
             "language": self.language,
-            "chapters": list(self.chapters),
+            "sections": list(self.sections),
         }
 
 
@@ -111,7 +111,7 @@ def make_run_context(
     cast_mode: str,
     performance_direction_mode: str,
     language: str,
-    chapters: list[int],
+    sections: list[int],
     new_voice_direction: bool = False,
 ) -> RunContext:
     return RunContext(
@@ -130,7 +130,7 @@ def make_run_context(
         performance_direction_mode=performance_direction_mode,
         new_voice_direction=bool(new_voice_direction),
         language=language,
-        chapters=sorted(chapters),
+        sections=sorted(sections),
     )
 
 

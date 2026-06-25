@@ -43,9 +43,10 @@ class TestRepairPcmPauses(unittest.TestCase):
         audio = np.ones(1000, dtype=np.float32)
         audio[400:520] = 0
         sync_payload = {
-            "version": 1,
-            "number": 1,
-            "audio_filename": "chapter-01.m4a",
+            "version": 2,
+            "sequence": 1,
+            "audio_filename": "section-01.m4a",
+            "heading_words": [],
             "chunk_audio_starts": [0.0, 0.6],
             "coverage": {},
             "chunks": [
@@ -65,9 +66,9 @@ class TestRepairPcmPauses(unittest.TestCase):
             ],
         }
         synthesis_payload = {
-            "version": 1,
-            "number": 1,
-            "audio_filename": "chapter-01.m4a",
+            "version": 2,
+            "sequence": 1,
+            "audio_filename": "section-01.m4a",
             "sample_rate": sample_rate,
             "policy": "old",
             "chunks": [

@@ -11,9 +11,12 @@ const ParamsSchema = z.object({
 	title: SlugSchema.openapi({ param: { name: "title", in: "path" }, example: "the-trial" }),
 });
 
-const ManifestChapterSchema = z.object({
-	number: z.number().int(),
-	title: z.string(),
+const ManifestSectionSchema = z.object({
+	sequence: z.number().int().positive(),
+	section_type: z.string(),
+	ordinal: z.number().int().positive().nullable(),
+	display_label: z.string(),
+	display_title: z.string(),
 	filename: z.string(),
 	duration_seconds: z.number(),
 	word_count: z.number().int(),
@@ -35,18 +38,20 @@ const BookManifestSchema = z.object({
 });
 
 const RenditionManifestSchema = z.object({
+	version: z.literal(2),
 	build: z.string(),
 	rendition: z.string(),
 	voice: z.string(),
 	engine: z.string(),
 	pipeline_version: z.string(),
 	total_duration_seconds: z.number(),
-	chapters: z.array(ManifestChapterSchema),
+	section_count: z.number().int().nonnegative(),
+	sections: z.array(ManifestSectionSchema),
 });
 
 const MergedRenditionSchema = BookManifestRenditionSchema.extend({
 	total_duration_seconds: z.number(),
-	chapters: z.array(ManifestChapterSchema),
+	sections: z.array(ManifestSectionSchema),
 });
 
 const ManifestSchema = z
@@ -66,7 +71,7 @@ const route = createRoute({
 	request: { params: ParamsSchema },
 	responses: {
 		200: {
-			description: "Book manifest with chapter list and durations",
+			description: "Book manifest with typed section list and durations",
 			content: { "application/json": { schema: ManifestSchema } },
 		},
 		400: {
@@ -112,11 +117,23 @@ app.openapi(route, async (c) => {
 			);
 		}
 
-		const renditionManifest = RenditionManifestSchema.parse(await renditionManifestObj.json());
+		const parsed = RenditionManifestSchema.safeParse(await renditionManifestObj.json());
+		if (!parsed.success) {
+			return c.json(
+				{
+					error: {
+						code: "NOT_FOUND",
+						message: `Incompatible audiobook build: ${author}/${title}/${rendition}/${entry.current_build}`,
+					},
+				},
+				404,
+			);
+		}
+		const renditionManifest = parsed.data;
 		renditions[rendition] = {
 			...entry,
 			total_duration_seconds: renditionManifest.total_duration_seconds,
-			chapters: renditionManifest.chapters,
+			sections: renditionManifest.sections,
 		};
 	}
 

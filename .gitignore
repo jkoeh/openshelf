@@ -46,3 +46,4 @@ client/.expo/
 client/dist/
 *.log
 /logs
+_audio_v1/

@@ -135,7 +135,7 @@ export default function BookDetailPage() {
 	const activeBuildId = activeBuild?.build ?? selected.rendition.current_build;
 	const activeDuration =
 		activeBuild?.total_duration_seconds ?? selected.rendition.total_duration_seconds;
-	const activeChapters = activeBuild?.chapters ?? selected.rendition.chapters;
+	const activeChapters = activeBuild?.sections ?? selected.rendition.sections;
 	const progress = getSavedProgress(author, title, selected.key, activeBuildId);
 	const selectionGroups = builds
 		? Object.entries(builds.renditions).reduce<
@@ -254,7 +254,7 @@ export default function BookDetailPage() {
 						{manifest.author}
 					</Text>
 					<Text style={{ color: colors.textSecondary, fontSize: 14 }}>
-						{formatDuration(activeDuration)} · {activeChapters.length} chapters
+						{formatDuration(activeDuration)} · {activeChapters.length} sections
 					</Text>
 					{visibleEngineGroup ? (
 						<View
@@ -465,8 +465,8 @@ export default function BookDetailPage() {
 																		numberOfLines={1}
 																	>
 																		{formatDuration(option.total_duration_seconds)} -{" "}
-																		{option.chapter_count}{" "}
-																		{option.chapter_count === 1 ? "chapter" : "chapters"}
+																		{option.section_count}{" "}
+																		{option.section_count === 1 ? "section" : "sections"}
 																		{option.is_current ? " - Backend default" : ""}
 																	</Text>
 																</View>
@@ -504,7 +504,7 @@ export default function BookDetailPage() {
 						<Pressable
 							onPress={() =>
 								router.push(
-									readUrl({ chapter: progress.chapter, time: progress.audioTime }),
+									readUrl({ section: progress.section, time: progress.audioTime }),
 								)
 							}
 							style={{
@@ -519,7 +519,7 @@ export default function BookDetailPage() {
 						>
 							<Play size={18} color={colors.primaryText} strokeWidth={2.4} />
 							<Text style={{ color: colors.primaryText, fontSize: 17, fontWeight: "600" }}>
-								Continue Chapter {progress.chapter}
+								Continue Listening
 							</Text>
 						</Pressable>
 					) : null}
@@ -589,9 +589,9 @@ export default function BookDetailPage() {
 					</View>
 				</View>
 
-				{/* Chapters */}
+				{/* Sections */}
 				<ChapterList
-					chapters={activeChapters}
+					sections={activeChapters}
 					author={author}
 					title={title}
 					rendition={selected.key}

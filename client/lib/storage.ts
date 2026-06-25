@@ -48,7 +48,7 @@ export function saveSyncEnabled(enabled: boolean): void {
 }
 
 export interface ReadingProgress {
-	chapter: number;
+	section: number;
 	audioTime: number;
 	updatedAt: string;
 }

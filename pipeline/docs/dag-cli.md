@@ -46,7 +46,7 @@ Behavior:
 openshelf-pipeline dag chunk \
   --book-parse audio/kafka/metamorphosis/book_parse.json \
   --build-dir audio/kafka/metamorphosis/audio/{rendition}/builds/{build} \
-  --chapters 2,4-5
+  --sections 2,4-5
 ```
 
 Input:
@@ -55,15 +55,17 @@ Input:
 
 Output:
 
-- `chapter-NN.chunks.json` for each selected chapter
+- `section-NN.chunks.json` for each selected audiobook section
 
 Behavior:
 
-- Reconstructs each chapter's spoken paragraphs and element IDs from
-  `book_parse.json` and calls `text_chunker.chunk_text(...)`, producing chunk
-  artifacts byte-identical to the full DAG run path.
-- `--chapters` accepts a number/range filter (e.g. `2` or `2,4-5`); omitted
-  means all chapters.
+- Inserts generated opening and closing credit sections, shifts parsed source
+  section sequences by one, reconstructs body paragraphs and element IDs from
+  `book_parse.json`, and calls `text_chunker.chunk_text(...)` on body text only.
+  Each artifact preserves the typed section and separate heading object.
+- `--sections` accepts a sequence/range filter (e.g. `2` or `2,4-5`);
+  `--chapters` remains a CLI alias. Omitted means all generated and source
+  sections.
 - Identical output skips; different output fails unless `--force`.
 - Does not call the LLM, TTS, WhisperX, ffmpeg, or R2.
 
@@ -78,22 +80,23 @@ openshelf-pipeline dag assemble \
 
 Input:
 
-- `chapter-NN.chunks.json` for every chapter to assemble
-- `chapter-NN.sync.json` for every chapter to assemble
+- `section-NN.chunks.json` for every section to assemble
+- `section-NN.sync.json` for every section to assemble
 
 Output:
 
-- `chapter_data.json`
+- `section_data.json`
 
 Behavior:
 
-- Chapters are ordered by chapter number from the chunk artifact filenames.
-- Every selected chapter must have both a chunk artifact and a sync artifact.
-- The output shape is the existing public `chapter_data.json` contract:
-  version, rendition, build, chapters, chapter chunks, and inline word timings.
-- If `chapter_data.json` already exists with identical content, the command
+- Sections are ordered by stable sequence from the chunk artifact filenames.
+- Every selected section must have both a chunk artifact and a sync artifact.
+- The output is the version-2 public `section_data.json` contract: typed
+  sections, ordinal, separate heading display/spoken text and heading words,
+  body chunks, and body word timings.
+- If `section_data.json` already exists with identical content, the command
   succeeds without rewriting it.
-- If `chapter_data.json` exists with different content, the command fails unless
+- If `section_data.json` exists with different content, the command fails unless
   `--force` is provided.
 - The command does not call the LLM, TTS, WhisperX, ffmpeg, or R2.
 
@@ -108,7 +111,7 @@ openshelf-pipeline dag coverage \
 
 Input:
 
-- `chapter-NN.sync.json` for every chapter in the build
+- `section-NN.sync.json` for every section in the build
 
 Output:
 
@@ -117,10 +120,10 @@ Output:
 
 Behavior:
 
-- Reads the `coverage` block already recorded inside each `chapter-NN.sync.json`
+- Reads the `coverage` block already recorded inside each `section-NN.sync.json`
   and aggregates it into book-level totals: reader word count, aligned word
   count, coverage ratio, and the first missing word offset when detectable.
-- Chapters are ordered by chapter number from the sync artifact filenames.
+- Sections are ordered by sequence from the sync artifact filenames.
 - This command is **diagnostic only**. It never fails on low or missing
   coverage and never blocks upload. Per the Sync Coverage Policy, sync gaps are
   a pipeline bug to detect and fix, not a policy gate or a separate build health
@@ -139,9 +142,9 @@ openshelf-pipeline dag upload \
 
 Input (all local, already produced by earlier stages):
 
-- `audio/{rendition}/builds/{build}/chapter-NN.m4a`, `chapter_data.json`,
+- `audio/{rendition}/builds/{build}/section-NN.m4a`, `section_data.json`,
   `rendition-manifest.json` (and optional `character_registry.json`,
-  `voice_direction.json`, `chapter-NN.synthesis_units.json`, `run.json`)
+  `voice_direction.json`, `section-NN.synthesis_units.json`, `run.json`)
 - book-level `cover.{jpg,png}` and `book-annotated.epub` when present
 - book-level `manifest.json` carrying the rendition entry
 
@@ -178,14 +181,14 @@ openshelf-pipeline dag direct \
 
 Input:
 
-- `chapter-NN.chunks.json` (reader text per chunk)
+- `section-NN.chunks.json` (typed heading plus reader body text per chunk)
 - `character_registry.json` (narrator voice + cast)
 
 Output:
 
 - `character_registry.json` from `registry`
 
-- `chapter-NN.voice_direction.json` (the LLM↔audio boundary)
+- `section-NN.voice_direction.json` (the LLM↔audio boundary)
 
 Behavior:
 
@@ -193,8 +196,9 @@ Behavior:
   and writes it to the build directory. `--voice` bypasses the registry LLM for
   the narrator by selecting an engine voice directly; omitted `--voice` lets the
   LLM choose from the engine's voice pool.
-- Runs `AudioDirector.direct_chapter` to produce directed segments (speaker,
-  voice, and engine-supported performance steering), then writes the per-chapter
+- Runs `AudioDirector.direct_chapter` for source prose sections to produce
+  directed segments (speaker, voice, and engine-supported performance
+  steering), then writes the per-section
   voice-direction artifact. `direct --performance-direction {batched,chunk,off}`
   selects the same engine-aware performance mode as `dag run`; `batched` is the
   default adaptive mode where the LLM decides per chunk whether one shared
@@ -218,20 +222,26 @@ openshelf-pipeline dag synth \
 
 Input:
 
-- `chapter-NN.voice_direction.json` (directed segments)
-- `chapter-NN.chunks.json` (canonical text + paragraph boundaries)
-- `character_registry.json` (narrator voice fallback, optional)
+- `section-NN.voice_direction.json` (directed body segments)
+- `section-NN.chunks.json` (separate heading plus canonical body text)
+- `character_registry.json` (complete narrator `VoiceSpec`; required for
+  reference-voice engines and used for narrator fallback body segments)
 
 Output:
 
-- `chapter-NN.m4a`, `chapter-NN.sync.json`, and
-  `chapter-NN.synthesis_units.json`
+- `section-NN.m4a`, `section-NN.sync.json`, and
+  `section-NN.synthesis_units.json`
 
 Behavior:
 
-- Builds the per-chunk `ChunkInfo` list from the chunks artifact (paragraph
-  boundaries) and the voice-direction artifact (segments), runs TTS + WhisperX
+- Synthesizes the heading as an independent unit first, inserts the specified
+  heading-to-body pause, then builds the per-chunk `ChunkInfo` list from the
+  chunks artifact (paragraph boundaries) and the voice-direction artifact
+  (segments), runs TTS + WhisperX
   alignment, encodes to AAC, and writes the sync and synthesis-unit artifacts.
+  The complete narrator `VoiceSpec` is passed unchanged to both the heading
+  segment and any undirected narrator body fallback, so this path is shared by
+  Kokoro, F5-TTS, and Chatterbox without adapter-specific heading logic.
   Covers fresh synthesis and full audio regeneration from existing direction.
   Seam-only pause changes should use `repair-pauses` when a synthesis-unit
   artifact exists.
@@ -257,28 +267,28 @@ openshelf-pipeline dag repair-pauses \
 
 Input:
 
-- `chapter-NN.m4a`
-- `chapter-NN.sync.json`
-- `chapter-NN.synthesis_units.json`
+- `section-NN.m4a`
+- `section-NN.sync.json`
+- `section-NN.synthesis_units.json`
 
 Output:
 
-- rewritten `chapter-NN.m4a`
-- rewritten `chapter-NN.sync.json`
-- rewritten `chapter-NN.synthesis_units.json`
-- refreshed `chapter_data.json` when the build already has one
-- updated repaired chapter duration in `rendition-manifest.json` when present
+- rewritten `section-NN.m4a`
+- rewritten `section-NN.sync.json`
+- rewritten `section-NN.synthesis_units.json`
+- refreshed `section_data.json` when the build already has one
+- updated repaired section duration in `rendition-manifest.json` when present
 
 Behavior:
 
 - Repairs seam cadence without calling the LLM, TTS, or WhisperX. The command
   decodes the existing AAC audio to PCM, reads exact pause regions from
-  `chapter-NN.synthesis_units.json`, replaces each recorded pause with the
+  `section-NN.synthesis_units.json`, replaces each recorded pause with the
   current `PausePolicy` target for that seam's break type, shifts all later word
-  timestamps and chunk starts by the cumulative delta, re-encodes the chapter,
+  timestamps and chunk starts by the cumulative delta, re-encodes the section,
   and rewrites the sync and synthesis-unit artifacts. It also refreshes local
   aggregate artifacts that already exist so a repaired build stays coherent.
-- The repair is exact only for builds that have `chapter-NN.synthesis_units.json`.
+- The repair is exact only for builds that have `section-NN.synthesis_units.json`.
   Older builds without the audit artifact must use `synth --force` for full TTS
   regeneration or a future best-effort inferred repair mode.
 - The command requires `--force` because it intentionally rewrites immutable
@@ -296,27 +306,27 @@ openshelf-pipeline dag sync \
 
 Input:
 
-- `chapter-NN.m4a` (chapter audio)
-- `chapter-NN.chunks.json` (reader text per chunk)
-- `chapter-NN.sync.json` (the **prior** sync artifact — its
+- `section-NN.m4a` (section audio)
+- `section-NN.chunks.json` (heading plus reader body text)
+- `section-NN.sync.json` (the **prior** sync artifact — its
   `chunk_audio_starts` are the per-chunk audio offsets produced at synthesis
   time and are not recoverable from the m4a alone; `align_chapter` requires them)
 
 Output:
 
-- a rewritten `chapter-NN.sync.json` with improved word timings + coverage
+- a rewritten `section-NN.sync.json` with improved word timings + coverage
 
 Behavior:
 
 - Re-runs WhisperX forced alignment and regroups words back into chunks. This is
   a **re-alignment repair**: it improves timings for an existing sync but cannot
   create one from scratch (no prior `chunk_audio_starts` ⇒ nothing to align
-  against). For a chapter that has never been synthesized, run `synth`.
+  against). For a section that has never been synthesized, run `synth`.
 - Because the output differs from the prior artifact by design, the command
   **requires `--force`** to overwrite (the standard idempotency rule: identical
   output skips; different output fails unless forced).
 - Does not call the LLM or TTS. After `sync`, run `assemble` to rebuild
-  `chapter_data.json`.
+  `section_data.json`.
 
 ## Full local pipeline
 
@@ -336,16 +346,16 @@ openshelf-pipeline dag run \
   --upload
 ```
 
-By default, `run` reuses local per-chapter direction when possible. For each
-selected chapter, before calling the chapter-direction LLM, it searches sibling
-local build directories for a `chapter-NN.voice_direction.json` from the same
+By default, `run` reuses local per-section direction when possible. For each
+selected source prose section, before calling the direction LLM, it searches
+sibling local build directories for a `section-NN.voice_direction.json` from the same
 author/title, engine, and cast mode with matching chunk text. The cached
 build's voice/rendition do not need to match: the copied chapter artifact is
 remapped to the current build/rendition and current narrator voice before
 synthesis, so a reused Chatterbox direction plan can still render with a newly
 selected Chatterbox reference voice. Pass `--new-voice-direction` to force
 fresh chapter-direction LLM output for every chapter in the run.
-The run log records an explicit per-chapter direction-cache status: hit, miss,
+The run log records an explicit per-section direction-cache status: hit, miss,
 or disabled by `--new-voice-direction`.
 
 The equivalent manual stage sequence is:
@@ -361,10 +371,10 @@ pipeline assemble --build-dir {build_dir} --rendition {r} --build-id {b}
 pipeline upload  --book-dir {book_dir} --rendition {r} --build-id {b}
 ```
 
-`direct`, `synth`, `repair-pauses`, and `sync` run per chapter and are safe to
-parallelize across chapters once `character_registry.json` exists. `assemble`,
+`direct`, `synth`, `repair-pauses`, and `sync` run per section and are safe to
+parallelize across sections once `character_registry.json` exists. `assemble`,
 `coverage`, and `upload` operate on the whole build. `registry` runs once per
-book/build before chapter direction. `repair-pauses` is a no-TTS seam-cadence
+book/build before section direction. `repair-pauses` is a no-TTS seam-cadence
 repair for builds with synthesis-unit artifacts. `sync` is a later re-alignment
 repair command; initial word sync is produced by `synth`.
 

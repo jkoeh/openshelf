@@ -6,7 +6,7 @@ the single-gate idempotency check, and the per-uploader force semantics.
 
 Key invariants enforced here:
 
-- Per-build artifacts (audio, synthesis unit audits, chapter_data,
+- Per-build artifacts (audio, synthesis unit audits, section_data,
   character_registry, voice_direction, rendition-manifest) all live
   under the same `audio/{rendition}/builds/{build}/` prefix and are written
   in a single call to `upload_rendition_build`. The rendition-manifest is
@@ -76,7 +76,7 @@ def fetch_prior_book_manifest(client, bucket: str, author_slug: str, title_slug:
 
 
 # ---------------------------------------------------------------------------
-# Per-build upload (audio + chapter_data + rendition-manifest)
+# Per-build upload (audio + section_data + rendition-manifest)
 # ---------------------------------------------------------------------------
 
 
@@ -88,7 +88,7 @@ def upload_rendition_build(
     rendition: str,
     build_id: str,
     audio_dir: str,
-    chapter_data_path: str,
+    section_data_path: str,
     rendition_manifest_path: str,
     character_registry_path: str | None = None,
     voice_direction_path: str | None = None,
@@ -114,10 +114,12 @@ def upload_rendition_build(
     uploaded: list[str] = []
 
     # 1. Audio files, sorted to ensure stable ordering across runs.
-    for filename in sorted(f for f in os.listdir(audio_dir) if f.endswith(".m4a")):
-        # filename format: chapter-NN.m4a
-        chapter_number = int(filename.removeprefix("chapter-").removesuffix(".m4a"))
-        key = r2_keys.audio_key(author_slug, title_slug, rendition, build_id, chapter_number)
+    for filename in sorted(
+        f for f in os.listdir(audio_dir)
+        if f.startswith("section-") and f.endswith(".m4a")
+    ):
+        sequence = int(filename.removeprefix("section-").removesuffix(".m4a"))
+        key = r2_keys.audio_key(author_slug, title_slug, rendition, build_id, sequence)
         client.upload_file(
             os.path.join(audio_dir, filename),
             bucket,
@@ -132,16 +134,19 @@ def upload_rendition_build(
         uploaded.append(key)
 
     # 2. Private synthesis-unit seam audits, when present.
-    for filename in sorted(f for f in os.listdir(audio_dir) if f.endswith(".synthesis_units.json")):
-        chapter_number = int(
-            filename.removeprefix("chapter-").removesuffix(".synthesis_units.json")
+    for filename in sorted(
+        f for f in os.listdir(audio_dir)
+        if f.startswith("section-") and f.endswith(".synthesis_units.json")
+    ):
+        sequence = int(
+            filename.removeprefix("section-").removesuffix(".synthesis_units.json")
         )
         key = r2_keys.synthesis_units_key(
             author_slug,
             title_slug,
             rendition,
             build_id,
-            chapter_number,
+            sequence,
         )
         client.upload_file(
             os.path.join(audio_dir, filename),
@@ -155,10 +160,10 @@ def upload_rendition_build(
         logger.info("Uploaded: %s", key)
         uploaded.append(key)
 
-    # 3. chapter_data.json.
-    cd_key = r2_keys.chapter_data_key(author_slug, title_slug, rendition, build_id)
+    # 3. section_data.json.
+    cd_key = r2_keys.section_data_key(author_slug, title_slug, rendition, build_id)
     client.upload_file(
-        chapter_data_path,
+        section_data_path,
         bucket,
         cd_key,
         ExtraArgs={
@@ -226,6 +231,38 @@ def upload_rendition_build(
     uploaded.append(manifest_key)
 
     return uploaded
+
+
+def delete_build_prefixes(
+    client,
+    bucket: str,
+    author_slug: str,
+    title_slug: str,
+    rendition: str,
+    build_ids: list[str],
+) -> list[str]:
+    """Delete complete superseded build prefixes after publishing version 2."""
+    deleted: list[str] = []
+    for build_id in dict.fromkeys(build_ids):
+        prefix = r2_keys.build_prefix(
+            author_slug,
+            title_slug,
+            rendition,
+            build_id,
+        ) + "/"
+        paginator = client.get_paginator("list_objects_v2")
+        keys: list[str] = []
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            keys.extend(item["Key"] for item in page.get("Contents", []))
+        for index in range(0, len(keys), 1000):
+            batch = keys[index:index + 1000]
+            client.delete_objects(
+                Bucket=bucket,
+                Delete={"Objects": [{"Key": key} for key in batch], "Quiet": True},
+            )
+            deleted.extend(batch)
+        logger.info("Deleted superseded build prefix: %s", prefix)
+    return deleted
 
 
 # ---------------------------------------------------------------------------

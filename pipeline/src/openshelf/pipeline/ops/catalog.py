@@ -117,7 +117,10 @@ def build_catalog(client, bucket: str) -> dict:
                 r2_keys.cover_key(meta["author_slug"], meta["title_slug"], "image/png"),
             )
         )
-        chapters = rendition_manifest.get("chapters", [])
+        if rendition_manifest.get("version") != 2:
+            print(f"  [SKIP] incompatible rendition manifest: {rendition_manifest_key}")
+            continue
+        sections = rendition_manifest.get("sections", [])
 
         book = {
             "author": manifest.get("author", meta["author_slug"]),
@@ -128,15 +131,15 @@ def build_catalog(client, bucket: str) -> dict:
             "rendition": rendition,
             "current_build": current_build,
             "total_duration_seconds": rendition_manifest.get("total_duration_seconds", 0),
-            "chapter_count": len(chapters),
+            "section_count": len(sections),
             "has_cover": has_cover,
         }
         books.append(book)
         mins = book["total_duration_seconds"] / 60
-        print(f"  {book['author']} - {book['title']} ({book['chapter_count']} ch, {mins:.1f} min)")
+        print(f"  {book['author']} - {book['title']} ({book['section_count']} sections, {mins:.1f} min)")
 
     return {
-        "version": 1,
+        "version": 2,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "books": books,
     }

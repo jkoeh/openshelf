@@ -23,17 +23,22 @@ const BOOK_MANIFEST = {
 };
 
 const RENDITION_MANIFEST = {
+	version: 2,
 	build: BUILD,
 	rendition: RENDITION,
 	voice: "af_heart",
 	engine: "kokoro",
-	pipeline_version: "1",
+	pipeline_version: "2",
 	total_duration_seconds: 2880,
-	chapters: [
+	section_count: 1,
+	sections: [
 		{
-			number: 1,
-			title: "Chapter 1",
-			filename: "chapter-01.m4a",
+			sequence: 1,
+			section_type: "chapter",
+			ordinal: 1,
+			display_label: "I",
+			display_title: "The Arrest",
+			filename: "section-01.m4a",
 			duration_seconds: 2880,
 			word_count: 5200,
 		},
@@ -55,12 +60,12 @@ describe("GET /api/v1/books/:author/:title", () => {
 		const body = await res.json<{
 			title: string;
 			author: string;
-			renditions: Record<string, { current_build: string; chapters: unknown[] }>;
+			renditions: Record<string, { current_build: string; sections: unknown[] }>;
 		}>();
 		expect(body.title).toBe("The Trial");
 		expect(body.author).toBe("Franz Kafka");
 		expect(body.renditions[RENDITION].current_build).toBe(BUILD);
-		expect(body.renditions[RENDITION].chapters).toHaveLength(1);
+		expect(body.renditions[RENDITION].sections).toHaveLength(1);
 	});
 
 	it("returns 404 for unknown book", async () => {
@@ -76,6 +81,22 @@ describe("GET /api/v1/books/:author/:title", () => {
 			JSON.stringify(BOOK_MANIFEST),
 		);
 		const res = await app.request("/api/v1/books/franz-kafka/missing-build", {}, env);
+		expect(res.status).toBe(404);
+	});
+
+	it("returns 404 instead of normalizing a version-1 build", async () => {
+		const legacyTitle = "legacy-build";
+		await env.R2_BUCKET.put(
+			`books/${AUTHOR}/${legacyTitle}/manifest.json`,
+			JSON.stringify(BOOK_MANIFEST),
+		);
+		await env.R2_BUCKET.put(
+			`books/${AUTHOR}/${legacyTitle}/audio/${RENDITION}/builds/${BUILD}/rendition-manifest.json`,
+			JSON.stringify({ version: 1, chapters: [] }),
+		);
+
+		const res = await app.request(`/api/v1/books/${AUTHOR}/${legacyTitle}`, {}, env);
+
 		expect(res.status).toBe(404);
 	});
 

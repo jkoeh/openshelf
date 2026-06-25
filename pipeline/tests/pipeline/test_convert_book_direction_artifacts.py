@@ -45,7 +45,8 @@ class TestConvertBookDirectionArtifacts(unittest.TestCase):
         summary = dag_module._direction_speed_summary(chapter)
 
         self.assertEqual(payload["cast_mode"], "solo")
-        self.assertEqual(payload["chapters"][0]["number"], 3)
+        self.assertEqual(payload["version"], 2)
+        self.assertEqual(payload["sections"][0]["sequence"], 3)
         self.assertEqual(summary["segments"], 2)
         self.assertEqual(summary["speed_counts"], {"0.95": 1, "1.05": 1})
         self.assertEqual(summary["above_1x"], 1)
@@ -57,7 +58,7 @@ class TestConvertBookDirectionArtifacts(unittest.TestCase):
 
         self.assertEqual(
             path,
-            os.path.join("build-dir", "chapter-07.voice_direction.json"),
+            os.path.join("build-dir", "section-07.voice_direction.json"),
         )
 
     def test_parse_chapter_filter(self):

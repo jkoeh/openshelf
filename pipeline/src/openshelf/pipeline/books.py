@@ -480,7 +480,13 @@ def _add_processing_options(parser: argparse.ArgumentParser) -> None:
         choices=["auto", "cuda", "mps", "cpu"],
         help="Device request (default: auto)",
     )
-    parser.add_argument("--chapters", default=None, help="Chapter number/ranges, e.g. 2 or 2,4-5")
+    parser.add_argument(
+        "--sections",
+        "--chapters",
+        dest="chapters",
+        default=None,
+        help="Section sequence/ranges, e.g. 2 or 2,4-5",
+    )
     parser.add_argument("--keep-wav", action="store_true")
     parser.add_argument(
         "--new-voice-direction",

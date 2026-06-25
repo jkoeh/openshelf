@@ -1,65 +1,64 @@
 interface FinishTransitionArgs {
 	didJustFinish: boolean;
-	currentChapter: number;
-	totalChapters: number;
-	pinnedChapter?: number;
+	currentSection: number;
+	totalSections: number;
+	pinnedSection?: number;
 	rendition?: string;
 	build?: string;
 	handledFinishKey: string | null;
-	pendingAutoplayChapter: number | null;
+	pendingAutoplaySection: number | null;
 }
 
 interface FinishTransition {
-	nextChapter: number;
-	pendingAutoplayChapter: number;
+	nextSection: number;
+	pendingAutoplaySection: number;
 	handledFinishKey: string;
 }
 
-export function chapterPlaybackKey(chapter: number, rendition: string, build: string): string {
-	return `${rendition}:${build}:${chapter}`;
+export function sectionPlaybackKey(section: number, rendition: string, build: string): string {
+	return `${rendition}:${build}:${section}`;
 }
 
-export function nextAutoplayChapterAfterFinish({
+export function nextAutoplaySectionAfterFinish({
 	didJustFinish,
-	currentChapter,
-	totalChapters,
-	pinnedChapter,
+	currentSection,
+	totalSections,
+	pinnedSection,
 	rendition,
 	build,
 	handledFinishKey,
-	pendingAutoplayChapter,
+	pendingAutoplaySection,
 }: FinishTransitionArgs): FinishTransition | null {
-	if (!didJustFinish || totalChapters <= 0 || currentChapter >= totalChapters) return null;
-	if (!rendition || !build || pinnedChapter !== currentChapter) return null;
-	if (pendingAutoplayChapter !== null) return null;
+	if (!didJustFinish || totalSections <= 0 || currentSection >= totalSections) return null;
+	if (!rendition || !build || pinnedSection !== currentSection) return null;
+	if (pendingAutoplaySection !== null) return null;
 
-	const finishKey = chapterPlaybackKey(currentChapter, rendition, build);
+	const finishKey = sectionPlaybackKey(currentSection, rendition, build);
 	if (handledFinishKey === finishKey) return null;
-
-	const nextChapter = currentChapter + 1;
+	const nextSection = currentSection + 1;
 	return {
-		nextChapter,
-		pendingAutoplayChapter: nextChapter,
+		nextSection,
+		pendingAutoplaySection: nextSection,
 		handledFinishKey: finishKey,
 	};
 }
 
-export function shouldPlayPendingChapter({
-	pendingAutoplayChapter,
-	currentChapter,
-	pinnedChapter,
+export function shouldPlayPendingSection({
+	pendingAutoplaySection,
+	currentSection,
+	pinnedSection,
 	isLoaded,
 	hasAudioSource,
 }: {
-	pendingAutoplayChapter: number | null;
-	currentChapter: number;
-	pinnedChapter?: number;
+	pendingAutoplaySection: number | null;
+	currentSection: number;
+	pinnedSection?: number;
 	isLoaded: boolean;
 	hasAudioSource: boolean;
 }): boolean {
 	return (
-		pendingAutoplayChapter === currentChapter &&
-		pinnedChapter === currentChapter &&
+		pendingAutoplaySection === currentSection &&
+		pinnedSection === currentSection &&
 		isLoaded &&
 		hasAudioSource
 	);

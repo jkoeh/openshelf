@@ -6,15 +6,17 @@
 
 ## Purpose
 
-Generate chapter audio from directed text segments. The public output contract is unchanged for every engine:
+Generate section audio from a deterministic narrator heading plus directed body
+segments. The public output contract is the same for every engine:
 
-- chapter WAV, later encoded to `.m4a`
+- section WAV, later encoded to `.m4a`
+- heading word timestamps
 - `chunk_audio_starts`
 - `chunk_words: list[list[WordTimestamp]]`
-- `chapter-NN.sync.json` as the durable per-chapter word timing artifact
-- `chapter-NN.synthesis_units.json` as the private seam/unit audit artifact
+- `section-NN.sync.json` as the durable per-section word timing artifact
+- `section-NN.synthesis_units.json` as the private seam/unit audit artifact
 
-The client, worker, `chapter_data.json`, `manifest.json`, and
+The client, worker, `section_data.json`, `manifest.json`, and
 `rendition-manifest.json` schemas do not change when the TTS engine changes.
 The synthesis-unit artifact is not a reader contract; it exists so repair tools
 can modify seam pauses without rerunning the LLM or TTS when exact seam metadata
@@ -134,7 +136,7 @@ unit. Internal Chatterbox unit joins use the shared `PausePolicy`, not an
 adapter-local constant: sentence, phrase, and paragraph joins keep the normal
 audiobook cadence, while unavoidable in-sentence technical splits are labeled
 `technical` and receive no inserted silence. The split is internal to TTS and
-alignment; reader text and `chapter_data.json` stay unchanged. Kokoro keeps the generic
+alignment; reader text and `section_data.json` stay unchanged. Kokoro keeps the generic
 paragraph break behavior because its lower per-call overhead and native timing
 path make explicit paragraph pauses useful.
 Before generation, the adapter disables upstream `tqdm` progress bars inside
@@ -204,12 +206,15 @@ class SynthesisResult:
     chunk_audio_starts: list[float]
     chunk_words: list[list[WordTimestamp]]
     synthesis_units: list[ChunkSynthesisAudit]
+    heading_words: list[WordTimestamp]
 ```
 
-`ChunkInfo.directed_segments` is optional for backward compatibility. If absent, `synthesize_chapter` wraps `ChunkInfo.text` in a single narrator segment using the legacy Kokoro voice path so existing tests and scripts keep working.
+`ChunkInfo.directed_segments` is optional. If absent, `synthesize_chapter`
+wraps `ChunkInfo.text` in one narrator segment using the same complete
+`narrator_voice` supplied for the heading. This fallback is engine-neutral.
 
-Production chapter audio generation should populate `ChunkInfo.directed_segments`
-by loading `chapter-NN.voice_direction.json`. The directive artifact, not
+Production section audio generation should populate body `ChunkInfo.directed_segments`
+by loading `section-NN.voice_direction.json`. The directive artifact, not
 transient in-memory LLM output, is the boundary between direction and synthesis.
 This preserves repairability: regenerating audio from an existing directive must
 not call the LLM again. Adaptive performance direction may split one reader
@@ -217,23 +222,26 @@ chunk into multiple directed segments when the LLM decides the chunk needs
 different controls internally; those segments still synthesize and align as one
 reader chunk.
 
-## Chapter Sync Artifact
+## Section Sync Artifact
 
-After chapter audio is synthesized/aligned and encoded, the pipeline writes one
+After section audio is synthesized/aligned and encoded, the pipeline writes one
 local sync artifact beside the audio:
 
 ```text
-audio/{rendition}/builds/{build}/chapter-NN.sync.json
+audio/{rendition}/builds/{build}/section-NN.sync.json
 ```
 
-The artifact is the canonical chapter-level timing input for `chapter_data.json`
+The artifact is the canonical section-level timing input for `section_data.json`
 assembly and sync repair:
 
 ```json
 {
-  "version": 1,
-  "number": 1,
-  "audio_filename": "chapter-01.m4a",
+  "version": 2,
+  "sequence": 1,
+  "audio_filename": "section-01.m4a",
+  "heading_words": [
+    {"word": "Chapter", "start": 0.25, "end": 0.54}
+  ],
   "chunk_audio_starts": [0.0, 12.34],
   "coverage": {
     "reader_word_count": 42,
@@ -261,10 +269,15 @@ assembly and sync repair:
 }
 ```
 
-`chapter_data.json` is assembled from `chapter-NN.chunks.json` plus
-`chapter-NN.sync.json`. In-memory `chunk_words` remains available as a runtime
+`section_data.json` is assembled from `section-NN.chunks.json` plus
+`section-NN.sync.json`. Heading words remain a separate region from body chunk
+words. In-memory `chunk_words` remains available as a runtime
 result for backward-compatible helpers, but production assembly should prefer
 the sync artifact when present.
+
+Each public section's `word_count` is the total number of words in
+`heading.spoken_text` plus its body chunk text. It does not derive chapter
+numbering from playback sequence.
 
 Coverage metrics are diagnostics only. They help identify partial WhisperX
 alignment during development and repair, but they do not block upload and do
@@ -272,10 +285,10 @@ not create a separate build health state.
 
 ## Synthesis Units Artifact
 
-Every successful chapter synthesis writes a private seam audit beside the audio:
+Every successful section synthesis writes a private seam audit beside the audio:
 
 ```text
-audio/{rendition}/builds/{build}/chapter-NN.synthesis_units.json
+audio/{rendition}/builds/{build}/section-NN.synthesis_units.json
 ```
 
 The artifact records exact frame ranges for chunk seams, directed-segment
@@ -285,9 +298,9 @@ for audit and repair tooling, but the worker/client do not read it.
 
 ```json
 {
-  "version": 1,
-  "number": 9,
-  "audio_filename": "chapter-09.m4a",
+  "version": 2,
+  "sequence": 9,
+  "audio_filename": "section-09.m4a",
   "sample_rate": 24000,
   "policy": "audiobook-v1",
   "chunks": [
@@ -364,13 +377,23 @@ def synthesize_chapter(
     pipeline_or_engine: Any,
     chunks: list[ChunkInfo],
     output_path: str,
-    voice: str = TTS_VOICE,
+    narrator_voice: VoiceSpec | None = None,
     sample_rate: int = TTS_SAMPLE_RATE,
     aligner: WordAligner | None = None,
+    heading_text: str = "",
 ) -> SynthesisResult
 ```
 
 `pipeline_or_engine` accepts either the legacy Kokoro `KPipeline` object or a `TTSEngine`. New code should pass a `TTSEngine`; the legacy path exists as a regression guard while callers are migrated.
+
+`narrator_voice` is the complete registry `VoiceSpec`, not a voice ID. The
+shared synthesis layer passes that same object unchanged to the independent
+heading segment and to any narrator fallback body segment whose
+`ChunkInfo.directed_segments` is absent. This keeps heading construction
+engine-independent while preserving Kokoro presets, F5-TTS reference
+audio/text, Chatterbox reference audio, and future adapter-owned voice fields.
+When omitted, the legacy Kokoro path constructs the configured default preset
+once at the boundary.
 
 ## Segment Synthesis
 
@@ -395,11 +418,9 @@ For each segment:
    in `voice_direction.json` for audit only and must not be spoken. The
    sanitizer also removes BOM/zero-width no-break characters before engine
    calls. Single line breaks collapse to synthesis spaces. Double line breaks
-   inside a chunk are treated as internal paragraph boundaries, including
-   heading-to-title and title-to-prose boundaries such as
-   `Chapter 6.\n\nPig and Pepper\n\nFor a minute...`, and become controlled
-   synthesis silence. The original chunk text remains available for alignment
-   and reader output.
+   inside body chunks are treated as internal paragraph boundaries and become
+   controlled synthesis silence. Section headings are never inserted into
+   these body chunks; they are synthesized through the separate heading path.
 2. Optionally prepend the previous spoken sentence as synthesis-only rolling
    context when `OPENSHELF_TTS_ROLLING_CONTEXT=1`. The context may help some
    engines pronounce the first words of a chunk/segment naturally, but it must
@@ -438,7 +459,7 @@ For each segment:
     boundaries. Engine-configured voice-transition silence remains limited to
     actual voice changes unless the next segment's `join_policy` asks for a
     tight join.
-11. Record every emitted unit and seam in `chapter-NN.synthesis_units.json`.
+11. Record every emitted unit and seam in `section-NN.synthesis_units.json`.
 12. Offset word timestamps by the chunk's absolute frame position.
 
 If a forced-alignment unit fails, the aligner returns `[]` for that unit and
@@ -447,10 +468,24 @@ corrupt sync because speaker annotation was validated before segments reached
 TTS, and alignment is always performed against original text slices, never
 against LLM-rewritten reader text.
 
-## Timing Model
+## Section heading and timing model
+
+Each section may have a deterministic narrator heading region. Generated
+opening/closing credits are heading-only sections. For a normal section:
+
+```text
+[lead-in][heading audio][750 ms heading gap][body chunk 0][body seams...]
+```
+
+Heading synthesis receives `heading.spoken_text` as one independent engine
+call before body synthesis. It is forced-aligned independently and serialized
+as `heading.words`. It must never be included in a body `ChunkInfo`, directed
+segment, or body chunk text.
+
+## Body timing model
 
 A short lead-in silence (`LEAD_IN_SILENCE_MS`, 50ms) is prepended to every
-chapter. Variable silence is then inserted between chunks by `PausePolicy`, so
+section. Variable silence is then inserted between chunks by `PausePolicy`, so
 implementation chunk boundaries follow the same seam rules as directed segments
 and engine-owned synthesis units:
 
@@ -472,11 +507,9 @@ phrases such as `"..." she thought "..."` from sounding like separate clips.
 Synthesis-only line breaks are normalized before engine calls. Single line
 breaks collapse to spaces. Double line breaks inside a packed chunk render as
 explicit silence only when they are true internal prose paragraph breaks.
-Short chapter labels and title fragments at the front of a chunk, such as
-`Chapter 6.\n\nPig and Pepper\n\nFor a minute...`, are merged into the following
-synthesis unit. They must not be synthesized as tiny standalone calls because
-some engines, notably Chatterbox, can produce clipped onset audio for those
-short opening fragments.
+Body chunks cannot contain chapter labels or titles. The prior short-fragment
+merge rule applies only to genuine body paragraph fragments and must not merge
+heading audio with prose.
 Engine-specific pause direction can also insert silence inside a chunk without
 changing reader text.
 
@@ -490,7 +523,9 @@ Directed segment speed is already normalized by `voice_director.py` before TTS s
 
 ## Word Timestamps
 
-Kokoro may emit token timestamps. `_extract_words` remains available for tests and debugging, but Kokoro token timestamps are not serialized into `chapter_data.json`.
+Kokoro may emit token timestamps. `_extract_words` remains available for tests
+and debugging, but Kokoro token timestamps are not serialized into
+`section_data.json`.
 
 All engines use `WhisperXAligner` for final sync. The aligner wraps `word_aligner.py` and converts `WordEntry(word, start, end, chunk_idx)` to `WordTimestamp(word, start, end)` at its return boundary. `WhisperXAligner` also declares support for context trimming, but rolling synthesis context is used only when `OPENSHELF_TTS_ROLLING_CONTEXT=1` and the aligner supports context trim. WhisperX is lazy-imported and fully mocked in tests.
 

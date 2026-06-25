@@ -33,8 +33,8 @@ from openshelf.pipeline.dag.cli import (  # noqa: E402
 )
 from openshelf.pipeline.text_chunker import (  # noqa: E402
     Chunk,
-    read_chapter_chunks_artifact,
-    write_chapter_chunks_artifact,
+    read_section_chunks_artifact,
+    write_section_chunks_artifact,
 )
 
 
@@ -42,9 +42,10 @@ def _write_sync(path: str, number: int, coverage: dict, chunks=None) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(
             {
-                "version": 1,
-                "number": number,
-                "audio_filename": f"chapter-{number:02d}.m4a",
+                "version": 2,
+                "sequence": number,
+                "audio_filename": f"section-{number:02d}.m4a",
+                "heading_words": [],
                 "chunk_audio_starts": [0.0],
                 "coverage": coverage,
                 "chunks": chunks or [],
@@ -54,22 +55,33 @@ def _write_sync(path: str, number: int, coverage: dict, chunks=None) -> None:
 
 
 class TestDagCliAssemble(unittest.TestCase):
-    def test_assemble_writes_chapter_data_from_chunk_and_sync_artifacts(self):
+    def test_assemble_writes_section_data_from_heading_chunk_and_sync_artifacts(self):
         with tempfile.TemporaryDirectory() as tmp:
-            chunks_path = os.path.join(tmp, "chapter-01.chunks.json")
-            sync_path = os.path.join(tmp, "chapter-01.sync.json")
-            write_chapter_chunks_artifact(
+            chunks_path = os.path.join(tmp, "section-01.chunks.json")
+            sync_path = os.path.join(tmp, "section-01.sync.json")
+            heading = {
+                "display_label": "I",
+                "display_title": "Chapter One",
+                "spoken_text": "Chapter One.",
+                "element_ids": ["sec1-el0000"],
+            }
+            write_section_chunks_artifact(
                 chunks_path,
                 1,
-                "Chapter One",
-                [Chunk("Reader text.", 0, 0, "ch1-el0000", "ch1-el0000")],
+                "chapter",
+                1,
+                heading,
+                [Chunk("Reader text.", 0, 0, "sec1-el0001", "sec1-el0001")],
             )
             with open(sync_path, "w", encoding="utf-8") as f:
                 json.dump(
                     {
-                        "version": 1,
-                        "number": 1,
-                        "audio_filename": "chapter-01.m4a",
+                        "version": 2,
+                        "sequence": 1,
+                        "audio_filename": "section-01.m4a",
+                        "heading_words": [
+                            {"word": "Chapter", "start": 0.0, "end": 0.3},
+                        ],
                         "chunk_audio_starts": [0.0],
                         "coverage": {
                             "reader_word_count": 2,
@@ -98,16 +110,21 @@ class TestDagCliAssemble(unittest.TestCase):
                 "abc123",
             ])
 
-            with open(os.path.join(tmp, "chapter_data.json"), "r", encoding="utf-8") as f:
+            with open(os.path.join(tmp, "section_data.json"), "r", encoding="utf-8") as f:
                 payload = json.load(f)
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["rendition"], "kokoro-af-heart")
         self.assertEqual(payload["build"], "abc123")
-        self.assertEqual(payload["chapters"][0]["title"], "Chapter One")
-        self.assertEqual(payload["chapters"][0]["chunks"][0]["text"], "Reader text.")
+        self.assertEqual(payload["version"], 2)
+        self.assertEqual(payload["sections"][0]["heading"]["display_label"], "I")
         self.assertEqual(
-            payload["chapters"][0]["chunks"][0]["words"],
+            payload["sections"][0]["heading"]["words"],
+            [{"word": "Chapter", "start": 0.0, "end": 0.3}],
+        )
+        self.assertEqual(payload["sections"][0]["chunks"][0]["text"], "Reader text.")
+        self.assertEqual(
+            payload["sections"][0]["chunks"][0]["words"],
             [{"word": "Reader", "start": 0.0, "end": 0.4}],
         )
 
@@ -116,7 +133,7 @@ class TestDagCliCoverage(unittest.TestCase):
     def test_collect_coverage_aggregates_book_totals(self):
         with tempfile.TemporaryDirectory() as tmp:
             _write_sync(
-                os.path.join(tmp, "chapter-01.sync.json"),
+                os.path.join(tmp, "section-01.sync.json"),
                 1,
                 {
                     "reader_word_count": 10,
@@ -126,7 +143,7 @@ class TestDagCliCoverage(unittest.TestCase):
                 },
             )
             _write_sync(
-                os.path.join(tmp, "chapter-02.sync.json"),
+                os.path.join(tmp, "section-02.sync.json"),
                 2,
                 {
                     "reader_word_count": 10,
@@ -143,12 +160,12 @@ class TestDagCliCoverage(unittest.TestCase):
         self.assertEqual(report["coverage_ratio"], 0.8)
         # First gap is in chapter 2 at chapter-local offset 6, after 10 chapter-1 words.
         self.assertEqual(report["first_missing_word_offset"], 16)
-        self.assertEqual([c["number"] for c in report["chapters"]], [1, 2])
+        self.assertEqual([c["number"] for c in report["sections"]], [1, 2])
 
     def test_coverage_command_exits_zero_on_low_coverage(self):
         with tempfile.TemporaryDirectory() as tmp:
             _write_sync(
-                os.path.join(tmp, "chapter-01.sync.json"),
+                os.path.join(tmp, "section-01.sync.json"),
                 1,
                 {
                     "reader_word_count": 10,
@@ -168,7 +185,7 @@ class TestDagCliCoverage(unittest.TestCase):
     def test_coverage_command_json_output(self):
         with tempfile.TemporaryDirectory() as tmp:
             _write_sync(
-                os.path.join(tmp, "chapter-01.sync.json"),
+                os.path.join(tmp, "section-01.sync.json"),
                 1,
                 {
                     "reader_word_count": 4,
@@ -184,7 +201,7 @@ class TestDagCliCoverage(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         payload = json.loads(buffer.getvalue())
         self.assertEqual(payload["coverage_ratio"], 1.0)
-        self.assertEqual(payload["chapters"][0]["number"], 1)
+        self.assertEqual(payload["sections"][0]["number"], 1)
 
     def test_coverage_command_errors_when_no_sync_artifacts(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -194,28 +211,51 @@ class TestDagCliCoverage(unittest.TestCase):
 
 def _book_parse_payload() -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "epub_hash": "sha256:abc",
-        "parser_version": "1",
-        "metadata": {"title": "T", "author": "A", "source": "gutenberg"},
-        "chapters": [
+        "parser_version": "2",
+        "metadata": {
+            "title": "T",
+            "author": "A",
+            "source": "gutenberg",
+            "language": "en",
+        },
+        "sections": [
             {
-                "number": 1,
-                "title": "Chapter One",
+                "sequence": 1,
+                "section_type": "chapter",
+                "ordinal": 1,
+                "heading": {
+                    "display_label": "I",
+                    "display_title": "Chapter One",
+                    "spoken_text": "Chapter One.",
+                    "element_ids": ["sec1-el0000"],
+                },
                 "epub_item_name": "ch1.xhtml",
                 "word_count": 2,
                 "elements": [
-                    {"id": "ch1-el0000", "tag": "p", "html": "<p>hello world</p>",
+                    {"id": "sec1-el0000", "tag": "h2", "html": "<h2>I</h2>",
+                     "text": "I", "spoken": True},
+                    {"id": "sec1-el0001", "tag": "p", "html": "<p>hello world</p>",
                      "text": "hello world", "spoken": True},
                 ],
             },
             {
-                "number": 2,
-                "title": "Chapter Two",
+                "sequence": 2,
+                "section_type": "epilogue",
+                "ordinal": None,
+                "heading": {
+                    "display_label": "Epilogue",
+                    "display_title": "",
+                    "spoken_text": "Epilogue.",
+                    "element_ids": ["sec2-el0000"],
+                },
                 "epub_item_name": "ch2.xhtml",
                 "word_count": 2,
                 "elements": [
-                    {"id": "ch2-el0000", "tag": "p", "html": "<p>second chapter</p>",
+                    {"id": "sec2-el0000", "tag": "h2", "html": "<h2>Epilogue</h2>",
+                     "text": "Epilogue", "spoken": True},
+                    {"id": "sec2-el0001", "tag": "p", "html": "<p>second chapter</p>",
                      "text": "second chapter", "spoken": True},
                 ],
             },
@@ -230,29 +270,31 @@ class TestDagCliChunk(unittest.TestCase):
             json.dump(_book_parse_payload(), f)
         return path
 
-    def test_chunk_writes_chapter_chunks_for_all_chapters(self):
+    def test_chunk_writes_credits_and_source_sections(self):
         with tempfile.TemporaryDirectory() as tmp:
             book_parse_path = self._write_book_parse(tmp)
             written = chunk_chapters(book_parse_path, tmp)
 
-            self.assertEqual(len(written), 2)
-            artifact = read_chapter_chunks_artifact(
-                os.path.join(tmp, "chapter-01.chunks.json")
+            self.assertEqual(len(written), 4)
+            artifact = read_section_chunks_artifact(
+                os.path.join(tmp, "section-02.chunks.json")
             )
-            self.assertEqual(artifact["number"], 1)
-            self.assertEqual(artifact["title"], "Chapter One")
+            self.assertEqual(artifact["sequence"], 2)
+            self.assertEqual(artifact["section_type"], "chapter")
+            self.assertEqual(artifact["ordinal"], 1)
+            self.assertEqual(artifact["heading"]["display_label"], "I")
             self.assertEqual(artifact["chunks"][0]["text"], "hello world")
-            self.assertEqual(artifact["chunks"][0]["el_start"], "ch1-el0000")
+            self.assertEqual(artifact["chunks"][0]["el_start"], "sec1-el0001")
 
     def test_chunk_respects_chapter_filter(self):
         with tempfile.TemporaryDirectory() as tmp:
             book_parse_path = self._write_book_parse(tmp)
-            written = chunk_chapters(book_parse_path, tmp, selected_chapters={2})
+            written = chunk_chapters(book_parse_path, tmp, selected_chapters={3})
 
             self.assertEqual(len(written), 1)
-            self.assertTrue(written[0].endswith("chapter-02.chunks.json"))
+            self.assertTrue(written[0].endswith("section-03.chunks.json"))
             self.assertFalse(
-                os.path.exists(os.path.join(tmp, "chapter-01.chunks.json"))
+                os.path.exists(os.path.join(tmp, "section-02.chunks.json"))
             )
 
     def test_chunk_errors_on_missing_selected_chapter(self):
@@ -269,13 +311,45 @@ class TestDagCliChunk(unittest.TestCase):
             # Re-running with identical inputs skips without error.
             self.assertEqual(main(args), 0)
 
+    def test_chunk_generates_deterministic_opening_and_closing_credits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            book_parse_path = self._write_book_parse(tmp)
+            build_dir = os.path.join(
+                tmp,
+                "audio",
+                "kokoro-af-heart",
+                "builds",
+                "1234567890abcdef",
+            )
+            os.makedirs(build_dir)
+
+            chunk_chapters(book_parse_path, build_dir)
+
+            opening = read_section_chunks_artifact(
+                os.path.join(build_dir, "section-01.chunks.json")
+            )
+            closing = read_section_chunks_artifact(
+                os.path.join(build_dir, "section-04.chunks.json")
+            )
+
+        self.assertEqual(opening["section_type"], "opening_credits")
+        self.assertEqual(
+            opening["heading"]["spoken_text"],
+            "T. Written by A. Narrated by OpenShelf using the Heart voice.",
+        )
+        self.assertEqual(closing["section_type"], "closing_credits")
+        self.assertEqual(
+            closing["heading"]["spoken_text"],
+            "The end of T, written by A, narrated by OpenShelf using the Heart voice.",
+        )
+
 
 def _make_local_build(tmp: str, rendition: str, build_id: str) -> str:
     """Lay out a minimal local book + build directory for upload tests."""
     book_dir = os.path.join(tmp, "kafka", "metamorphosis")
     build_dir = os.path.join(book_dir, "audio", rendition, "builds", build_id)
     os.makedirs(build_dir)
-    for name in ("chapter-01.m4a", "chapter_data.json", "rendition-manifest.json",
+    for name in ("section-01.m4a", "section_data.json", "rendition-manifest.json",
                  "character_registry.json", "voice_direction.json", "run.json"):
         open(os.path.join(build_dir, name), "w").close()
     open(os.path.join(book_dir, "cover.jpg"), "w").close()
@@ -336,7 +410,7 @@ class TestDagCliUpload(unittest.TestCase):
             self.assertTrue(any(k.endswith("rendition-manifest.json") for k in keys))
             self.assertTrue(any(k.endswith("manifest.json") for k in keys))
             uploaded_keys = [c.args[2] for c in client.upload_file.call_args_list]
-            self.assertTrue(any("chapter-01.m4a" in k for k in uploaded_keys))
+            self.assertTrue(any("section-01.m4a" in k for k in uploaded_keys))
             self.assertTrue(any(k.endswith("/cover.jpg") for k in uploaded_keys))
 
     def test_upload_errors_when_required_artifact_missing(self):
@@ -344,7 +418,7 @@ class TestDagCliUpload(unittest.TestCase):
             book_dir = _make_local_build(tmp, self.RENDITION, self.BUILD)
             os.remove(os.path.join(
                 book_dir, "audio", self.RENDITION, "builds", self.BUILD,
-                "chapter_data.json",
+                "section_data.json",
             ))
             with self.assertRaises(FileNotFoundError):
                 upload_build(
@@ -361,13 +435,76 @@ class TestDagCliUpload(unittest.TestCase):
                 book_dir, "audio", "kokoro-bf-emma", "builds", self.BUILD
             )
             os.makedirs(other_build)
-            for name in ("chapter_data.json", "rendition-manifest.json"):
+            for name in ("section_data.json", "rendition-manifest.json"):
                 open(os.path.join(other_build, name), "w").close()
             with self.assertRaises(ValueError):
                 upload_build(
                     book_dir=book_dir, rendition="kokoro-bf-emma", build_id=self.BUILD,
                     bucket="openshelf", client=_no_prior_client(),
                 )
+
+    def test_upload_publishes_v2_pointer_before_deleting_v1_builds(self):
+        old_build = "1111111111111111"
+        prior = {
+            "title": "Metamorphosis",
+            "author": "Franz Kafka",
+            "source": "gutenberg",
+            "renditions": {
+                self.RENDITION: {
+                    "voice": "af_heart",
+                    "engine": "kokoro",
+                    "display": "Heart",
+                    "current_build": old_build,
+                    "available_builds": [old_build],
+                },
+            },
+        }
+        events: list[str] = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            book_dir = _make_local_build(tmp, self.RENDITION, self.BUILD)
+            client = MagicMock()
+            client.get_object.return_value = {
+                "Body": io.BytesIO(b'{"version": 1, "chapters": []}'),
+            }
+
+            with patch(
+                "openshelf.pipeline.r2.upload_cover",
+                return_value="cover",
+            ), patch(
+                "openshelf.pipeline.r2.upload_epub",
+                return_value="epub",
+            ), patch(
+                "openshelf.pipeline.r2.upload_rendition_build",
+                return_value=["new-build"],
+            ), patch(
+                "openshelf.pipeline.r2.fetch_prior_book_manifest",
+                return_value=prior,
+            ), patch(
+                "openshelf.pipeline.r2.upload_book_manifest",
+                side_effect=lambda *args, **kwargs: events.append("publish") or "manifest",
+            ), patch(
+                "openshelf.pipeline.r2.delete_build_prefixes",
+                side_effect=lambda *args, **kwargs: events.append("delete") or ["old-object"],
+            ) as delete_builds:
+                upload_build(
+                    book_dir=book_dir,
+                    rendition=self.RENDITION,
+                    build_id=self.BUILD,
+                    bucket="openshelf",
+                    client=client,
+                )
+
+            with open(os.path.join(book_dir, "manifest.json"), encoding="utf-8") as f:
+                published = json.load(f)
+
+        self.assertEqual(events, ["publish", "delete"])
+        self.assertEqual(
+            published["renditions"][self.RENDITION]["available_builds"],
+            [self.BUILD],
+        )
+        delete_builds.assert_called_once()
+        self.assertEqual(delete_builds.call_args.args[-1], [old_build])
 
 
 class _StubDirector:
@@ -409,10 +546,16 @@ class TestDagCliDirect(unittest.TestCase):
     def _setup(self, tmp: str) -> str:
         build_dir = os.path.join(tmp, "audio", "kokoro-af-heart", "builds", "abc123")
         os.makedirs(build_dir)
-        write_chapter_chunks_artifact(
-            os.path.join(build_dir, "chapter-01.chunks.json"),
-            1, "Chapter One",
-            [Chunk("hello world", 0, 0, "ch1-el0000", "ch1-el0000")],
+        write_section_chunks_artifact(
+            os.path.join(build_dir, "section-01.chunks.json"),
+            1, "chapter", 1,
+            {
+                "display_label": "I",
+                "display_title": "Chapter One",
+                "spoken_text": "Chapter One.",
+                "element_ids": ["sec1-el0000"],
+            },
+            [Chunk("hello world", 0, 0, "sec1-el0001", "sec1-el0001")],
         )
         with open(os.path.join(build_dir, "character_registry.json"), "w", encoding="utf-8") as f:
             json.dump(
@@ -433,8 +576,8 @@ class TestDagCliDirect(unittest.TestCase):
             self.assertEqual(payload["build"], "abc123")
             self.assertEqual(payload["engine"], "kokoro")
             self.assertEqual(payload["cast_mode"], "solo")
-            chapter = payload["chapters"][0]
-            self.assertEqual(chapter["number"], 1)
+            chapter = payload["sections"][0]
+            self.assertEqual(chapter["sequence"], 1)
             segment = chapter["chunks"][0]["segments"][0]
             self.assertEqual(segment["speaker"], "narrator")
             self.assertEqual(segment["voice"]["preset_name"], "af_heart")
@@ -443,7 +586,7 @@ class TestDagCliDirect(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             build_dir = self._setup(tmp)
             with patch("openshelf.pipeline.dag.cli.direct_chapter") as mocked:
-                mocked.return_value = os.path.join(build_dir, "chapter-01.voice_direction.json")
+                mocked.return_value = os.path.join(build_dir, "section-01.voice_direction.json")
                 exit_code = main([
                     "direct",
                     "--build-dir",
@@ -474,10 +617,16 @@ class TestDagCliDirect(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             build_dir = os.path.join(tmp, "audio", "r", "builds", "b")
             os.makedirs(build_dir)
-            write_chapter_chunks_artifact(
-                os.path.join(build_dir, "chapter-01.chunks.json"),
-                1, "Chapter One",
-                [Chunk("hi", 0, 0, "ch1-el0000", "ch1-el0000")],
+            write_section_chunks_artifact(
+                os.path.join(build_dir, "section-01.chunks.json"),
+                1, "chapter", 1,
+                {
+                    "display_label": "I",
+                    "display_title": "Chapter One",
+                    "spoken_text": "Chapter One.",
+                    "element_ids": [],
+                },
+                [Chunk("hi", 0, 0, "sec1-el0001", "sec1-el0001")],
             )
             with self.assertRaises(FileNotFoundError):
                 direct_chapter(build_dir, 1, director=_StubDirector())
@@ -523,7 +672,7 @@ class TestDagCliDirectionCache(unittest.TestCase):
                 )
             ]],
         )
-        path = os.path.join(build_dir, "chapter-01.voice_direction.json")
+        path = os.path.join(build_dir, "section-01.voice_direction.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(
                 build_voice_direction_payload(
@@ -581,12 +730,12 @@ class TestDagCliDirectionCache(unittest.TestCase):
 
             self.assertIsNotNone(result)
             payload, source = result
-            copied_path = os.path.join(new_build, "chapter-01.voice_direction.json")
+            copied_path = os.path.join(new_build, "section-01.voice_direction.json")
             self.assertTrue(os.path.exists(copied_path))
-            self.assertTrue(source.endswith("chapter-01.voice_direction.json"))
+            self.assertTrue(source.endswith("section-01.voice_direction.json"))
             self.assertEqual(payload["rendition"], "chatterbox-af-heart")
             self.assertEqual(payload["build"], "bbbbbbbbbbbbbbbb")
-            segment = payload["chapters"][0]["chunks"][0]["segments"][0]
+            segment = payload["sections"][0]["chunks"][0]["segments"][0]
             self.assertEqual(segment["emotion"], "anxious")
             self.assertEqual(segment["engine_controls"]["intensity"], 0.7)
             self.assertEqual(segment["voice"]["id"], "chatterbox-af_heart")
@@ -637,12 +786,12 @@ class TestDagCliDirectionCache(unittest.TestCase):
 
             self.assertIsNone(result)
             self.assertFalse(os.path.exists(
-                os.path.join(new_build, "chapter-01.voice_direction.json")
+                os.path.join(new_build, "section-01.voice_direction.json")
             ))
 
     def test_direction_cache_hit_message_includes_copy_source_and_target(self):
-        source = os.path.join("old", "chapter-01.voice_direction.json")
-        target = os.path.join("new", "chapter-01.voice_direction.json")
+        source = os.path.join("old", "section-01.voice_direction.json")
+        target = os.path.join("new", "section-01.voice_direction.json")
 
         self.assertEqual(
             _direction_cache_hit_message(source, target),
@@ -650,7 +799,7 @@ class TestDagCliDirectionCache(unittest.TestCase):
         )
 
     def test_direction_cache_hit_message_identifies_existing_target(self):
-        target = os.path.join("build", "chapter-01.voice_direction.json")
+        target = os.path.join("build", "section-01.voice_direction.json")
 
         self.assertEqual(
             _direction_cache_hit_message(target, target),
@@ -701,21 +850,28 @@ class TestDagCliRegistry(unittest.TestCase):
 
 class TestDagCliRun(unittest.TestCase):
     def test_run_book_dry_run_parses_and_skips_engine(self):
-        from openshelf.pipeline.epub_parser import Chapter, ContentElement
+        from openshelf.pipeline.epub_parser import ContentElement, Section, SectionHeading
         from openshelf.pipeline.logging_utils import close_pipeline_logging
 
-        chapter = Chapter(
-            number=1,
-            title="Chapter One",
-            elements=[
-                ContentElement(
-                    id="ch1-el0000",
-                    tag="p",
-                    html="<p>Hello world</p>",
-                    text="Hello world",
-                    spoken=True,
-                )
-            ],
+        body = ContentElement(
+            id="sec1-el0001",
+            tag="p",
+            html="<p>Hello world</p>",
+            text="Hello world",
+            spoken=True,
+        )
+        chapter = Section(
+            sequence=1,
+            section_type="chapter",
+            ordinal=1,
+            heading=SectionHeading(
+                display_label="I",
+                display_title="Chapter One",
+                spoken_text="Chapter One.",
+                element_ids=["sec1-el0000"],
+            ),
+            elements=[body],
+            body_elements=[body],
             paragraphs=["Hello world"],
             text="Hello world",
             word_count=2,
@@ -760,7 +916,7 @@ class TestDagCliRun(unittest.TestCase):
                     close_pipeline_logging()
 
         self.assertTrue(result["dry_run"])
-        self.assertEqual(result["chapters"], [1])
+        self.assertEqual(result["sections"], [1])
         create_engine.assert_not_called()
 
     def test_run_via_main_forwards_full_book_flags(self):
@@ -807,21 +963,28 @@ class TestDagCliRun(unittest.TestCase):
         self.assertTrue(args.force)
 
     def test_run_book_passes_selected_device_to_engine_factory(self):
-        from openshelf.pipeline.epub_parser import Chapter, ContentElement
+        from openshelf.pipeline.epub_parser import ContentElement, Section, SectionHeading
         from openshelf.pipeline.logging_utils import close_pipeline_logging
 
-        chapter = Chapter(
-            number=1,
-            title="Chapter One",
-            elements=[
-                ContentElement(
-                    id="ch1-el0000",
-                    tag="p",
-                    html="<p>Hello world</p>",
-                    text="Hello world",
-                    spoken=True,
-                )
-            ],
+        body = ContentElement(
+            id="sec1-el0001",
+            tag="p",
+            html="<p>Hello world</p>",
+            text="Hello world",
+            spoken=True,
+        )
+        chapter = Section(
+            sequence=1,
+            section_type="chapter",
+            ordinal=1,
+            heading=SectionHeading(
+                display_label="I",
+                display_title="Chapter One",
+                spoken_text="Chapter One.",
+                element_ids=["sec1-el0000"],
+            ),
+            elements=[body],
+            body_elements=[body],
             paragraphs=["Hello world"],
             text="Hello world",
             word_count=2,
@@ -895,10 +1058,16 @@ class TestDagCliSynth(unittest.TestCase):
 
         build_dir = os.path.join(tmp, "audio", "kokoro-af-heart", "builds", "abc123")
         os.makedirs(build_dir)
-        write_chapter_chunks_artifact(
-            os.path.join(build_dir, "chapter-01.chunks.json"),
-            1, "Chapter One",
-            [Chunk("hello world", 0, 0, "ch1-el0000", "ch1-el0000")],
+        heading = {
+            "display_label": "I",
+            "display_title": "Chapter One",
+            "spoken_text": "Chapter One.",
+            "element_ids": ["sec1-el0000"],
+        }
+        write_section_chunks_artifact(
+            os.path.join(build_dir, "section-01.chunks.json"),
+            1, "chapter", 1, heading,
+            [Chunk("hello world", 0, 0, "sec1-el0001", "sec1-el0001")],
         )
         chapter = build_direction_chapter(
             1, "Chapter One", ["hello world"],
@@ -909,7 +1078,7 @@ class TestDagCliSynth(unittest.TestCase):
                 original_text="hello world",
             )]],
         )
-        with open(os.path.join(build_dir, "chapter-01.voice_direction.json"), "w", encoding="utf-8") as f:
+        with open(os.path.join(build_dir, "section-01.voice_direction.json"), "w", encoding="utf-8") as f:
             json.dump(
                 build_voice_direction_payload(
                     "kokoro-af-heart", "abc123", "kokoro", "solo", [chapter]
@@ -956,8 +1125,8 @@ class TestDagCliSynth(unittest.TestCase):
                     aligner=object(),
                 )
 
-            self.assertTrue(os.path.exists(os.path.join(build_dir, "chapter-01.m4a")))
-            self.assertTrue(os.path.exists(os.path.join(build_dir, "chapter-01.synthesis_units.json")))
+            self.assertTrue(os.path.exists(os.path.join(build_dir, "section-01.m4a")))
+            self.assertTrue(os.path.exists(os.path.join(build_dir, "section-01.synthesis_units.json")))
             with open(path, encoding="utf-8") as f:
                 payload = json.load(f)
             self.assertEqual(
@@ -968,6 +1137,9 @@ class TestDagCliSynth(unittest.TestCase):
             chunk_infos = mock_synth.call_args.args[1]
             self.assertEqual(chunk_infos[0].directed_segments[0].speaker, "narrator")
             self.assertTrue(chunk_infos[0].ends_paragraph)
+            narrator_voice = mock_synth.call_args.kwargs["narrator_voice"]
+            self.assertEqual(narrator_voice.id, "af_heart")
+            self.assertEqual(narrator_voice.preset_name, "af_heart")
 
     def test_synth_skips_when_outputs_exist_without_force(self):
         result, fake_encode = self._patched()
@@ -1040,13 +1212,32 @@ class TestDagCliSynth(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             build_dir = os.path.join(tmp, "audio", "r", "builds", "b")
             os.makedirs(build_dir)
-            write_chapter_chunks_artifact(
-                os.path.join(build_dir, "chapter-01.chunks.json"),
-                1, "Chapter One",
-                [Chunk("hi", 0, 0, "ch1-el0000", "ch1-el0000")],
+            write_section_chunks_artifact(
+                os.path.join(build_dir, "section-01.chunks.json"),
+                1, "chapter", 1,
+                {
+                    "display_label": "I",
+                    "display_title": "Chapter One",
+                    "spoken_text": "Chapter One.",
+                    "element_ids": [],
+                },
+                [Chunk("hi", 0, 0, "sec1-el0001", "sec1-el0001")],
             )
             with self.assertRaises(FileNotFoundError):
                 synth_chapter(build_dir, 1, engine=object(), aligner=object())
+
+    def test_reference_voice_engine_requires_complete_registry_narrator(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build_dir = self._setup(tmp)
+            os.remove(os.path.join(build_dir, "character_registry.json"))
+
+            with self.assertRaisesRegex(FileNotFoundError, "complete narrator_voice VoiceSpec"):
+                synth_chapter(
+                    build_dir,
+                    1,
+                    engine=types.SimpleNamespace(name="chatterbox"),
+                    aligner=object(),
+                )
 
 
 class TestDagCliRepairPauses(unittest.TestCase):
@@ -1054,13 +1245,19 @@ class TestDagCliRepairPauses(unittest.TestCase):
     def _setup(self, tmp: str) -> str:
         build_dir = os.path.join(tmp, "audio", "kokoro-af-heart", "builds", "abc123")
         os.makedirs(build_dir)
-        write_chapter_chunks_artifact(
-            os.path.join(build_dir, "chapter-01.chunks.json"),
-            1, "Chapter One",
-            [Chunk("hello world", 0, 0, "ch1-el0000", "ch1-el0000")],
+        heading = {
+            "display_label": "I",
+            "display_title": "Chapter One",
+            "spoken_text": "Chapter One.",
+            "element_ids": ["sec1-el0000"],
+        }
+        write_section_chunks_artifact(
+            os.path.join(build_dir, "section-01.chunks.json"),
+            1, "chapter", 1, heading,
+            [Chunk("hello world", 0, 0, "sec1-el0001", "sec1-el0001")],
         )
         _write_sync(
-            os.path.join(build_dir, "chapter-01.sync.json"),
+            os.path.join(build_dir, "section-01.sync.json"),
             1,
             {"reader_word_count": 2, "aligned_word_count": 2, "coverage_ratio": 1.0},
             chunks=[
@@ -1070,10 +1267,10 @@ class TestDagCliRepairPauses(unittest.TestCase):
                 },
             ],
         )
-        with open(os.path.join(build_dir, "chapter-01.synthesis_units.json"), "w", encoding="utf-8") as f:
-            json.dump({"version": 1, "chunks": []}, f)
-        open(os.path.join(build_dir, "chapter-01.m4a"), "w").close()
-        with open(os.path.join(build_dir, "chapter_data.json"), "w", encoding="utf-8") as f:
+        with open(os.path.join(build_dir, "section-01.synthesis_units.json"), "w", encoding="utf-8") as f:
+            json.dump({"version": 2, "sequence": 1, "chunks": []}, f)
+        open(os.path.join(build_dir, "section-01.m4a"), "w").close()
+        with open(os.path.join(build_dir, "section_data.json"), "w", encoding="utf-8") as f:
             json.dump({"stale": True}, f)
         with open(os.path.join(build_dir, "rendition-manifest.json"), "w", encoding="utf-8") as f:
             json.dump(
@@ -1084,18 +1281,26 @@ class TestDagCliRepairPauses(unittest.TestCase):
                     "engine": "kokoro",
                     "pipeline_version": "test",
                     "total_duration_seconds": 3.0,
-                    "chapters": [
+                    "version": 2,
+                    "section_count": 2,
+                    "sections": [
                         {
-                            "number": 1,
-                            "title": "Chapter One",
-                            "filename": "chapter-01.m4a",
+                            "sequence": 1,
+                            "section_type": "chapter",
+                            "ordinal": 1,
+                            "display_label": "I",
+                            "display_title": "Chapter One",
+                            "filename": "section-01.m4a",
                             "duration_seconds": 1.0,
                             "word_count": 2,
                         },
                         {
-                            "number": 2,
-                            "title": "Chapter Two",
-                            "filename": "chapter-02.m4a",
+                            "sequence": 2,
+                            "section_type": "epilogue",
+                            "ordinal": None,
+                            "display_label": "Epilogue",
+                            "display_title": "",
+                            "filename": "section-02.m4a",
                             "duration_seconds": 2.0,
                             "word_count": 4,
                         },
@@ -1118,22 +1323,22 @@ class TestDagCliRepairPauses(unittest.TestCase):
             ):
                 path = repair_pauses_chapter(build_dir, 1, force=True)
 
-            self.assertEqual(path, os.path.join(build_dir, "chapter-01.sync.json"))
+            self.assertEqual(path, os.path.join(build_dir, "section-01.sync.json"))
             mock_repair.assert_called_once()
             self.assertEqual(mock_repair.call_args.kwargs["chunk_texts"], ["hello world"])
 
-            with open(os.path.join(build_dir, "chapter_data.json"), encoding="utf-8") as f:
-                chapter_data = json.load(f)
-            self.assertEqual(chapter_data["rendition"], "kokoro-af-heart")
-            self.assertEqual(chapter_data["build"], "abc123")
+            with open(os.path.join(build_dir, "section_data.json"), encoding="utf-8") as f:
+                section_data = json.load(f)
+            self.assertEqual(section_data["rendition"], "kokoro-af-heart")
+            self.assertEqual(section_data["build"], "abc123")
             self.assertEqual(
-                chapter_data["chapters"][0]["chunks"][0]["words"][0]["word"],
+                section_data["sections"][0]["chunks"][0]["words"][0]["word"],
                 "hello",
             )
 
             with open(os.path.join(build_dir, "rendition-manifest.json"), encoding="utf-8") as f:
                 manifest = json.load(f)
-            self.assertEqual(manifest["chapters"][0]["duration_seconds"], 1.25)
+            self.assertEqual(manifest["sections"][0]["duration_seconds"], 1.25)
             self.assertEqual(manifest["total_duration_seconds"], 3.25)
 
     def test_repair_requires_force(self):
@@ -1145,21 +1350,28 @@ class TestDagCliRepairPauses(unittest.TestCase):
 
 class TestDagCliSync(unittest.TestCase):
     def _setup(self, tmp: str) -> None:
-        write_chapter_chunks_artifact(
-            os.path.join(tmp, "chapter-01.chunks.json"),
-            1, "Chapter One",
-            [Chunk("hello world", 0, 0, "ch1-el0000", "ch1-el0000")],
+        write_section_chunks_artifact(
+            os.path.join(tmp, "section-01.chunks.json"),
+            1, "chapter", 1,
+            {
+                "display_label": "I",
+                "display_title": "Chapter One",
+                "spoken_text": "Chapter One.",
+                "element_ids": ["sec1-el0000"],
+            },
+            [Chunk("hello world", 0, 0, "sec1-el0001", "sec1-el0001")],
         )
-        with open(os.path.join(tmp, "chapter-01.sync.json"), "w", encoding="utf-8") as f:
+        with open(os.path.join(tmp, "section-01.sync.json"), "w", encoding="utf-8") as f:
             json.dump(
                 {
-                    "version": 1, "number": 1, "audio_filename": "chapter-01.m4a",
+                    "version": 2, "sequence": 1, "audio_filename": "section-01.m4a",
+                    "heading_words": [],
                     "chunk_audio_starts": [0.0],
                     "coverage": {}, "chunks": [{"index": 0, "words": []}],
                 },
                 f,
             )
-        open(os.path.join(tmp, "chapter-01.m4a"), "w").close()
+        open(os.path.join(tmp, "section-01.m4a"), "w").close()
 
     @patch("openshelf.pipeline.word_aligner.align_chapter")
     def test_sync_rewrites_sync_artifact_from_alignment(self, mock_align):
@@ -1178,7 +1390,7 @@ class TestDagCliSync(unittest.TestCase):
             self.assertEqual(args[1], ["hello world"])  # chunk_texts
             self.assertEqual(args[2], [0.0])             # chunk_audio_starts
 
-            with open(os.path.join(tmp, "chapter-01.sync.json"), encoding="utf-8") as f:
+            with open(os.path.join(tmp, "section-01.sync.json"), encoding="utf-8") as f:
                 payload = json.load(f)
             self.assertEqual(
                 [w["word"] for w in payload["chunks"][0]["words"]],

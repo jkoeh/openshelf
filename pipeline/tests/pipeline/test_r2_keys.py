@@ -73,28 +73,28 @@ class TestBuildScopedKeys(unittest.TestCase):
             "books/franz-kafka/the-metamorphosis/audio/kokoro-af-heart/builds/2a4f9c1",
         )
 
-    def test_audio_key_zero_pads_chapter_number(self):
+    def test_audio_key_zero_pads_section_sequence(self):
         self.assertEqual(
             r2_keys.audio_key(AUTHOR, TITLE, RENDITION, BUILD, 1),
-            "books/franz-kafka/the-metamorphosis/audio/kokoro-af-heart/builds/2a4f9c1/chapter-01.m4a",
+            "books/franz-kafka/the-metamorphosis/audio/kokoro-af-heart/builds/2a4f9c1/section-01.m4a",
         )
 
-    def test_audio_key_double_digit_chapter(self):
+    def test_audio_key_double_digit_section(self):
         self.assertEqual(
             r2_keys.audio_key(AUTHOR, TITLE, RENDITION, BUILD, 42),
-            "books/franz-kafka/the-metamorphosis/audio/kokoro-af-heart/builds/2a4f9c1/chapter-42.m4a",
+            "books/franz-kafka/the-metamorphosis/audio/kokoro-af-heart/builds/2a4f9c1/section-42.m4a",
         )
 
     def test_synthesis_units_key(self):
         self.assertEqual(
             r2_keys.synthesis_units_key(AUTHOR, TITLE, RENDITION, BUILD, 1),
-            "books/franz-kafka/the-metamorphosis/audio/kokoro-af-heart/builds/2a4f9c1/chapter-01.synthesis_units.json",
+            "books/franz-kafka/the-metamorphosis/audio/kokoro-af-heart/builds/2a4f9c1/section-01.synthesis_units.json",
         )
 
-    def test_chapter_data_key(self):
+    def test_section_data_key(self):
         self.assertEqual(
-            r2_keys.chapter_data_key(AUTHOR, TITLE, RENDITION, BUILD),
-            "books/franz-kafka/the-metamorphosis/audio/kokoro-af-heart/builds/2a4f9c1/chapter_data.json",
+            r2_keys.section_data_key(AUTHOR, TITLE, RENDITION, BUILD),
+            "books/franz-kafka/the-metamorphosis/audio/kokoro-af-heart/builds/2a4f9c1/section_data.json",
         )
 
     def test_character_registry_key(self):
@@ -147,8 +147,8 @@ class TestRoutingThroughBookPrefix(unittest.TestCase):
     def test_synthesis_units_under_prefix(self):
         self._starts_with_book_prefix(r2_keys.synthesis_units_key(AUTHOR, TITLE, RENDITION, BUILD, 1))
 
-    def test_chapter_data_under_prefix(self):
-        self._starts_with_book_prefix(r2_keys.chapter_data_key(AUTHOR, TITLE, RENDITION, BUILD))
+    def test_section_data_under_prefix(self):
+        self._starts_with_book_prefix(r2_keys.section_data_key(AUTHOR, TITLE, RENDITION, BUILD))
 
     def test_character_registry_under_prefix(self):
         self._starts_with_book_prefix(r2_keys.character_registry_key(AUTHOR, TITLE, RENDITION, BUILD))

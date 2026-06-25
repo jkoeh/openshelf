@@ -41,19 +41,19 @@ def build_prefix(author: str, title: str, rendition: str, build: str) -> str:
     return f"{book_prefix(author, title)}/audio/{rendition}/builds/{build}"
 
 
-def audio_key(author: str, title: str, rendition: str, build: str, chapter_number: int) -> str:
-    """The m4a file for one chapter under a specific (rendition, build)."""
-    return f"{build_prefix(author, title, rendition, build)}/chapter-{chapter_number:02d}.m4a"
+def audio_key(author: str, title: str, rendition: str, build: str, sequence: int) -> str:
+    """The m4a file for one section under a specific (rendition, build)."""
+    return f"{build_prefix(author, title, rendition, build)}/section-{sequence:02d}.m4a"
 
 
-def synthesis_units_key(author: str, title: str, rendition: str, build: str, chapter_number: int) -> str:
-    """The private seam/unit audit for one chapter under a specific build."""
-    return f"{build_prefix(author, title, rendition, build)}/chapter-{chapter_number:02d}.synthesis_units.json"
+def synthesis_units_key(author: str, title: str, rendition: str, build: str, sequence: int) -> str:
+    """The private seam/unit audit for one section under a specific build."""
+    return f"{build_prefix(author, title, rendition, build)}/section-{sequence:02d}.synthesis_units.json"
 
 
-def chapter_data_key(author: str, title: str, rendition: str, build: str) -> str:
-    """The per-chunk text + word timestamps JSON for one (rendition, build)."""
-    return f"{build_prefix(author, title, rendition, build)}/chapter_data.json"
+def section_data_key(author: str, title: str, rendition: str, build: str) -> str:
+    """The heading/body text + word timestamps JSON for one build."""
+    return f"{build_prefix(author, title, rendition, build)}/section_data.json"
 
 
 def character_registry_key(author: str, title: str, rendition: str, build: str) -> str:

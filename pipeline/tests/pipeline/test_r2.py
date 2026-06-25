@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 from openshelf.config import R2_CACHE_CONTROL_IMMUTABLE, R2_CACHE_CONTROL_MANIFEST
 from openshelf.pipeline.r2 import (
+    delete_build_prefixes,
     key_exists,
     make_client,
     upload_book_manifest,
@@ -35,16 +36,16 @@ BUILD = "2a4f9c1"
 
 
 def _make_build_dir(tmp_dir: str, n_chapters: int = 2) -> tuple[str, str, str]:
-    """Lay out a fake build directory: audio_dir, chapter_data.json, rendition-manifest.json."""
+    """Lay out a fake build directory: audio_dir, section_data.json, rendition-manifest.json."""
     audio_dir = os.path.join(tmp_dir, "audio")
     os.makedirs(audio_dir)
     for i in range(1, n_chapters + 1):
-        open(os.path.join(audio_dir, f"chapter-{i:02d}.m4a"), "w").close()
-    chapter_data_path = os.path.join(tmp_dir, "chapter_data.json")
-    open(chapter_data_path, "w").close()
+        open(os.path.join(audio_dir, f"section-{i:02d}.m4a"), "w").close()
+    section_data_path = os.path.join(tmp_dir, "section_data.json")
+    open(section_data_path, "w").close()
     rendition_manifest_path = os.path.join(tmp_dir, "rendition-manifest.json")
     open(rendition_manifest_path, "w").close()
-    return audio_dir, chapter_data_path, rendition_manifest_path
+    return audio_dir, section_data_path, rendition_manifest_path
 
 
 def _make_direction_artifacts(tmp_dir: str) -> tuple[str, str]:
@@ -57,7 +58,7 @@ def _make_direction_artifacts(tmp_dir: str) -> tuple[str, str]:
 
 def _make_synthesis_units(audio_dir: str, n_chapters: int = 1) -> None:
     for i in range(1, n_chapters + 1):
-        open(os.path.join(audio_dir, f"chapter-{i:02d}.synthesis_units.json"), "w").close()
+        open(os.path.join(audio_dir, f"section-{i:02d}.synthesis_units.json"), "w").close()
 
 
 def _make_run_context(tmp_dir: str) -> str:
@@ -121,6 +122,31 @@ class TestKeyExists(unittest.TestCase):
             key_exists(client, BUCKET, "x/y.json")
 
 
+class TestDeleteBuildPrefixes(unittest.TestCase):
+    def test_deletes_all_objects_under_each_superseded_build(self):
+        client = MagicMock()
+        paginator = MagicMock()
+        client.get_paginator.return_value = paginator
+        paginator.paginate.side_effect = [
+            [{"Contents": [{"Key": "old-a/one"}, {"Key": "old-a/two"}]}],
+            [{"Contents": [{"Key": "old-b/one"}]}],
+        ]
+
+        deleted = delete_build_prefixes(
+            client,
+            BUCKET,
+            AUTHOR,
+            TITLE,
+            RENDITION,
+            ["aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb"],
+        )
+
+        self.assertEqual(deleted, ["old-a/one", "old-a/two", "old-b/one"])
+        self.assertEqual(client.delete_objects.call_count, 2)
+        first_batch = client.delete_objects.call_args_list[0].kwargs["Delete"]["Objects"]
+        self.assertEqual(first_batch, [{"Key": "old-a/one"}, {"Key": "old-a/two"}])
+
+
 # ---------------------------------------------------------------------------
 # upload_rendition_build
 # ---------------------------------------------------------------------------
@@ -129,7 +155,7 @@ class TestKeyExists(unittest.TestCase):
 class TestUploadRenditionBuildKeys(unittest.TestCase):
 
     @patch("openshelf.pipeline.r2.key_exists", return_value=False)
-    def test_uploads_audio_chapter_data_and_manifest(self, _exists):
+    def test_uploads_audio_section_data_and_manifest(self, _exists):
         client = MagicMock()
         with tempfile.TemporaryDirectory() as tmp:
             audio_dir, cd, rm = _make_build_dir(tmp, n_chapters=2)
@@ -137,7 +163,7 @@ class TestUploadRenditionBuildKeys(unittest.TestCase):
                 client, BUCKET, AUTHOR, TITLE, RENDITION, BUILD,
                 audio_dir, cd, rm,
             )
-        # 2 m4a + 1 chapter_data + 1 rendition-manifest = 4 uploads
+        # 2 m4a + 1 section_data + 1 rendition-manifest = 4 uploads
         self.assertEqual(client.upload_file.call_count, 4)
 
     @patch("openshelf.pipeline.r2.key_exists", return_value=False)
@@ -151,16 +177,16 @@ class TestUploadRenditionBuildKeys(unittest.TestCase):
             )
         keys = [c[0][2] for c in client.upload_file.call_args_list]
         self.assertIn(
-            "books/kafka/the-trial/audio/kokoro-af-heart/builds/2a4f9c1/chapter-01.m4a",
+            "books/kafka/the-trial/audio/kokoro-af-heart/builds/2a4f9c1/section-01.m4a",
             keys,
         )
         self.assertIn(
-            "books/kafka/the-trial/audio/kokoro-af-heart/builds/2a4f9c1/chapter-02.m4a",
+            "books/kafka/the-trial/audio/kokoro-af-heart/builds/2a4f9c1/section-02.m4a",
             keys,
         )
 
     @patch("openshelf.pipeline.r2.key_exists", return_value=False)
-    def test_chapter_data_key_under_build_prefix(self, _exists):
+    def test_section_data_key_under_build_prefix(self, _exists):
         client = MagicMock()
         with tempfile.TemporaryDirectory() as tmp:
             audio_dir, cd, rm = _make_build_dir(tmp)
@@ -170,7 +196,7 @@ class TestUploadRenditionBuildKeys(unittest.TestCase):
             )
         keys = [c[0][2] for c in client.upload_file.call_args_list]
         self.assertIn(
-            "books/kafka/the-trial/audio/kokoro-af-heart/builds/2a4f9c1/chapter_data.json",
+            "books/kafka/the-trial/audio/kokoro-af-heart/builds/2a4f9c1/section_data.json",
             keys,
         )
 
@@ -186,11 +212,11 @@ class TestUploadRenditionBuildKeys(unittest.TestCase):
             )
         keys = [c[0][2] for c in client.upload_file.call_args_list]
         self.assertIn(
-            "books/kafka/the-trial/audio/kokoro-af-heart/builds/2a4f9c1/chapter-01.synthesis_units.json",
+            "books/kafka/the-trial/audio/kokoro-af-heart/builds/2a4f9c1/section-01.synthesis_units.json",
             keys,
         )
         self.assertIn(
-            "books/kafka/the-trial/audio/kokoro-af-heart/builds/2a4f9c1/chapter-02.synthesis_units.json",
+            "books/kafka/the-trial/audio/kokoro-af-heart/builds/2a4f9c1/section-02.synthesis_units.json",
             keys,
         )
 

@@ -1,70 +1,41 @@
-# Step 1b — `book_parse.json` (durable parse artifact)
+# Step 1b — `book_parse.json`
 
 **Module:** `src/openshelf/pipeline/epub_parser.py`
 **Test:** `tests/pipeline/test_epub_parser.py`
 
-## Purpose
-
-Persist the output of `parse_epub` so downstream stages (`chunk`, EPUB
-annotation) can run without re-parsing the EPUB. This is the first durable
-artifact in the DAG: deterministic for a given EPUB + parser version.
-
-`book_parse.json` is a **local per-build durable artifact**. It is kept on the
-local filesystem to make `parse`/`chunk` resumable, but it is **not** part of
-the public R2 contract and is not uploaded. (Contrast with WAV intermediates,
-which are not kept at all; `book_parse.json` is cheap and worth keeping locally.)
-
-## Shape
-
-Derived from the `Chapter` / `ContentElement` dataclasses in `epub_parser.py`.
+`book_parse.json` is the local durable version-2 parse artifact. It persists
+semantic sections so chunking and EPUB annotation never need to infer headings
+again.
 
 ```json
 {
-  "version": 1,
-  "epub_hash": "sha256:<hex of epub bytes>",
-  "parser_version": "1",
-  "metadata": { "title": "...", "author": "...", "source": "gutenberg" },
-  "chapters": [
+  "version": 2,
+  "epub_hash": "sha256:...",
+  "parser_version": "2",
+  "metadata": {"title": "...", "author": "...", "language": "en"},
+  "sections": [
     {
-      "number": 1,
-      "title": "Chapter I",
-      "epub_item_name": "chapter-1.xhtml",
-      "word_count": 1234,
-      "elements": [
-        { "id": "ch1-el0001", "tag": "p", "html": "<p id=...>...</p>",
-          "text": "...", "spoken": true }
-      ]
+      "sequence": 2,
+      "section_type": "chapter",
+      "ordinal": 1,
+      "heading": {
+        "display_label": "I",
+        "display_title": "Down the Rabbit-Hole",
+        "spoken_text": "Chapter One. Down the Rabbit-Hole.",
+        "element_ids": ["sec2-el0000", "sec2-el0001"]
+      },
+      "epub_item_name": "text/chapter-1.xhtml",
+      "word_count": 2143,
+      "elements": []
     }
   ]
 }
 ```
 
-- `parser_version` mirrors `config.PIPELINE_VERSION`. A change in parser version
-  changes the artifact and is the signal to re-parse.
-- `metadata.source` is supplied by the caller (it is not in the EPUB);
-  `title`/`author` come from the EPUB's Dublin Core metadata.
-- `elements` is the full `ContentElement` list (spoken and non-spoken), so the
-  artifact is sufficient to reconstruct `paragraphs` (spoken element text) and
-  `spoken_ids` (spoken element IDs) for chunking and to drive EPUB annotation.
+`elements` includes heading, body, and non-spoken source elements.
+`heading.element_ids` identifies elements excluded from body chunking.
+Downstream stages reconstruct body elements by selecting spoken elements whose
+IDs are not heading IDs.
 
-## Functions
-
-```python
-def build_book_parse_artifact(
-    chapters: list[Chapter], epub_hash: str, metadata: dict
-) -> dict
-def read_book_parse_artifact(path: str) -> dict
-def write_book_parse_artifact(path: str, payload: dict, force: bool = False) -> str
-def epub_sha256(epub_path: str) -> str          # "sha256:<hex>"
-def read_book_metadata(epub_path: str) -> dict   # {"title","author"}
-```
-
-Idempotent write follows the DAG rule: if the file exists with identical
-content, skip; if it exists with different content, raise unless `force=True`.
-
-## Consumed by
-
-- `openshelf-pipeline dag chunk` reconstructs each chapter's spoken `paragraphs` and
-  `element_ids`, then calls `text_chunker.chunk_text(...)` to write
-  `chapter-NN.chunks.json`. Output is byte-identical to the inline path in
-  `dag run`.
+The artifact is local-only and idempotent. Existing version-1 artifacts are
+incompatible and require a new build.

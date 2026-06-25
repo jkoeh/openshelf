@@ -19,8 +19,8 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 from openshelf.pipeline.manifest import (
-    ChapterMeta,
     RenditionEntry,
+    SectionMeta,
     generate_book_manifest,
     generate_rendition_entry,
     generate_rendition_manifest,
@@ -33,12 +33,18 @@ def _read_json(path: str) -> dict:
         return json.load(f)
 
 
-def _chapters() -> list[ChapterMeta]:
+def _sections() -> list[SectionMeta]:
     return [
-        ChapterMeta(number=1, title="I", filename="chapter-01.m4a",
-                    duration_seconds=60.0, word_count=200),
-        ChapterMeta(number=2, title="II", filename="chapter-02.m4a",
-                    duration_seconds=90.0, word_count=300),
+        SectionMeta(
+            sequence=1, section_type="chapter", ordinal=1,
+            display_label="I", display_title="Down the Rabbit-Hole",
+            filename="section-01.m4a", duration_seconds=60.0, word_count=200,
+        ),
+        SectionMeta(
+            sequence=2, section_type="epilogue", ordinal=None,
+            display_label="Epilogue", display_title="",
+            filename="section-02.m4a", duration_seconds=90.0, word_count=300,
+        ),
     ]
 
 
@@ -53,20 +59,25 @@ def _entry(build="2a4f9c1", voice="af_heart", engine="kokoro", display="Heart") 
 
 
 # ---------------------------------------------------------------------------
-# ChapterMeta
+# SectionMeta
 # ---------------------------------------------------------------------------
 
 
-class TestChapterMeta(unittest.TestCase):
+class TestSectionMeta(unittest.TestCase):
 
     def test_fields(self):
-        ch = ChapterMeta(number=3, title="III", filename="chapter-03.m4a",
-                         duration_seconds=120.5, word_count=450)
-        self.assertEqual(ch.number, 3)
-        self.assertEqual(ch.title, "III")
-        self.assertEqual(ch.filename, "chapter-03.m4a")
-        self.assertAlmostEqual(ch.duration_seconds, 120.5)
-        self.assertEqual(ch.word_count, 450)
+        section = SectionMeta(
+            sequence=3, section_type="chapter", ordinal=3,
+            display_label="III", display_title="A Caucus-Race",
+            filename="section-03.m4a", duration_seconds=120.5, word_count=450,
+        )
+        self.assertEqual(section.sequence, 3)
+        self.assertEqual(section.section_type, "chapter")
+        self.assertEqual(section.ordinal, 3)
+        self.assertEqual(section.display_label, "III")
+        self.assertEqual(section.filename, "section-03.m4a")
+        self.assertAlmostEqual(section.duration_seconds, 120.5)
+        self.assertEqual(section.word_count, 450)
 
 
 # ---------------------------------------------------------------------------
@@ -145,8 +156,8 @@ class TestGenerateBookManifest(unittest.TestCase):
             data = _read_json(path)
             self.assertEqual(set(data["renditions"].keys()), {"kokoro-af-heart", "kokoro-bf-emma"})
 
-    def test_no_chapters_field_on_book_manifest(self):
-        """Chapter list lives in the per-build rendition manifest, not here."""
+    def test_no_sections_field_on_book_manifest(self):
+        """Section list lives in the per-build rendition manifest, not here."""
         with tempfile.TemporaryDirectory() as d:
             path = generate_book_manifest(
                 author="A", title="T", source="s",
@@ -154,8 +165,8 @@ class TestGenerateBookManifest(unittest.TestCase):
                 output_dir=d,
             )
             data = _read_json(path)
-            self.assertNotIn("chapters", data)
-            self.assertNotIn("chapters", data["renditions"]["kokoro-af-heart"])
+            self.assertNotIn("sections", data)
+            self.assertNotIn("sections", data["renditions"]["kokoro-af-heart"])
 
 
 # ---------------------------------------------------------------------------
@@ -248,14 +259,14 @@ class TestMergeBookManifest(unittest.TestCase):
 
 class TestGenerateRenditionManifest(unittest.TestCase):
 
-    def _generate(self, output_dir, chapters=None):
+    def _generate(self, output_dir, sections=None):
         return generate_rendition_manifest(
             rendition="kokoro-af-heart",
             build_id="2a4f9c1b3d8e7f60",
             voice="af_heart",
             engine="kokoro",
-            pipeline_version="1",
-            chapters=chapters if chapters is not None else _chapters(),
+            pipeline_version="2",
+            sections=sections if sections is not None else _sections(),
             output_dir=output_dir,
         )
 
@@ -273,7 +284,9 @@ class TestGenerateRenditionManifest(unittest.TestCase):
             self.assertEqual(data["rendition"], "kokoro-af-heart")
             self.assertEqual(data["voice"], "af_heart")
             self.assertEqual(data["engine"], "kokoro")
-            self.assertEqual(data["pipeline_version"], "1")
+            self.assertEqual(data["pipeline_version"], "2")
+            self.assertEqual(data["version"], 2)
+            self.assertEqual(data["section_count"], 2)
 
     def test_total_duration_is_sum(self):
         with tempfile.TemporaryDirectory() as d:
@@ -281,15 +294,19 @@ class TestGenerateRenditionManifest(unittest.TestCase):
             data = _read_json(path)
             self.assertAlmostEqual(data["total_duration_seconds"], 150.0)
 
-    def test_chapters_preserve_order_and_fields(self):
+    def test_sections_preserve_order_and_semantic_fields(self):
         with tempfile.TemporaryDirectory() as d:
             path = self._generate(d)
             data = _read_json(path)
-            self.assertEqual([c["number"] for c in data["chapters"]], [1, 2])
-            self.assertEqual(data["chapters"][0]["title"], "I")
-            self.assertEqual(data["chapters"][0]["filename"], "chapter-01.m4a")
-            self.assertEqual(data["chapters"][0]["duration_seconds"], 60.0)
-            self.assertEqual(data["chapters"][0]["word_count"], 200)
+            self.assertEqual([c["sequence"] for c in data["sections"]], [1, 2])
+            self.assertEqual(data["sections"][0]["section_type"], "chapter")
+            self.assertEqual(data["sections"][0]["ordinal"], 1)
+            self.assertEqual(data["sections"][0]["display_label"], "I")
+            self.assertEqual(data["sections"][0]["filename"], "section-01.m4a")
+            self.assertEqual(data["sections"][0]["duration_seconds"], 60.0)
+            self.assertEqual(data["sections"][0]["word_count"], 200)
+            self.assertEqual(data["sections"][1]["section_type"], "epilogue")
+            self.assertIsNone(data["sections"][1]["ordinal"])
 
     def test_no_generated_at_field(self):
         """Per byte-stability rule in step5c: no wall-clock timestamps."""
@@ -307,11 +324,12 @@ class TestGenerateRenditionManifest(unittest.TestCase):
             with open(p1, "rb") as f1, open(p2, "rb") as f2:
                 self.assertEqual(f1.read(), f2.read())
 
-    def test_empty_chapters(self):
+    def test_empty_sections(self):
         with tempfile.TemporaryDirectory() as d:
-            path = self._generate(d, chapters=[])
+            path = self._generate(d, sections=[])
             data = _read_json(path)
-            self.assertEqual(data["chapters"], [])
+            self.assertEqual(data["sections"], [])
+            self.assertEqual(data["section_count"], 0)
             self.assertAlmostEqual(data["total_duration_seconds"], 0.0)
 
 

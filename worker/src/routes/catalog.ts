@@ -21,7 +21,7 @@ const CatalogBookSchema = z
 		rendition: z.string(),
 		current_build: z.string(),
 		total_duration_seconds: z.number(),
-		chapter_count: z.number().int(),
+		section_count: z.number().int(),
 		has_cover: z.boolean(),
 	})
 	.openapi("CatalogBook");
@@ -72,8 +72,9 @@ interface BookManifestFile {
 }
 
 interface RenditionManifestFile {
+	version?: number;
 	total_duration_seconds?: number;
-	chapters?: unknown[];
+	sections?: unknown[];
 }
 
 function parseBookManifestKey(key: string): { authorSlug: string; titleSlug: string } | null {
@@ -148,7 +149,10 @@ async function deriveCatalog(bucket: R2Bucket): Promise<Required<CatalogFile>> {
 			continue;
 		}
 		const renditionManifest = (await renditionManifestObj.json()) as RenditionManifestFile;
-		const chapters = renditionManifest.chapters ?? [];
+		if (renditionManifest.version !== 2) {
+			continue;
+		}
+		const sections = renditionManifest.sections ?? [];
 		const hasCover =
 			(await keyExists(bucket, r2Key.cover(meta.authorSlug, meta.titleSlug, "jpg"))) ||
 			(await keyExists(bucket, r2Key.cover(meta.authorSlug, meta.titleSlug, "png")));
@@ -162,13 +166,13 @@ async function deriveCatalog(bucket: R2Bucket): Promise<Required<CatalogFile>> {
 			rendition,
 			current_build: currentBuild,
 			total_duration_seconds: renditionManifest.total_duration_seconds ?? 0,
-			chapter_count: chapters.length,
+			section_count: sections.length,
 			has_cover: hasCover,
 		});
 	}
 
 	return {
-		version: 1,
+		version: 2,
 		generated_at: new Date().toISOString(),
 		books,
 	};
@@ -180,8 +184,11 @@ async function readCatalog(bucket: R2Bucket): Promise<Required<CatalogFile>> {
 		return deriveCatalog(bucket);
 	}
 	const catalog = (await obj.json()) as CatalogFile;
+	if (catalog.version !== 2) {
+		return deriveCatalog(bucket);
+	}
 	return {
-		version: catalog.version ?? 1,
+		version: 2,
 		generated_at: catalog.generated_at ?? "",
 		books: catalog.books ?? [],
 	};

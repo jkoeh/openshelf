@@ -10,11 +10,12 @@ import ReadingPane from "../../../components/ReadingPane";
 import SettingsPanel from "../../../components/SettingsPanel";
 import { useSyncEngine } from "../../../hooks/useSyncEngine";
 import { useTheme } from "../../../hooks/useTheme";
-import { audioUrl, fetchBook, fetchBookBuilds, fetchChapter } from "../../../lib/api";
+import { audioUrl, fetchBook, fetchBookBuilds, fetchSection } from "../../../lib/api";
 import {
-  nextAutoplayChapterAfterFinish,
-  shouldPlayPendingChapter,
+  nextAutoplaySectionAfterFinish,
+  shouldPlayPendingSection,
 } from "../../../lib/chapter-autoplay";
+import { sectionDisplayTitle } from "../../../lib/format";
 import { selectRendition } from "../../../lib/renditions";
 import {
   getSavedFontSize,
@@ -24,13 +25,13 @@ import {
   savePlaybackRate,
   saveProgress,
 } from "../../../lib/storage";
-import type { BookBuildsResponse, ChapterResponse, Manifest } from "../../../types";
+import type { BookBuildsResponse, Manifest, SectionResponse } from "../../../types";
 
 export default function ReaderPage() {
   const {
     author,
     title,
-    chapter: chapterParam,
+    section: sectionParam,
     time: timeParam,
     autoplay,
     rendition: renditionParam,
@@ -38,7 +39,7 @@ export default function ReaderPage() {
   } = useLocalSearchParams<{
     author: string;
     title: string;
-    chapter?: string;
+    section?: string;
     time?: string;
     autoplay?: string;
     rendition?: string;
@@ -49,14 +50,14 @@ export default function ReaderPage() {
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [buildSelection, setBuildSelection] = useState<BookBuildsResponse | null>(null);
   const [buildSelectionLoaded, setBuildSelectionLoaded] = useState(false);
-  const [chapterData, setChapterData] = useState<ChapterResponse | null>(null);
+  const [chapterData, setChapterData] = useState<SectionResponse | null>(null);
   const [pinnedBuild, setPinnedBuild] = useState<{
-    chapter: number;
+    section: number;
     rendition: string;
     build: string;
   } | null>(null);
   const [currentChapter, setCurrentChapter] = useState(
-    chapterParam ? Number.parseInt(chapterParam, 10) : 1,
+    sectionParam ? Number.parseInt(sectionParam, 10) : 1,
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -67,12 +68,12 @@ export default function ReaderPage() {
   const [syncEnabled] = useState(getIsSyncEnabled);
   const scrollRef = useRef<ScrollView>(null);
   const initialAutoplayDone = useRef(false);
-  const pendingAutoplayChapter = useRef<number | null>(null);
+  const pendingAutoplaySection = useRef<number | null>(null);
   const handledFinishKey = useRef<string | null>(null);
 
   // Audio player
   const audioSrc =
-    author && title && pinnedBuild?.chapter === currentChapter
+    author && title && pinnedBuild?.section === currentChapter
       ? audioUrl(author, title, currentChapter, pinnedBuild.rendition, pinnedBuild.build)
       : null;
   const player = useAudioPlayer(audioSrc, { updateInterval: 50, crossOrigin: "anonymous" });
@@ -98,8 +99,8 @@ export default function ReaderPage() {
   }, [activeRendition, buildParam, buildSelection, requiresBuildSelection]);
   const resolvedBuild = buildParam ?? activeRendition?.rendition.current_build;
   const activeChapters = requiresBuildSelection
-    ? (activeBuild?.chapters ?? [])
-    : (activeRendition?.rendition.chapters ?? []);
+    ? (activeBuild?.sections ?? [])
+    : (activeRendition?.rendition.sections ?? []);
   const totalChapters = activeChapters.length;
 
   // Sync engine — reads player.currentTime directly via rAF, not via status
@@ -125,9 +126,9 @@ export default function ReaderPage() {
   // Set lock screen metadata when manifest loads
   useEffect(() => {
     if (!manifest || !status.isLoaded) return;
-    const chInfo = activeChapters.find((ch) => ch.number === currentChapter);
+    const chInfo = activeChapters.find((section) => section.sequence === currentChapter);
     player.setActiveForLockScreen(true, {
-      title: chInfo ? `${chInfo.title}` : manifest.title,
+      title: chInfo ? sectionDisplayTitle(chInfo) : manifest.title,
       artist: manifest.author,
       albumTitle: manifest.title,
     });
@@ -187,13 +188,13 @@ export default function ReaderPage() {
       autoplay === "1" &&
       status.isLoaded &&
       audioSrc &&
-      pinnedBuild?.chapter === currentChapter &&
+      pinnedBuild?.section === currentChapter &&
       !initialAutoplayDone.current
     ) {
       initialAutoplayDone.current = true;
       player.play();
     }
-  }, [autoplay, status.isLoaded, audioSrc, pinnedBuild?.chapter, currentChapter, player]);
+  }, [autoplay, status.isLoaded, audioSrc, pinnedBuild?.section, currentChapter, player]);
 
   // Auto-advance to next chapter when audio finishes
   useEffect(() => {
@@ -202,38 +203,38 @@ export default function ReaderPage() {
       return;
     }
 
-    const transition = nextAutoplayChapterAfterFinish({
+    const transition = nextAutoplaySectionAfterFinish({
       didJustFinish: status.didJustFinish,
-      currentChapter,
-      totalChapters,
-      pinnedChapter: pinnedBuild?.chapter,
+      currentSection: currentChapter,
+      totalSections: totalChapters,
+      pinnedSection: pinnedBuild?.section,
       rendition: pinnedBuild?.rendition,
       build: pinnedBuild?.build,
       handledFinishKey: handledFinishKey.current,
-      pendingAutoplayChapter: pendingAutoplayChapter.current,
+      pendingAutoplaySection: pendingAutoplaySection.current,
     });
 
     if (!transition) return;
     handledFinishKey.current = transition.handledFinishKey;
-    pendingAutoplayChapter.current = transition.pendingAutoplayChapter;
-    setCurrentChapter(transition.nextChapter);
+    pendingAutoplaySection.current = transition.pendingAutoplaySection;
+    setCurrentChapter(transition.nextSection);
   }, [status.didJustFinish, totalChapters, currentChapter, pinnedBuild]);
 
   // When chapter changes and audio was playing, auto-play the new chapter
   useEffect(() => {
     if (
-      shouldPlayPendingChapter({
-        pendingAutoplayChapter: pendingAutoplayChapter.current,
-        currentChapter,
-        pinnedChapter: pinnedBuild?.chapter,
+      shouldPlayPendingSection({
+        pendingAutoplaySection: pendingAutoplaySection.current,
+        currentSection: currentChapter,
+        pinnedSection: pinnedBuild?.section,
         isLoaded: status.isLoaded,
         hasAudioSource: Boolean(audioSrc),
       })
     ) {
       player.play();
-      pendingAutoplayChapter.current = null;
+      pendingAutoplaySection.current = null;
     }
-  }, [currentChapter, pinnedBuild?.chapter, status.isLoaded, audioSrc, player]);
+  }, [currentChapter, pinnedBuild?.section, status.isLoaded, audioSrc, player]);
 
   // Fetch manifest.
   useEffect(() => {
@@ -313,13 +314,13 @@ export default function ReaderPage() {
     setLoading(true);
     setError(null);
     const rendition = activeRendition.key;
-    setPinnedBuild({ chapter: currentChapter, rendition, build: resolvedBuild });
-    fetchChapter(author, title, currentChapter, rendition, resolvedBuild)
+    setPinnedBuild({ section: currentChapter, rendition, build: resolvedBuild });
+    fetchSection(author, title, currentChapter, rendition, resolvedBuild)
       .then((data) => {
         setChapterData(data);
         scrollRef.current?.scrollTo({ y: 0, animated: false });
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load chapter"))
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load section"))
       .finally(() => setLoading(false));
   }, [
     author,
@@ -343,7 +344,7 @@ export default function ReaderPage() {
         pinnedBuild.rendition,
         pinnedBuild.build,
         {
-          chapter: currentChapter,
+          section: currentChapter,
           audioTime: status.currentTime,
           updatedAt: new Date().toISOString(),
         },
@@ -361,7 +362,7 @@ export default function ReaderPage() {
       pinnedBuild.rendition,
       pinnedBuild.build,
       {
-        chapter: currentChapter,
+        section: currentChapter,
         audioTime: status.currentTime,
         updatedAt: new Date().toISOString(),
       },
@@ -378,7 +379,7 @@ export default function ReaderPage() {
           pinnedBuild.rendition,
           pinnedBuild.build,
           {
-            chapter: currentChapter,
+            section: currentChapter,
             audioTime: status.currentTime,
             updatedAt: new Date().toISOString(),
           },
@@ -400,7 +401,7 @@ export default function ReaderPage() {
       if (clamped !== currentChapter) {
         // If audio was playing, flag to auto-play new chapter
         if (status.playing) {
-          pendingAutoplayChapter.current = clamped;
+          pendingAutoplaySection.current = clamped;
         }
         player.pause();
         setCurrentChapter(clamped);
@@ -457,8 +458,8 @@ export default function ReaderPage() {
     );
   }
 
-  const chapterInfo = activeChapters.find((ch) => ch.number === currentChapter);
-  const headerTitle = chapterInfo ? `Ch. ${chapterInfo.number}` : "Loading...";
+  const chapterInfo = activeChapters.find((section) => section.sequence === currentChapter);
+  const headerTitle = chapterInfo ? sectionDisplayTitle(chapterInfo) : "Loading...";
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -488,7 +489,7 @@ export default function ReaderPage() {
       ) : chapterData ? (
         <ReadingPane
           ref={scrollRef}
-          chapterTitle={chapterData.title}
+          heading={chapterData.heading}
           chunks={chapterData.chunks}
           fontSize={fontSize}
           words={sync.words}
@@ -519,8 +520,8 @@ export default function ReaderPage() {
         <ChapterDropdown
           visible={showChapters}
           onClose={() => setShowChapters(false)}
-          chapters={activeChapters}
-          currentChapter={currentChapter}
+          sections={activeChapters}
+          currentSection={currentChapter}
           onSelect={goToChapter}
         />
       ) : null}

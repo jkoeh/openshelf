@@ -97,11 +97,11 @@ openshelf-pipeline ops doctor \
 Behavior:
 
 - verifies the build directory exists
-- counts chapter chunk, direction, audio, sync, and manifest artifacts
-- compares chapter sets across `chapter-NN.chunks.json`,
-  `chapter-NN.voice_direction.json`, `chapter-NN.m4a`, and
-  `chapter-NN.sync.json`
-- checks `chapter_data.json` and `rendition-manifest.json` chapter counts when
+- counts section chunk, direction, audio, sync, and manifest artifacts
+- compares section sets across `section-NN.chunks.json`,
+  `section-NN.voice_direction.json`, `section-NN.m4a`, and
+  `section-NN.sync.json`
+- checks `section_data.json` and `rendition-manifest.json` section counts when
   present
 - reports sync artifacts with skipped chunk markers or low coverage as warnings
 - scans an optional log for errors, failed stages, and tracebacks

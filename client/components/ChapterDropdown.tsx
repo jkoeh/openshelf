@@ -1,25 +1,25 @@
 import { Volume2, XCircle } from "lucide-react-native";
 import { FlatList, Modal, Pressable, Text, View } from "react-native";
 import { useTheme } from "../hooks/useTheme";
-import type { ManifestChapter } from "../types";
+import { sectionDisplayTitle } from "../lib/format";
+import type { ManifestSection } from "../types";
 
-interface ChapterDropdownProps {
+interface SectionDropdownProps {
 	visible: boolean;
 	onClose: () => void;
-	chapters: ManifestChapter[];
-	currentChapter: number;
-	onSelect: (chapter: number) => void;
+	sections: ManifestSection[];
+	currentSection: number;
+	onSelect: (sequence: number) => void;
 }
 
 export default function ChapterDropdown({
 	visible,
 	onClose,
-	chapters,
-	currentChapter,
+	sections,
+	currentSection,
 	onSelect,
-}: ChapterDropdownProps) {
+}: SectionDropdownProps) {
 	const { colors } = useTheme();
-
 	return (
 		<Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
 			<Pressable
@@ -27,18 +27,13 @@ export default function ChapterDropdown({
 				style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.3)", justifyContent: "center" }}
 			>
 				<Pressable
-					onPress={(e) => e.stopPropagation()}
+					onPress={(event) => event.stopPropagation()}
 					style={{
 						backgroundColor: colors.card,
 						marginHorizontal: 20,
 						borderRadius: 14,
 						maxHeight: "70%",
 						overflow: "hidden",
-						shadowColor: "#000",
-						shadowOffset: { width: 0, height: 8 },
-						shadowOpacity: 0.15,
-						shadowRadius: 20,
-						elevation: 8,
 					}}
 				>
 					<View
@@ -52,27 +47,23 @@ export default function ChapterDropdown({
 						}}
 					>
 						<Text style={{ color: colors.text, fontSize: 17, fontWeight: "600" }}>
-							Chapters
+							Sections
 						</Text>
 						<Pressable onPress={onClose} hitSlop={8}>
 							<XCircle size={24} color={colors.textSecondary} strokeWidth={2.2} />
 						</Pressable>
 					</View>
 					<FlatList
-						data={chapters}
-						keyExtractor={(ch) => String(ch.number)}
-						initialScrollIndex={Math.max(0, currentChapter - 1)}
-						getItemLayout={(_, index) => ({
-							length: 48,
-							offset: 48 * index,
-							index,
-						})}
-						renderItem={({ item: ch }) => {
-							const active = ch.number === currentChapter;
+						data={sections}
+						keyExtractor={(section) => String(section.sequence)}
+						initialScrollIndex={Math.max(0, currentSection - 1)}
+						getItemLayout={(_, index) => ({ length: 48, offset: 48 * index, index })}
+						renderItem={({ item: section }) => {
+							const active = section.sequence === currentSection;
 							return (
 								<Pressable
 									onPress={() => {
-										onSelect(ch.number);
+										onSelect(section.sequence);
 										onClose();
 									}}
 									style={({ pressed }) => ({
@@ -100,11 +91,10 @@ export default function ChapterDropdown({
 											fontSize: 17,
 											fontWeight: active ? "600" : "400",
 											flex: 1,
-											letterSpacing: -0.2,
 										}}
 										numberOfLines={1}
 									>
-										{ch.number}. {ch.title}
+										{sectionDisplayTitle(section)}
 									</Text>
 								</Pressable>
 							);

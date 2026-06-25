@@ -1,6 +1,6 @@
 """Mint or validate a build identifier for one pipeline run.
 
-A "build" is the immutable R2 prefix the pipeline writes audio + chapter_data +
+A "build" is the immutable R2 prefix the pipeline writes audio + section_data +
 rendition-manifest into for a single (rendition, run). Default regenerations
 get a brand-new random ID and prefix. Resumable runs may provide an explicit
 16-hex ID; `run.json` validates that the selected prefix belongs to the same

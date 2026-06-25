@@ -15,7 +15,7 @@ import soundfile as sf
 
 from openshelf.config import AAC_BITRATE
 from openshelf.pipeline.tts_engine import WordTimestamp
-from openshelf.pipeline.word_aligner import build_chapter_sync_artifact
+from openshelf.pipeline.word_aligner import build_section_sync_artifact
 
 
 PauseBreakType = Literal[
@@ -146,15 +146,15 @@ def pause_frames(policy: PausePolicy, break_type: PauseBreakType, sample_rate: i
 
 
 def build_synthesis_units_artifact(
-    chapter_number: int,
+    sequence: int,
     audio_filename: str,
     sample_rate: int,
     chunks: list[ChunkSynthesisAudit],
     policy_name: str = AUDIOBOOK_PAUSE_POLICY,
 ) -> dict[str, Any]:
     return {
-        "version": 1,
-        "number": chapter_number,
+        "version": 2,
+        "sequence": sequence,
         "audio_filename": audio_filename,
         "sample_rate": sample_rate,
         "policy": policy_name,
@@ -169,7 +169,7 @@ def read_synthesis_units_artifact(path: str) -> dict[str, Any]:
 
 def write_synthesis_units_artifact(
     path: str,
-    chapter_number: int,
+    sequence: int,
     audio_filename: str,
     sample_rate: int,
     chunks: list[ChunkSynthesisAudit],
@@ -177,7 +177,7 @@ def write_synthesis_units_artifact(
     force: bool = False,
 ) -> str:
     payload = build_synthesis_units_artifact(
-        chapter_number,
+        sequence,
         audio_filename,
         sample_rate,
         chunks,
@@ -276,12 +276,22 @@ def _shift_sync_payload(
             ))
         chunk_words.append(words)
 
-    return build_chapter_sync_artifact(
-        int(sync_payload["number"]),
+    heading_words = [
+        WordTimestamp(
+            word=word["word"],
+            start=_shift_time(float(word["start"]), sample_rate, edits),
+            end=_shift_time(float(word["end"]), sample_rate, edits),
+        )
+        for word in sync_payload.get("heading_words", [])
+    ]
+
+    return build_section_sync_artifact(
+        int(sync_payload["sequence"]),
         sync_payload["audio_filename"],
         chunk_audio_starts,
         chunk_words,
         chunk_texts=chunk_texts,
+        heading_words=heading_words,
     )
 
 

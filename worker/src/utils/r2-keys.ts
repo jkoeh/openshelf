@@ -4,8 +4,8 @@ function bookPrefix(author: string, title: string): string {
 	return `${R2_PREFIX_BOOKS}/${author}/${title}`;
 }
 
-function chapterFilename(chapter: string | number): string {
-	return `chapter-${String(chapter).padStart(2, "0")}.m4a`;
+function sectionFilename(sequence: string | number): string {
+	return `section-${String(sequence).padStart(2, "0")}.m4a`;
 }
 
 export const r2Key = {
@@ -24,20 +24,20 @@ export const r2Key = {
 		title: string,
 		rendition: string,
 		build: string,
-		chapter: string | number,
-	) => `${r2Key.buildPrefix(author, title, rendition, build)}/${chapterFilename(chapter)}`,
+		sequence: string | number,
+	) => `${r2Key.buildPrefix(author, title, rendition, build)}/${sectionFilename(sequence)}`,
 
 	synthesisUnits: (
 		author: string,
 		title: string,
 		rendition: string,
 		build: string,
-		chapter: string | number,
+		sequence: string | number,
 	) =>
-		`${r2Key.buildPrefix(author, title, rendition, build)}/chapter-${String(chapter).padStart(2, "0")}.synthesis_units.json`,
+		`${r2Key.buildPrefix(author, title, rendition, build)}/section-${String(sequence).padStart(2, "0")}.synthesis_units.json`,
 
-	chapterData: (author: string, title: string, rendition: string, build: string) =>
-		`${r2Key.buildPrefix(author, title, rendition, build)}/chapter_data.json`,
+	sectionData: (author: string, title: string, rendition: string, build: string) =>
+		`${r2Key.buildPrefix(author, title, rendition, build)}/section_data.json`,
 
 	runContext: (author: string, title: string, rendition: string, build: string) =>
 		`${r2Key.buildPrefix(author, title, rendition, build)}/run.json`,

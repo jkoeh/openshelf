@@ -1,155 +1,126 @@
-# Step 1: EPUB Parser
+# Step 1: EPUB Section Parser
 
 **Module:** `src/openshelf/pipeline/epub_parser.py`
 **Test:** `tests/pipeline/test_epub_parser.py`
 
 ## Purpose
 
-Parse an EPUB file into a list of chapters, each containing structured content elements with stable IDs. These IDs are the foundation for text/audio synchronization — they become DOM anchors in the annotated EPUB and let downstream chunks reference specific paragraphs by ID.
-
-`openshelf-pipeline books process` may acquire the EPUB before this stage by searching Project
-Gutenberg and Standard Ebooks. Standard Ebooks catalog results are only treated
-as downloadable source EPUBs when the listing represents an available
-public-domain edition; placeholder / not-yet-public-domain results are skipped
-instead of producing guessed download URLs that 404.
-
-The end-to-end CLI must propagate conversion failure with a non-zero process
-exit. Its progress output is Unicode-safe on Windows consoles so source chapter
-titles cannot crash the run before parsing/chunking finishes.
-
-When `openshelf-pipeline books process --upload` completes at least one conversion and all
-conversions succeeded, it refreshes the root R2 `catalog.json` once at the end
-so the public catalog fast path sees newly uploaded book manifests without a
-separate operator step.
-
-```mermaid
-graph TD
-    A[EPUB file] --> B[ebooklib.read_epub]
-    B --> C{For each spine HTML document}
-    C --> D{Skip?}
-    D -->|nav/toc/cover/backmatter| E[Discard]
-    D -->|No| F[BeautifulSoup parse]
-    F --> G[Pre-check word count]
-    G -->|< 50 words| E
-    G -->|>= 50 words| H[Assign chapter number]
-    H --> I[Extract ContentElements]
-    I --> J[Build Chapter dataclass]
-    J --> K[list of Chapter]
-```
+Parse an EPUB into ordered, structurally typed audiobook sections while
+preserving heading display text separately from body reader text. EPUB spine
+order determines playback `sequence`; it never determines chapter ordinal.
 
 ## Interface
-
-### Dataclasses
 
 ```python
 @dataclass
 class ContentElement:
-    id: str        # "ch3-el0012" — stable, chapter-scoped
-    tag: str       # "p", "h2", "blockquote", "li", "figcaption"
-    html: str      # outer HTML with id attribute injected
-    text: str      # plain text after cleaning
-    spoken: bool   # False for footnotes, endnotes, toc, pagebreak
+    id: str
+    tag: str
+    html: str
+    text: str
+    spoken: bool
 
 @dataclass
-class Chapter:
-    number: int                       # 1-indexed, gap-free
-    title: str                        # from h1 > h2 > h3 > "Chapter N"
-    elements: list[ContentElement]    # all content elements with IDs
-    paragraphs: list[str]             # [el.text for el in elements if el.spoken]
-    text: str                         # "\n\n".join(paragraphs)
-    word_count: int                   # len(text.split())
-    epub_item_name: str = ""          # EPUB item filename (for annotator)
-```
+class SectionHeading:
+    display_label: str = ""
+    display_title: str = ""
+    spoken_text: str = ""
+    element_ids: list[str] = field(default_factory=list)
 
-### Public Function
+@dataclass
+class Section:
+    sequence: int
+    section_type: str
+    ordinal: int | None
+    heading: SectionHeading
+    elements: list[ContentElement]
+    body_elements: list[ContentElement]
+    paragraphs: list[str]
+    text: str
+    word_count: int
+    epub_item_name: str = ""
+```
 
 ```python
-def parse_epub(epub_path: str) -> list[Chapter]
+def parse_epub(epub_path: str) -> list[Section]
 ```
 
-## Behavior
+Supported `section_type` values are `chapter`, `prologue`, `epilogue`,
+`epigraph`, `preface`, `introduction`, `afterword`, `appendix`, `part`, and
+`other`. Generated credits are added later because they depend on rendition
+voice metadata.
 
-### Document Filtering
+## Document and section discovery
 
-HTML documents are processed in EPUB spine order when a spine is available,
-falling back to ebooklib document order otherwise.
+HTML documents are processed in EPUB spine order when available, falling back
+to document order. Source title pages, half-title pages, navigation, TOCs,
+covers, imprints, colophons, illustration lists, copyright/uncopyright pages,
+and Gutenberg legal boilerplate are excluded from audiobook sections.
 
-Items are skipped if their filename (case-insensitive) contains any of: `nav`,
-`toc`, `cover`, `colophon`, `imprint`, `illustration`, `copyright`,
-`uncopyright`; or if the basename is exactly `loi`. Titlepage is intentionally
-kept — it becomes the audiobook opening.
+Each semantic `section` or `article` container with its own meaningful content
+becomes an audiobook section. When no semantic child container exists, the
+document body is one candidate. Multiple sections in one XHTML document retain
+document order.
 
-Project Gutenberg legal boilerplate is removed before word-count filtering.
-Modern Gutenberg EPUBs sometimes place the legal header/footer and the actual
-book text in the same spine document; in that case only known boilerplate
-containers such as `pg-boilerplate`, `pg-header`, `pg-footer`, and separator
-blocks are stripped, and the remaining story text is parsed normally. A
-document that still contains only Gutenberg legal/license text after this
-cleanup is skipped. This keeps the audiobook content to the book itself while
-preserving the unmodified source EPUB upload.
+Classification precedence is:
 
-Word count is checked **before** assigning a chapter number, so filtered items don't cause gaps in numbering or element IDs.
+1. `epub:type` tokens on the candidate container or heading;
+2. explicit heading labels, including `Chapter`, Roman/Arabic ordinals,
+   `Prologue`, and `Epilogue`;
+3. navigation label and known filename;
+4. a standalone leading title becomes an unnumbered `chapter`;
+5. `other`.
 
-### Content Tags
+Spine position never creates an ordinal. `ordinal` is populated only from a
+source chapter label or ordinal. Named special sections remain unnumbered.
 
-Only these tags are extracted as content elements:
-`p`, `h1`, `h2`, `h3`, `h4`, `h5`, `h6`, `blockquote`, `li`, `figcaption`
+Recognized named sections are retained even when short. Other candidates need
+at least 50 spoken body words. Empty/decorative candidates are skipped.
 
-Nested content tags are not extracted twice. If a content tag contains another
-content tag, the outer container is skipped and the inner content tags are
-extracted in document order. This matters for Standard Ebooks structures such
-as `<blockquote><p>...</p></blockquote>`: the poem stanza paragraphs are spoken
-once, not once as the whole blockquote and again as each nested paragraph.
-Container tags such as `blockquote` and `li` are still extracted when they have
-direct text and no nested content tags.
+## Heading extraction
 
-### HTML Cleaning
+The section heading is built from leading heading-like elements:
 
-- `<sup>` and `<sub>` tags are removed (footnote markers)
-- `<a>` tags with numeric-only content are removed (cross-references like `[1]`)
-- Non-numeric anchors are preserved (their text is kept)
-- Unicode format-control characters that are not meaningful reader text are
-  removed before whitespace normalization. This includes the zero-width
-  no-break/BOM character `U+FEFF` that appears in some Standard Ebooks source
-  files around punctuation.
-- Whitespace is normalized to single spaces within each element
+- semantic heading tags `h1`–`h6`;
+- leading elements with `epub:type` containing `title`, `subtitle`, or
+  `ordinal`;
+- a known semantic navigation/filename label when source markup omits one.
 
-### Spoken Detection
+For a chapter:
 
-An element is `spoken=False` if it or any ancestor has an `epub:type` attribute containing any of: `footnote`, `endnote`, `toc`, `pagebreak`. Only spoken elements go to TTS.
+- a Roman/Arabic or `Chapter N` label becomes `display_label`;
+- a following title/subtitle becomes `display_title`;
+- a standalone non-numeric heading becomes `display_title`;
+- `spoken_text` deterministically expands an English ordinal, e.g. display
+  `I` becomes `Chapter One`, and then appends the display title.
 
-### Element ID Format
+For named special sections, the source label/title is spoken without adding a
+chapter number. Heading elements stay in `elements` for EPUB annotation but are
+excluded from `body_elements`, `paragraphs`, `text`, and `word_count`.
 
-`ch{chapter_number}-el{sequential_index:04d}` — e.g. `ch3-el0012`. Sequential index is zero-based per chapter, incremented for each non-empty content element.
+Display HTML and source heading text are never rewritten for TTS.
 
-### Title Extraction
+## Content extraction
 
-First `h1` found in the document, falling back to `h2`, then `h3`, then a
-known frontmatter filename title such as `"Epigraph"`, then `"Chapter N"`.
-Headings are also stored as the first spoken element of the chapter, so the TTS
-reads them as the chapter opens.
+Content tags are `p`, `h1`–`h6`, `blockquote`, `li`, `figcaption`, and
+meaningful leaf block-level `div` elements. Nested content is not extracted
+twice. `<sup>`, `<sub>`, numeric-only footnote anchors, and invisible format
+controls are removed from spoken text. Elements under `footnote`, `endnote`,
+`toc`, or `pagebreak` semantics are `spoken=False`.
 
-### Heading Normalization for TTS
+Element IDs use `sec{sequence}-el{index:04d}` and remain stable within a parse.
 
-Heading element `text` is rewritten before being passed downstream so Kokoro reads numerals naturally instead of letter-by-letter. The HTML stored in `ContentElement.html` is **not** changed — display still shows the original.
+There is no whole-document fallback paragraph. Div-based EPUBs preserve
+meaningful leaf block boundaries and IDs.
 
-Patterns rewritten (case-insensitive on Roman numerals):
+## Alice regression
 
-- `"I"`, `"II"`, `"IV"`, … → `"Chapter 1."`, `"Chapter 2."`, `"Chapter 4."`
-- `"1"`, `"12"`, … → `"Chapter 1."`, `"Chapter 12."`
-- `"III. The Storm"` / `"3. The Storm"` → `"Chapter 3. The Storm."`
-- `"Chapter II"` → `"Chapter 2."`
+The Standard Ebooks edition parses as:
 
-Other headings (e.g. `"The Storm"`) are left untouched.
+1. unnumbered `epigraph`;
+2. chapter ordinal 1, label `I`, title `Down the Rabbit-Hole`;
+3. chapter ordinal 2;
+4. … through chapter ordinal 12.
 
-This also fixes a secondary issue: a single-letter heading like `"I"` synthesized in isolation produced an audible onset transient at chapter start.
-
-### Fallback Text Extraction
-
-If no `<p>` tags yield text, falls back to `soup.get_text()` (handles `<div>`-based EPUBs). The entire text becomes a single-element `paragraphs` list.
-
-## Dependencies
-
-- `ebooklib` — EPUB reading
-- `beautifulsoup4` — HTML parsing
-- `re` — whitespace normalization, numeric anchor detection
+The source title page is excluded. Chapter 1 body starts with
+`Alice was beginning...`.

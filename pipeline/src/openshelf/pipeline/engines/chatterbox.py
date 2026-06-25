@@ -574,7 +574,15 @@ def _patch_chatterbox_progress_bars() -> None:
     for module_name in module_names:
         try:
             module = __import__(module_name, fromlist=["tqdm"])
-        except ImportError:
+        except Exception:
+            # This is a cosmetic best-effort patch. Optional Chatterbox
+            # dependencies may be installed but unusable on the current
+            # platform, which must not break mocked runtimes or synthesis.
+            logger.debug(
+                "Could not patch Chatterbox progress bars in %s",
+                module_name,
+                exc_info=True,
+            )
             continue
         if hasattr(module, "tqdm"):
             module.tqdm = _quiet_tqdm

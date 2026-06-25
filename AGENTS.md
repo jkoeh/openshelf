@@ -12,15 +12,15 @@ The pipeline produces audio + word-aligned text; R2 stores it; the worker serves
 flowchart LR
     subgraph Pipeline[Pipeline — Python]
         direction TB
-        P1[EPUB] --> P2[parse_epub<br/>chapters + ContentElements]
-        P2 --> P3[text_chunker<br/>ChunkInfo per chunk]
+        P1[EPUB] --> P2[parse_epub<br/>typed Sections + heading/body ContentElements]
+        P2 --> P3[text_chunker<br/>body chunks only]
         P3 --> P3B[voice_director<br/>registry + speaker spans + engine-aware direction]
         P3B --> P4[TTSEngine adapter<br/>Kokoro, F5-TTS, or Chatterbox]
-        P4 -->|WAV + chunk_words<br/>+ chunk_audio_starts<br/>+ synthesis seam audit| P5[encode_to_aac<br/>m4a]
+        P4 -->|heading + body WAV<br/>+ region word timestamps<br/>+ synthesis seam audit| P5[encode_to_aac<br/>m4a]
         P3B --> P6A[character_registry.json<br/>voices + aliases]
         P3B --> P6B[voice_direction.json<br/>speaker + performance audit]
-        P4 --> P6[chapter_data.json<br/>chunks + words]
-        P5 --> P7[rendition-manifest.json<br/>per-build chapter list]
+        P4 --> P6[section_data.json<br/>heading + body chunks + words]
+        P5 --> P7[rendition-manifest.json<br/>per-build section list]
         P2 --> P8[annotated EPUB<br/>+ cover]
         P9[new_build_id<br/>fresh random 16-hex per run] --> P5
         P9 --> P0[run.json<br/>per-build resume context]
@@ -36,11 +36,11 @@ flowchart LR
         R_BOOKMAN[manifest.json<br/>book-level pointer · MUTABLE]
         R_REG[audio/{rendition}/builds/{build}/<br/>character_registry.json]
         R_DIR[audio/{rendition}/builds/{build}/<br/>voice_direction.json]
-        R_SYN[audio/{rendition}/builds/{build}/<br/>chapter-NN.synthesis_units.json]
+        R_SYN[audio/{rendition}/builds/{build}/<br/>section-NN.synthesis_units.json]
         R_RUN[audio/{rendition}/builds/{build}/<br/>run.json]
         R_RMAN[audio/{rendition}/builds/{build}/<br/>rendition-manifest.json]
-        R_M4A[audio/{rendition}/builds/{build}/<br/>chapter-NN.m4a]
-        R_CD[audio/{rendition}/builds/{build}/<br/>chapter_data.json]
+        R_M4A[audio/{rendition}/builds/{build}/<br/>section-NN.m4a]
+        R_CD[audio/{rendition}/builds/{build}/<br/>section_data.json]
         R_CAT[catalog.json]
     end
 
@@ -60,8 +60,8 @@ flowchart LR
         W_CAT[GET /catalog<br/>catalog.json fast path<br/>book + default rendition/build]
         W_BOOK[GET /books/:a/:t<br/>→ book manifest with current_build per rendition]
         W_BUILDS[GET /books/:a/:t/builds<br/>-> available renditions/build uploads]
-        W_CH[GET /books/:a/:t/chapters/:n<br/>?rendition · ?build<br/>→ text + flat words[chunk_idx]]
-        W_AUDIO[GET /books/:a/:t/audio/:n<br/>?rendition · ?build<br/>→ m4a stream / range]
+        W_CH[GET /books/:a/:t/sections/:n<br/>?rendition · ?build<br/>→ heading + body + region words]
+        W_AUDIO[GET /books/:a/:t/sections/:n/audio<br/>?rendition · ?build<br/>→ m4a stream / range]
         W_COVER[GET /books/:a/:t/cover]
         W_EPUB[GET /books/:a/:t/epub]
         W_SPEC[GET /openapi.json + /docs<br/>auto-generated from Zod schemas]
@@ -83,7 +83,7 @@ flowchart LR
         C1[Catalog page<br/>fetchCatalog]
         C2[Book detail<br/>fetchBook → manifest with renditions]
         C2B[Collapsed rendition picker<br/>engine -> voice -> upload time]
-        C3[Reader page<br/>pin build at chapter load<br/>fetchChapter rendition build → text + words]
+        C3[Reader page<br/>pin build at section load<br/>fetchSection rendition build → heading + body + words]
         C3 --> C4[expo-audio player<br/>streams m4a rendition build]
         C3 --> C5[useSyncEngine<br/>rAF reads player.currentTime]
         C5 -->|findWordAtTime| C6[active word / chunk]
@@ -103,15 +103,21 @@ flowchart LR
 
 Notes:
 
-- The `chapter_data.json` produced in step P6 is the single source for both chunk text and word timestamps the client needs — there is no separate alignment fetch on the happy path.
-- Voice direction writes auditable per-build artifacts to R2. `character_registry.json` carries the narrator, character aliases, descriptions, and assigned voices for future client features. `voice_direction.json` carries the cast mode plus speaker/performance plan used for synthesis. TTS also writes `chapter-NN.synthesis_units.json` as a per-chapter seam audit with internal unit boundaries and inserted pause metadata for repair tooling. The reader still consumes `chapter_data.json` for text and word sync.
+- The version-2 `section_data.json` produced in step P6 is the single source for
+  heading display/spoken text, body chunk text, and word timestamps. Heading
+  and body are separate alignment regions; there is no separate alignment
+  fetch on the happy path.
+- Voice direction writes auditable per-build artifacts to R2. `character_registry.json` carries the narrator, character aliases, descriptions, and assigned voices for future client features. `voice_direction.json` carries the cast mode plus speaker/performance plan used for synthesis. TTS also writes `section-NN.synthesis_units.json` as a per-section seam audit with internal unit boundaries and inserted pause metadata for repair tooling. The reader consumes `section_data.json` for heading display/spoken text, body text, and word sync.
 - The default cast mode is **solo narrator**: the LLM may choose the narrator and build/expand the character registry, but synthesis keeps one narrator voice for the whole audiobook. Character data is used for audit and future style guidance rather than hard voice switching. **Multicast** is opt-in via config/CLI and may switch voices by character; it is experimental because prose dialogue tags can sound stitched when rendered as separate synthetic actors. WhisperX is the canonical word-timestamp source for every engine; Kokoro native token timestamps are not used for the final sync contract.
 - `catalog.json` is the preferred fast path for `GET /catalog`; when it is missing, the worker may derive the same catalog rows from root book manifests plus each selected rendition's current `rendition-manifest.json`. Catalog rows include the backend default rendition and current build so the client can open a book on a coherent default build.
 - `GET /books/:a/:t/builds` is the no-cache discovery API for build selection. It reads the book manifest's retained `available_builds`, enriches each retained build from its own `rendition-manifest.json`, and returns `uploaded_at` from the R2 object's upload timestamp. Omitting `build` in client URLs still means use the rendition's `current_build`.
 - The client stores the user's preferred build per book locally and uses that preference on the next book-detail load when the retained build still exists. Reading progress is keyed by book, rendition, and build so progress from one build cannot leak into another. The book-detail selector is collapsed by default, always shows the selected engine, groups choices by engine then voice, and lists builds by upload time while keeping raw build IDs internal.
 - The client does not poll status for sync; `useSyncEngine` reads `player.currentTime` directly inside `requestAnimationFrame` and only re-renders when the active word index changes.
-- Tap-to-seek in the reader looks up `words[i].start` and calls `player.seekTo`.
-- When chapter audio finishes, the reader advances to the next chapter in the same selected rendition/build and starts playback only after the next chapter's audio source has loaded.
+- Tap-to-seek in the reader looks up `words[i].start` and calls
+  `player.seekTo`. Tapping the heading seeks to its first heading word.
+- When section audio finishes, the reader advances to the next section in the
+  same selected rendition/build and starts playback only after the next
+  section's audio source has loaded.
 
 ### Rendition vs build invariant
 
@@ -120,7 +126,7 @@ OpenShelf separates two orthogonal concepts that used to be conflated:
 - **Rendition** is a user-facing artistic identity (a narrator voice + engine). Examples: `kokoro-af-heart`, `kokoro-bf-emma`, `f5tts-custom`, `chatterbox-custom`. Stable across pipeline changes. The user picks a rendition.
 - **Build** is an internal pipeline-output identity. It is a fresh random 16-hex string by default, or a caller-provided 16-hex string when resuming a targeted build. The default client experience hides it; retained build choices are presented by upload time while the build ID remains the URL/storage key.
 
-Storage and HTTP URLs include **both**: `audio/{rendition}/builds/{build}/...` on R2; `?rendition=...&build=...` on every immutable HTTP route. The book-level `manifest.json` is the single mutable pointer that names the `current_build` per rendition. This makes audio + chapter_data + rendition-manifest a coherent atomic snapshot per (rendition, build), so a client can never mix bytes from different builds mid-session.
+Storage and HTTP URLs include **both**: `audio/{rendition}/builds/{build}/...` on R2; `?rendition=...&build=...` on every immutable HTTP route. The book-level `manifest.json` is the single mutable pointer that names the `current_build` per rendition. This makes audio + section_data + rendition-manifest a coherent atomic snapshot per (rendition, build), so a client can never mix bytes from different builds mid-session.
 
 Each build prefix may include `run.json`, the local/resumable context artifact
 that records the EPUB hash and immutable invocation settings for that build.
@@ -171,7 +177,15 @@ npm run typecheck    # Type-check worker + client
 ## Conventions
 
 - Each component owns its dependency file (`pipeline/requirements.txt`, `worker/package.json`, `client/package.json`)
-- Shared data contract: pipeline writes JSON (manifest, chapter_data, character_registry, voice_direction) to R2. `chapter_data.json` carries per-chapter chunk text and word timestamps in a single file, regardless of TTS engine; direction artifacts are audit/client-feature metadata and must not replace reader text.
+- Shared data contract: pipeline writes JSON (manifest, section_data,
+  character_registry, voice_direction) to R2. `section_data.json` carries
+  heading metadata, body chunks, and region-tagged word timestamps in a single
+  file, regardless of TTS engine; direction artifacts are audit/client-feature
+  metadata and must not replace reader text.
+- EPUB spine order determines `Section.sequence`, never chapter ordinal.
+  Structural types and ordinals come from EPUB semantics, headings, navigation,
+  and conservative filename fallbacks. Opening/closing credits are generated
+  sections; source title pages are not playback sections.
 - `sanitize()` in `pipeline/src/openshelf/scrapers/http.py` is the single source of truth for slug generation
 - Idempotent at every level: file exists -> skip, R2 key exists -> skip
 

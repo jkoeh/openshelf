@@ -9,8 +9,8 @@ import { r2Key } from "../utils/r2-keys";
 const ParamsSchema = z.object({
 	author: SlugSchema.openapi({ param: { name: "author", in: "path" }, example: "franz-kafka" }),
 	title: SlugSchema.openapi({ param: { name: "title", in: "path" }, example: "the-trial" }),
-	chapter: ChapterNumberStringSchema.openapi({
-		param: { name: "chapter", in: "path" },
+	sequence: ChapterNumberStringSchema.openapi({
+		param: { name: "sequence", in: "path" },
 		example: "01",
 	}),
 });
@@ -36,7 +36,7 @@ const route = createRoute({
 	method: "get",
 	path: "/",
 	tags: ["audio"],
-	summary: "Stream a build-pinned chapter audio file",
+	summary: "Stream a build-pinned section audio file",
 	request: { params: ParamsSchema, query: QuerySchema, headers: HeadersSchema },
 	responses: {
 		200: {
@@ -73,7 +73,7 @@ const route = createRoute({
 const app = createOpenAPIApp<{ Bindings: Env }>();
 
 app.openapi(route, async (c) => {
-	const { author, title, chapter } = c.req.valid("param");
+	const { author, title, sequence } = c.req.valid("param");
 	const { rendition, build } = c.req.valid("query");
 	const rangeHeader = c.req.header("Range");
 
@@ -97,7 +97,7 @@ app.openapi(route, async (c) => {
 		range = end !== undefined ? { offset, length: end - offset + 1 } : { offset };
 	}
 
-	const audioKey = r2Key.audio(author, title, rendition, build, chapter);
+	const audioKey = r2Key.audio(author, title, rendition, build, sequence);
 	const obj = await c.env.R2_BUCKET.get(audioKey, range ? { range } : undefined);
 
 	if (!obj) {
@@ -105,7 +105,7 @@ app.openapi(route, async (c) => {
 			{
 				error: {
 					code: "NOT_FOUND",
-					message: `Audio not found: ${author}/${title} chapter ${chapter}`,
+					message: `Audio not found: ${author}/${title} section ${sequence}`,
 				},
 			},
 			404,

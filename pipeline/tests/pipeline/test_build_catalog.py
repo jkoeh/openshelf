@@ -82,14 +82,18 @@ class TestBuildCatalog(unittest.TestCase):
             """,
             "books/franz-kafka/the-trial/audio/kokoro-af-heart/builds/2a4f9c1b3d8e7f60/rendition-manifest.json": """
                 {
+                  "version": 2,
                   "build": "2a4f9c1b3d8e7f60",
                   "rendition": "kokoro-af-heart",
                   "voice": "af_heart",
                   "engine": "kokoro",
-                  "pipeline_version": "1",
+                  "pipeline_version": "2",
                   "total_duration_seconds": 1847.3,
-                  "chapters": [
-                    {"number": 1, "title": "I", "filename": "chapter-01.m4a",
+                  "section_count": 1,
+                  "sections": [
+                    {"sequence": 1, "section_type": "chapter", "ordinal": 1,
+                     "display_label": "I", "display_title": "The Arrest",
+                     "filename": "section-01.m4a",
                      "duration_seconds": 1847.3, "word_count": 3241}
                   ]
                 }
@@ -109,7 +113,7 @@ class TestBuildCatalog(unittest.TestCase):
         self.assertEqual(book["rendition"], "kokoro-af-heart")
         self.assertEqual(book["current_build"], "2a4f9c1b3d8e7f60")
         self.assertEqual(book["total_duration_seconds"], 1847.3)
-        self.assertEqual(book["chapter_count"], 1)
+        self.assertEqual(book["section_count"], 1)
         self.assertTrue(book["has_cover"])
 
     def test_choose_catalog_rendition_falls_back_to_first_sorted_key(self):

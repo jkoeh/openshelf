@@ -2409,9 +2409,9 @@ def directed_segment_from_dict(data: dict) -> DirectedSegment:
 def directed_chunks_from_chapter_direction_artifact(path: str) -> list[list[DirectedSegment]]:
     with open(path, "r", encoding="utf-8") as f:
         payload = json.load(f)
-    chapters = payload.get("chapters", [])
+    chapters = payload.get("sections", [])
     if len(chapters) != 1:
-        raise ValueError(f"chapter direction artifact must contain exactly one chapter: {path}")
+        raise ValueError(f"section direction artifact must contain exactly one section: {path}")
 
     chunks = chapters[0].get("chunks", [])
     return [
@@ -2429,7 +2429,7 @@ def build_direction_chapter(
     fallback_error: str | None = None,
 ) -> dict:
     payload = {
-        "number": number,
+        "sequence": number,
         "title": title,
         "fallback_used": fallback_used,
         "fallback_error": fallback_error,
@@ -2453,12 +2453,12 @@ def build_voice_direction_payload(
     chapters: list[dict],
 ) -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "rendition": rendition,
         "build": build_id,
         "engine": engine_name,
         "cast_mode": cast_mode,
-        "chapters": chapters,
+        "sections": chapters,
     }
 
 

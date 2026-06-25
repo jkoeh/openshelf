@@ -44,9 +44,9 @@ Shape:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "build": "2a4f9c1b3d8e7f60",
-  "pipeline_version": "1",
+  "pipeline_version": "2",
   "epub_path": "C:/books/alice.epub",
   "epub_sha256": "...",
   "author_slug": "lewis-carroll",
@@ -59,7 +59,7 @@ Shape:
   "cast_mode": "solo",
   "performance_direction_mode": "batched",
   "language": "en",
-  "chapters": [1, 2, 3]
+  "sections": [1, 2, 3]
 }
 ```
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import numpy as np
@@ -16,6 +16,7 @@ from openshelf.config import (
     TTS_LANGUAGE,
     TTS_SAMPLE_RATE,
     CROSSFADE_MS,
+    HEADING_TO_BODY_SILENCE_MS,
     LEAD_IN_SILENCE_MS,
 )
 from openshelf.pipeline.seams import (
@@ -118,6 +119,7 @@ class SynthesisResult:
     chunk_audio_starts: list[float]   # len == len(input chunks); -1.0 for skipped chunks
     chunk_words: list[list[WordTimestamp]]  # per-chunk word timestamps (empty list for skipped)
     synthesis_units: list[ChunkSynthesisAudit]
+    heading_words: list[WordTimestamp] = field(default_factory=list)
 
 
 def get_device() -> str:
@@ -729,12 +731,13 @@ def synthesize_chapter(
     pipeline: Any,
     chunks: list[ChunkInfo],
     output_path: str,
-    voice: str = TTS_VOICE,
+    narrator_voice: VoiceSpec | None = None,
     sample_rate: int = TTS_SAMPLE_RATE,
     aligner: WordAligner | None = None,
+    heading_text: str = "",
 ) -> SynthesisResult:
-    if not chunks:
-        raise ValueError("chunks list is empty")
+    if not chunks and not heading_text.strip():
+        raise ValueError("section has no heading or body chunks")
 
     # Lead-in silence absorbs the AAC encoder priming samples and Kokoro's
     # first-token onset transient so the file doesn't start with a click.
@@ -746,6 +749,7 @@ def synthesize_chapter(
     chunk_words: list[list[WordTimestamp]] = []
     synthesis_units: list[ChunkSynthesisAudit] = []
     prior_chunk_emitted = False
+    any_audio_emitted = False
     policy = PausePolicy()
 
     if isinstance(getattr(pipeline, "capabilities", None), TTSCapabilities):
@@ -758,7 +762,39 @@ def synthesize_chapter(
     post_cfg = engine.post_processing_config()
     if aligner is None:
         aligner = NullAligner()
+    if narrator_voice is None:
+        narrator_voice = VoiceSpec(id=TTS_VOICE, preset_name=TTS_VOICE)
     rolling_context = [""]
+
+    heading_words: list[WordTimestamp] = []
+    if heading_text.strip():
+        heading_segment = DirectedSegment(
+            text=heading_text,
+            voice=narrator_voice,
+            speaker="narrator",
+            original_text=heading_text,
+        )
+        heading_audio, raw_heading_words, heading_audit = _synthesize_segments(
+            engine=engine,
+            aligner=aligner,
+            segments=[heading_segment],
+            post_cfg=post_cfg,
+            sample_rate=sample_rate,
+            prior_audio_frames=frames_so_far,
+            rolling_context=[""],
+            chunk_index=-1,
+            return_audit=True,
+        )
+        heading_words = _enforce_monotonic_word_order(raw_heading_words)
+        audio_segments.append(heading_audio)
+        frames_so_far += len(heading_audio)
+        synthesis_units.append(heading_audit)
+        any_audio_emitted = True
+
+        if chunks:
+            heading_gap = _generate_silence(sample_rate, HEADING_TO_BODY_SILENCE_MS)
+            audio_segments.append(heading_gap)
+            frames_so_far += len(heading_gap)
 
     for i, chunk_info in enumerate(chunks):
         try:
@@ -792,7 +828,7 @@ def synthesize_chapter(
             if segments is None:
                 segments = [DirectedSegment(
                     text=chunk_info.text,
-                    voice=VoiceSpec(id=voice, preset_name=voice),
+                    voice=narrator_voice,
                     speaker="narrator",
                 )]
 
@@ -833,14 +869,15 @@ def synthesize_chapter(
             frames_so_far += len(chunk_audio)
             synthesis_units.append(chunk_audit)
             prior_chunk_emitted = True
+            any_audio_emitted = True
         except Exception:
             logger.warning("Chunk %d failed, skipping: %.40s...", i, chunk_info.text, exc_info=True)
             chunk_audio_starts.append(-1.0)
             chunk_words.append([])
             skipped += 1
 
-    if not prior_chunk_emitted:
-        raise RuntimeError("All chunks failed TTS synthesis")
+    if not any_audio_emitted:
+        raise RuntimeError("All section audio failed TTS synthesis")
 
     full_audio = np.concatenate(audio_segments)
     sf.write(output_path, full_audio, sample_rate)
@@ -852,6 +889,7 @@ def synthesize_chapter(
         chunk_audio_starts=chunk_audio_starts,
         chunk_words=chunk_words,
         synthesis_units=synthesis_units,
+        heading_words=heading_words,
     )
 
 
@@ -887,40 +925,44 @@ def synthesize_chapter_to_files(
     synthesis_units_path: str | None,
     chapter_number: int,
     chunk_texts: list[str],
-    voice: str | None = None,
+    narrator_voice: VoiceSpec | None = None,
     aligner: Any = None,
     keep_wav: bool = False,
     force: bool = False,
+    heading_text: str = "",
 ) -> tuple[SynthesisResult, float]:
-    """Synthesize one chapter to its m4a + sync artifacts. Returns (result, encoded_duration).
+    """Synthesize one section to its m4a + sync artifacts.
 
     This is the single audio-generation path shared by the full DAG
-    orchestrator and the `synth` DAG command: remove any stale m4a, synthesize +
-    align, encode to AAC, and write chapter-NN.sync.json. The encoded duration is
-    returned for manifest accounting.
+    orchestrator and the `synth` DAG command: remove any stale m4a, synthesize
+    and align the separate heading/body regions, encode to AAC, and write
+    section-NN.sync.json. Returns (result, encoded_duration).
     """
     from openshelf.pipeline.encoder import encode_to_aac
     from openshelf.pipeline.seams import write_synthesis_units_artifact
-    from openshelf.pipeline.word_aligner import write_chapter_sync_artifact
+    from openshelf.pipeline.word_aligner import write_section_sync_artifact
 
     # Any existing m4a is leftover from an aborted attempt; regenerate cleanly so
     # stale audio is never paired with freshly-generated word timestamps.
     if os.path.exists(m4a_path):
         os.remove(m4a_path)
 
-    synth_kwargs: dict = {"aligner": aligner}
-    if voice is not None:
-        synth_kwargs["voice"] = voice
+    synth_kwargs: dict = {
+        "aligner": aligner,
+        "heading_text": heading_text,
+        "narrator_voice": narrator_voice,
+    }
     result = synthesize_chapter(engine, chunk_infos, wav_path, **synth_kwargs)
     duration = encode_to_aac(wav_path, m4a_path, delete_wav=not keep_wav)
 
-    write_chapter_sync_artifact(
+    write_section_sync_artifact(
         sync_path,
         chapter_number,
         os.path.basename(m4a_path),
         result.chunk_audio_starts,
         result.chunk_words,
         chunk_texts=chunk_texts,
+        heading_words=result.heading_words,
         force=force,
     )
     if synthesis_units_path is not None:

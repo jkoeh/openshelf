@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import app from "../../src/index";
 
 const CATALOG = {
-	version: 1,
+	version: 2,
 	generated_at: "2025-01-15T12:00:00Z",
 	books: [
 		{
@@ -15,7 +15,7 @@ const CATALOG = {
 			rendition: "kokoro-af-heart",
 			current_build: "2a4f9c1b3d8e7f60",
 			total_duration_seconds: 28800,
-			chapter_count: 10,
+			section_count: 10,
 			has_cover: false,
 		},
 		{
@@ -27,7 +27,7 @@ const CATALOG = {
 			rendition: "kokoro-af-heart",
 			current_build: "7e8b4d2a9c0e1234",
 			total_duration_seconds: 77400.5,
-			chapter_count: 42,
+			section_count: 42,
 			has_cover: true,
 		},
 	],
@@ -59,16 +59,18 @@ const FALLBACK_BOOK_MANIFEST = {
 };
 
 const FALLBACK_RENDITION_MANIFEST = {
+	version: 2,
 	build: FALLBACK_BUILD,
 	rendition: FALLBACK_RENDITION,
 	voice: "af_heart",
 	engine: "kokoro",
-	pipeline_version: "1",
+	pipeline_version: "2",
 	total_duration_seconds: 6825.25,
-	chapters: [
-		{ number: 1, title: "I", filename: "chapter-01.m4a", duration_seconds: 2140.575 },
-		{ number: 2, title: "II", filename: "chapter-02.m4a", duration_seconds: 2274.05 },
-		{ number: 3, title: "III", filename: "chapter-03.m4a", duration_seconds: 2282.375 },
+	section_count: 3,
+	sections: [
+		{ sequence: 1, section_type: "chapter", ordinal: 1, display_label: "I", display_title: "", filename: "section-01.m4a", duration_seconds: 2140.575, word_count: 100 },
+		{ sequence: 2, section_type: "chapter", ordinal: 2, display_label: "II", display_title: "", filename: "section-02.m4a", duration_seconds: 2274.05, word_count: 100 },
+		{ sequence: 3, section_type: "epilogue", ordinal: null, display_label: "Epilogue", display_title: "", filename: "section-03.m4a", duration_seconds: 2282.375, word_count: 100 },
 	],
 };
 
@@ -92,7 +94,7 @@ describe("GET /api/v1/catalog", () => {
 		const res = await app.request("/api/v1/catalog", {}, env);
 		expect(res.status).toBe(200);
 		const body = await res.json<CatalogResponse>();
-		expect(body.version).toBe(1);
+		expect(body.version).toBe(2);
 		expect(body.generated_at).toBe("2025-01-15T12:00:00Z");
 		expect(body.books).toHaveLength(2);
 		expect(body.total).toBe(2);
@@ -141,6 +143,7 @@ describe("GET /api/v1/catalog", () => {
 		const res = await app.request("/api/v1/catalog?page=1&limit=20", {}, env);
 		expect(res.status).toBe(200);
 		const body = await res.json<CatalogResponse>();
+		expect(body.version).toBe(2);
 		expect(body.books).toEqual([
 			expect.objectContaining({
 				author: "Franz Kafka",
@@ -150,7 +153,7 @@ describe("GET /api/v1/catalog", () => {
 				rendition: FALLBACK_RENDITION,
 				current_build: FALLBACK_BUILD,
 				total_duration_seconds: 6825.25,
-				chapter_count: 3,
+				section_count: 3,
 				has_cover: true,
 			}),
 		]);

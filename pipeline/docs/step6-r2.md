@@ -1,144 +1,51 @@
-# Step 6: R2 Upload
+# Step 6: R2 Upload — Version 2
 
-**Module:** `src/openshelf/pipeline/r2.py`
-**Test:** `tests/pipeline/test_r2.py`
+**Modules:** `src/openshelf/pipeline/r2.py`,
+`src/openshelf/pipeline/r2_keys.py`
 
-## Purpose
+## Layout
 
-Upload all pipeline artifacts to Cloudflare R2 (S3-compatible object storage) under a build-versioned key layout. Per-build artifacts (audio, chapter_data, character_registry, voice_direction, synthesis-unit seam audits, run context, rendition-manifest) live under `audio/{rendition}/builds/{build}/...` and are immutable once written. The per-book `manifest.json` is the single mutable pointer that names the `current_build` per rendition and is always overwritten on upload.
-
-```mermaid
-graph TD
-    A[Pipeline outputs + build_id] --> B[make_client]
-    B --> C[upload_epub]
-    B --> D[upload_cover]
-    B --> E[upload_rendition_build]
-    B --> H[upload_book_manifest]
-
-    C --> C1{book.epub on R2?}
-    C1 -->|Yes| C2[Skip]
-    C1 -->|No| C3[PUT book.epub]
-
-    E --> E1{rendition-manifest.json for build on R2?}
-    E1 -->|Yes| E2[Skip entire build]
-    E1 -->|No| E3[PUT all m4a files]
-    E3 --> E3A[PUT chapter-NN.synthesis_units.json]
-    E3A --> E4[PUT chapter_data.json]
-    E4 --> E4A[PUT character_registry.json]
-    E4A --> E4B[PUT voice_direction.json]
-    E4B --> E4C[PUT run.json]
-    E4C --> E5[PUT rendition-manifest.json last]
-
-    H --> H1[Always overwrite book manifest]
+```text
+books/{author}/{title}/
+  book.epub
+  cover.jpg
+  manifest.json
+  audio/{rendition}/builds/{build}/
+    section-01.m4a
+    section-01.synthesis_units.json
+    section_data.json
+    character_registry.json
+    voice_direction.json
+    run.json
+    rendition-manifest.json
 ```
 
-## Interface
+Every build object is immutable. `rendition-manifest.json` is uploaded last.
+`manifest.json` remains the short-cached mutable pointer.
 
-### Public Functions
-
-```python
-def make_client() -> boto3.client
-    # S3 client configured for R2 using env vars
-
-def key_exists(client, bucket: str, key: str) -> bool
-    # HEAD request; True if exists, False on 404, re-raises other errors
-
-def upload_rendition_build(
-    client, bucket: str,
-    author_slug: str, title_slug: str,
-    rendition: str, build_id: str,
-    audio_dir: str,
-    chapter_data_path: str,
-    rendition_manifest_path: str,
-    character_registry_path: str | None = None,
-    voice_direction_path: str | None = None,
-    run_context_path: str | None = None,
-    force: bool = False,
-) -> list[str]
-    # Writes all per-build artifacts under audio/{rendition}/builds/{build}/.
-    # Single-gate idempotency: rendition-manifest.json existence signals the
-    # build is complete. Returns uploaded keys (or [] if already complete).
-
-def upload_book_manifest(
-    client, bucket: str,
-    author_slug: str, title_slug: str,
-    manifest_path: str,
-) -> str
-    # Always overwrites. This is the single mutable pointer.
-
-def upload_cover(
-    client, bucket: str,
-    author_slug: str, title_slug: str,
-    cover_path: str,
-    content_type: str = "image/jpeg",
-    force: bool = False,
-) -> str | None
-
-def upload_epub(
-    client, bucket: str,
-    author_slug: str, title_slug: str,
-    epub_path: str,
-    force: bool = False,
-) -> str | None
-```
-
-`force=True` on the per-artifact uploaders skips the HEAD existence check and overwrites; `openshelf-pipeline books reprocess` uses this path. The book manifest does not take `force` because it is unconditionally overwritten on every run.
-
-## R2 Key Layout
-
-```
-books/{author_slug}/{title_slug}/
-  book.epub                                              # immutable
-  cover.{jpg|png}                                        # immutable
-  manifest.json                                          # MUTABLE — the only mutable per-book object
-  audio/
-    {rendition}/                                         # e.g. kokoro-af-heart
-      builds/
-        {build_id}/                                      # 16-hex build ID
-          chapter-01.m4a                                 # immutable
-          chapter-01.synthesis_units.json                 # immutable seam/unit audit
-          chapter-02.m4a
-          chapter-02.synthesis_units.json
-          chapter_data.json                              # immutable
-          character_registry.json                        # immutable
-          voice_direction.json                           # immutable
-          run.json                                       # immutable resume context
-          rendition-manifest.json                        # immutable; written last
-```
-
-Every key under a `builds/{build_id}/` prefix is part of a coherent atomic snapshot: the audio bytes, the chapter_data word timestamps, the synthesis-unit seam audits, the character registry, the voice direction audit, the run context, and the rendition-manifest's chapter durations all describe the same build. A client that pins to a build hash for a chapter session is guaranteed not to see a mid-listen mismatch.
-
-For local quality checks, `openshelf-pipeline dag run --chapters` may restrict generation to
-one chapter or a comma/range list such as `2` or `2,4-5`. This writes the same
-per-build artifact shapes, but with only the selected chapters in
-`chapter_data.json`, `voice_direction.json`, and `rendition-manifest.json`. The
-flag is for local sample builds and must not alter the public schema.
-
-### Key constructors
-
-All key construction goes through `pipeline/src/openshelf/pipeline/r2_keys.py` — never assemble paths inline. Mirrored on the worker side in `worker/src/utils/r2-keys.ts`; tests on both sides assert the same string outputs so the two languages can never drift.
-
-## chapter_data.json shape
-
-Unchanged from prior shape — only the path it lives at has changed.
+## `section_data.json`
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "rendition": "kokoro-af-heart",
   "build": "2a4f9c1b3d8e7f60",
-  "chapters": [
+  "sections": [
     {
-      "number": 1,
-      "title": "I",
-      "word_count": 1234,
+      "sequence": 3,
+      "section_type": "chapter",
+      "ordinal": 1,
+      "heading": {
+        "display_label": "I",
+        "display_title": "Down the Rabbit-Hole",
+        "spoken_text": "Chapter One. Down the Rabbit-Hole.",
+        "words": [{"word": "Chapter", "start": 0.05, "end": 0.31}]
+      },
+      "word_count": 2143,
       "chunks": [
         {
-          "text": "Someone must have been telling lies about Josef K.",
-          "words": [
-            {"word": "Someone", "start": 0.0,  "end": 0.31},
-            {"word": "must",    "start": 0.31, "end": 0.48}
-          ]
+          "text": "Alice was beginning...",
+          "words": [{"word": "Alice", "start": 2.1, "end": 2.35}]
         }
       ]
     }
@@ -146,87 +53,13 @@ Unchanged from prior shape — only the path it lives at has changed.
 }
 ```
 
-The `build` field is added so the file is self-identifying — a client that has the bytes can sanity-check it matches the build it pinned to.
+Heading words and body chunk words are separate. The worker adds
+`region: "heading" | "body"` and nullable body `chunk_idx` when flattening.
 
-## Direction Artifacts
+`upload_rendition_build` uploads `section-*.m4a`, synthesis audits,
+`section_data.json`, optional audit artifacts, and the rendition manifest last.
 
-`character_registry.json` contains the narrator voice plus every known speaking character, aliases, descriptions, and assigned voice specs. It is immutable under the build prefix so future client character-editing features can start from exactly the registry used for that audio.
-
-`voice_direction.json` contains the build `cast_mode` plus the per-chapter,
-per-chunk speaker and performance-direction plan used for synthesis. In default
-`solo` mode those segments use the narrator voice; in opt-in `multicast` mode
-they may switch voices by character. It preserves original reader text
-separately from synthesis-only text, so steering cues never become reader text.
-
-`chapter-NN.synthesis_units.json` is a private TTS audit artifact. It records
-the exact generated unit frame ranges, seam break types, inserted pause frame
-ranges, and pause policy used for one chapter. The worker/client do not read it,
-but repair tooling can use it to replace seam pauses and shift sync metadata
-without rerunning TTS.
-
-`run.json` records the EPUB hash and immutable invocation settings used for a
-local resumable build. It is uploaded before `rendition-manifest.json` when
-present, but the worker does not need it for playback.
-
-## Behavior
-
-### Idempotency Strategy
-
-**Per-build upload** uses a single-gate pattern: only `rendition-manifest.json` existence is checked. If it exists, the entire build is skipped. The manifest is uploaded **last**, so its presence guarantees every other byte in the build prefix is already on R2.
-
-**Other per-book uploads** (EPUB, cover) check their own key existence independently.
-
-**Book manifest** is always overwritten — no existence check.
-
-Default pipeline runs assign a fresh random `build_id`, so a reprocess uploads under a new build prefix and rewrites the book manifest to point there. A caller may provide `--build-id --resume` for local resumability; `run.json` validates the local build context before upload. R2 still treats `rendition-manifest.json` as the completion signal for a build prefix.
-
-### Cache Headers
-
-| Object | Cache-Control | Why |
-|---|---|---|
-| `manifest.json` (book-level) | `public, max-age=60, stale-while-revalidate=86400` | Mutable pointer; clients converge on new builds within ~60s |
-| Everything else | `public, max-age=31536000, immutable` | URL itself is build-pinned; bytes never change for that URL |
-
-The cache headers stored on R2 objects are **defaults** — the worker overrides them per-route based on the same policy. R2 metadata only matters for direct R2-public-bucket access, which OpenShelf does not use.
-
-### Garbage Collection
-
-`available_builds` in the book manifest is truncated to the most recent N (default 2) on every reprocess. Older build hashes still have bytes on R2 — those are reaped by a separate `gc-old-builds.py` script that:
-
-1. Lists all `audio/{rendition}/builds/*` prefixes for a book.
-2. Reads the book manifest to learn which build IDs are retained.
-3. Deletes all keys under prefixes whose build ID is not in the retained set.
-
-This is not run in-line with the upload to keep reprocesses fast and to give an instant rollback window in case a freshly-shipped build is broken.
-
-### Content Types
-
-| File | Content-Type |
-|---|---|
-| `.m4a` | `audio/mp4` |
-| `.epub` | `application/epub+zip` |
-| `.json` | `application/json` |
-
-### ContentDisposition
-
-m4a files include `ContentDisposition: inline` so browsers stream instead of downloading.
-
-### Client Configuration
-
-```python
-boto3.client(
-    "s3",
-    endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
-    aws_access_key_id=R2_ACCESS_KEY,
-    aws_secret_access_key=R2_SECRET_KEY,
-    region_name="auto",
-)
-```
-
-Credentials come from environment variables: `R2_ACCOUNT_ID`, `R2_ACCESS_KEY`, `R2_SECRET_KEY`.
-
-## Dependencies
-
-- `boto3` — S3-compatible API client
-- `botocore` — `ClientError` for HEAD 404 handling
-- Config: `R2_ACCOUNT_ID`, `R2_ACCESS_KEY`, `R2_SECRET_KEY`, `R2_PREFIX_BOOKS`, `R2_CACHE_CONTROL_IMMUTABLE`, `R2_CACHE_CONTROL_MANIFEST`
+After the new manifest pointer is published, `delete_build_prefixes` deletes
+superseded version-1 build prefixes. Deletion uses paginated listing and
+batched object deletion. Failures are logged and raised for operator retry;
+they do not alter the published version-2 pointer.

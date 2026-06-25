@@ -13,6 +13,16 @@ export function formatTime(seconds: number): string {
 	return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+export function sectionDisplayTitle(section: {
+	display_label: string;
+	display_title: string;
+}): string {
+	if (section.display_label && section.display_title) {
+		return `${section.display_label} — ${section.display_title}`;
+	}
+	return section.display_title || section.display_label || "Untitled Section";
+}
+
 /** Deterministic hue from a string (for book card backgrounds) */
 export function stringToHue(s: string): number {
 	let hash = 0;

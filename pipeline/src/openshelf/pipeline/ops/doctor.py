@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Any, Sequence
 
 
-_CHAPTER_FILE_RE = re.compile(r"chapter-(\d+)\.(chunks|voice_direction|sync)\.json$")
-_M4A_RE = re.compile(r"chapter-(\d+)\.m4a$")
+_CHAPTER_FILE_RE = re.compile(r"section-(\d+)\.(chunks|voice_direction|sync)\.json$")
+_M4A_RE = re.compile(r"section-(\d+)\.m4a$")
 
 
 @dataclass
@@ -48,7 +48,7 @@ def diagnose_build(build_dir: str, log_path: str | None = None) -> DoctorReport:
         "voice_direction": [],
         "m4a": [],
         "sync": [],
-        "chapter_data": [],
+        "section_data": [],
         "rendition_manifest": [],
     }
 
@@ -67,7 +67,7 @@ def diagnose_build(build_dir: str, log_path: str | None = None) -> DoctorReport:
         "character_registry.json",
         "voice_direction.json",
         "rendition-manifest.json",
-        "chapter_data.json",
+        "section_data.json",
     ):
         artifacts[name] = (root / name).exists()
 
@@ -87,24 +87,24 @@ def diagnose_build(build_dir: str, log_path: str | None = None) -> DoctorReport:
             if missing:
                 issues.append(DoctorIssue(
                     "error",
-                    f"missing {key} artifact(s) for chapter(s): {_format_numbers(missing)}",
+                    f"missing {key} artifact(s) for section(s): {_format_numbers(missing)}",
                 ))
 
-    if not artifacts.get("chapter_data.json", False):
-        issues.append(DoctorIssue("error", "missing chapter_data.json"))
+    if not artifacts.get("section_data.json", False):
+        issues.append(DoctorIssue("error", "missing section_data.json"))
     else:
-        payload = _read_json(root / "chapter_data.json", issues)
+        payload = _read_json(root / "section_data.json", issues)
         data_numbers = [
-            int(ch["number"])
-            for ch in payload.get("chapters", [])
-            if isinstance(ch, dict) and "number" in ch
+            int(section["sequence"])
+            for section in payload.get("sections", [])
+            if isinstance(section, dict) and "sequence" in section
         ]
-        chapters["chapter_data"] = sorted(data_numbers)
+        chapters["section_data"] = sorted(data_numbers)
         missing = sorted(expected - set(data_numbers))
         if expected and missing:
             issues.append(DoctorIssue(
                 "error",
-                f"chapter_data.json missing chapter(s): {_format_numbers(missing)}",
+                f"section_data.json missing section(s): {_format_numbers(missing)}",
             ))
 
     if not artifacts.get("rendition-manifest.json", False):
@@ -112,16 +112,16 @@ def diagnose_build(build_dir: str, log_path: str | None = None) -> DoctorReport:
     else:
         payload = _read_json(root / "rendition-manifest.json", issues)
         manifest_numbers = [
-            int(ch["number"])
-            for ch in payload.get("chapters", [])
-            if isinstance(ch, dict) and "number" in ch
+            int(section["sequence"])
+            for section in payload.get("sections", [])
+            if isinstance(section, dict) and "sequence" in section
         ]
         chapters["rendition_manifest"] = sorted(manifest_numbers)
         missing = sorted(expected - set(manifest_numbers))
         if expected and missing:
             issues.append(DoctorIssue(
                 "error",
-                f"rendition-manifest.json missing chapter(s): {_format_numbers(missing)}",
+                f"rendition-manifest.json missing section(s): {_format_numbers(missing)}",
             ))
 
     if not artifacts.get("run.json", False):
@@ -146,7 +146,7 @@ def diagnose_build(build_dir: str, log_path: str | None = None) -> DoctorReport:
         "voice_direction": len(chapters["voice_direction"]),
         "m4a": len(chapters["m4a"]),
         "sync": len(chapters["sync"]),
-        "chapter_data": len(chapters["chapter_data"]),
+        "section_data": len(chapters["section_data"]),
         "rendition_manifest": len(chapters["rendition_manifest"]),
     }
     return DoctorReport(
@@ -163,7 +163,7 @@ def _chapter_json_numbers(root: Path, kind: str) -> list[int]:
     suffix = f".{kind}.json"
     return sorted(
         _chapter_number(path)
-        for path in root.glob(f"chapter-*{suffix}")
+        for path in root.glob(f"section-*{suffix}")
         if _chapter_number(path) is not None
     )
 
@@ -171,7 +171,7 @@ def _chapter_json_numbers(root: Path, kind: str) -> list[int]:
 def _m4a_numbers(root: Path) -> list[int]:
     return sorted(
         number
-        for path in root.glob("chapter-*.m4a")
+        for path in root.glob("section-*.m4a")
         for number in [_chapter_number(path)]
         if number is not None
     )
@@ -199,22 +199,22 @@ def _read_json(path: Path, issues: list[DoctorIssue]) -> dict[str, Any]:
 
 
 def _inspect_sync_artifacts(root: Path, issues: list[DoctorIssue]) -> None:
-    for path in sorted(glob.glob(str(root / "chapter-*.sync.json"))):
+    for path in sorted(glob.glob(str(root / "section-*.sync.json"))):
         payload = _read_json(Path(path), issues)
-        number = payload.get("number", Path(path).stem)
+        number = payload.get("sequence", Path(path).stem)
         starts = payload.get("chunk_audio_starts", [])
         skipped = sum(1 for item in starts if item == -1.0)
         if skipped:
             issues.append(DoctorIssue(
                 "warning",
-                f"chapter {number} has {skipped} skipped chunk marker(s).",
+                f"section {number} has {skipped} skipped chunk marker(s).",
             ))
         coverage = payload.get("coverage", {})
         ratio = coverage.get("coverage_ratio")
         if isinstance(ratio, (int, float)) and ratio < 0.98:
             issues.append(DoctorIssue(
                 "warning",
-                f"chapter {number} has low sync coverage ratio {ratio}.",
+                f"section {number} has low sync coverage ratio {ratio}.",
             ))
 
 
@@ -265,7 +265,7 @@ def format_doctor_report(report: DoctorReport) -> str:
             f"direction={report.counts.get('voice_direction', 0)}, "
             f"m4a={report.counts.get('m4a', 0)}, "
             f"sync={report.counts.get('sync', 0)}, "
-            f"chapter_data={report.counts.get('chapter_data', 0)}, "
+            f"section_data={report.counts.get('section_data', 0)}, "
             f"rendition_manifest={report.counts.get('rendition_manifest', 0)}"
         ),
     ]

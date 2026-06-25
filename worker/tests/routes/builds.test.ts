@@ -26,17 +26,22 @@ const BOOK_MANIFEST = {
 
 function renditionManifest(build: string, totalDuration: number, pipelineVersion: string) {
 	return {
+		version: 2,
 		build,
 		rendition: RENDITION,
 		voice: "af_heart",
 		engine: "kokoro",
 		pipeline_version: pipelineVersion,
 		total_duration_seconds: totalDuration,
-		chapters: [
+		section_count: 1,
+		sections: [
 			{
-				number: 1,
-				title: "Chapter 1",
-				filename: "chapter-01.m4a",
+				sequence: 1,
+				section_type: "chapter",
+				ordinal: 1,
+				display_label: "I",
+				display_title: "The Arrest",
+				filename: "section-01.m4a",
 				duration_seconds: totalDuration,
 				word_count: 5200,
 			},
@@ -52,7 +57,7 @@ beforeAll(async () => {
 	);
 	await env.R2_BUCKET.put(
 		`books/${AUTHOR}/${TITLE}/audio/${RENDITION}/builds/${OLD_BUILD}/rendition-manifest.json`,
-		JSON.stringify(renditionManifest(OLD_BUILD, 2875, "1")),
+		JSON.stringify(renditionManifest(OLD_BUILD, 2875, "2")),
 	);
 
 	await env.R2_BUCKET.put(
@@ -86,8 +91,8 @@ describe("GET /api/v1/books/:author/:title/builds", () => {
 						pipeline_version: string;
 						uploaded_at: string;
 						total_duration_seconds: number;
-						chapter_count: number;
-						chapters: unknown[];
+						section_count: number;
+						sections: unknown[];
 					}[];
 				}
 			>;
@@ -103,16 +108,16 @@ describe("GET /api/v1/books/:author/:title/builds", () => {
 			is_current: true,
 			pipeline_version: "2",
 			total_duration_seconds: 2880,
-			chapter_count: 1,
+			section_count: 1,
 		});
 		expect(rendition.builds[1]).toMatchObject({
 			build: OLD_BUILD,
 			is_current: false,
-			pipeline_version: "1",
+			pipeline_version: "2",
 			total_duration_seconds: 2875,
-			chapter_count: 1,
+			section_count: 1,
 		});
-		expect(rendition.builds[0].chapters).toHaveLength(1);
+		expect(rendition.builds[0].sections).toHaveLength(1);
 		expect(rendition.builds[0].uploaded_at).toMatch(
 			/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
 		);

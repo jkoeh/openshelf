@@ -10,7 +10,7 @@ from unittest.mock import patch, MagicMock, call
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 from openshelf.pipeline.epub_annotator import annotate_epub
-from openshelf.pipeline.epub_parser import Chapter, ContentElement
+from openshelf.pipeline.epub_parser import ContentElement, Section, SectionHeading
 
 
 # --- Test helpers ---
@@ -19,12 +19,23 @@ def _make_content_element(id: str, tag: str = "p", text: str = "hello", spoken: 
     return ContentElement(id=id, tag=tag, html=f"<{tag}>{text}</{tag}>", text=text, spoken=spoken)
 
 
-def _make_chapter(number: int, item_name: str, elements: list[ContentElement]) -> Chapter:
-    paragraphs = [el.text for el in elements if el.spoken]
-    return Chapter(
-        number=number,
-        title="Test",
+def _make_chapter(number: int, item_name: str, elements: list[ContentElement]) -> Section:
+    heading_ids = [el.id for el in elements if el.tag.startswith("h")]
+    body_elements = [
+        el for el in elements if el.spoken and el.id not in set(heading_ids)
+    ]
+    paragraphs = [el.text for el in body_elements]
+    return Section(
+        sequence=number,
+        section_type="chapter",
+        ordinal=number,
+        heading=SectionHeading(
+            display_label=str(number),
+            spoken_text=f"Chapter {number}.",
+            element_ids=heading_ids,
+        ),
         elements=elements,
+        body_elements=body_elements,
         paragraphs=paragraphs,
         text="\n\n".join(paragraphs),
         word_count=len(" ".join(paragraphs).split()),
@@ -60,7 +71,7 @@ class TestAnnotateEpubReturnType(unittest.TestCase):
         mock_write.side_effect = write_side_effect
 
         chapter = _make_chapter(1, "ch01.xhtml", [
-            _make_content_element("ch1-el0000", "p", "Hello world."),
+            _make_content_element("sec1-el0000", "p", "Hello world."),
         ])
         result = annotate_epub("fake.epub", [chapter])
         self.assertIsInstance(result, bytes)
@@ -77,13 +88,13 @@ class TestAnnotateEpubIdInjection(unittest.TestCase):
         mock_write.side_effect = lambda buf, book: buf.write(b"")
 
         chapter = _make_chapter(1, "ch01.xhtml", [
-            _make_content_element("ch1-el0000", "p", "Hello world."),
+            _make_content_element("sec1-el0000", "p", "Hello world."),
         ])
         annotate_epub("fake.epub", [chapter])
 
         item.set_content.assert_called_once()
         injected_html = item.set_content.call_args[0][0].decode("utf-8")
-        self.assertIn('id="ch1-el0000"', injected_html)
+        self.assertIn('id="sec1-el0000"', injected_html)
 
     @patch("openshelf.pipeline.epub_annotator.epub.write_epub")
     @patch("openshelf.pipeline.epub_annotator.epub.read_epub")
@@ -95,14 +106,14 @@ class TestAnnotateEpubIdInjection(unittest.TestCase):
         mock_write.side_effect = lambda buf, book: buf.write(b"")
 
         chapter = _make_chapter(1, "ch01.xhtml", [
-            _make_content_element("ch1-el0000", "h2", "Chapter One"),
-            _make_content_element("ch1-el0001", "p", words),
+            _make_content_element("sec1-el0000", "h2", "Chapter One"),
+            _make_content_element("sec1-el0001", "p", words),
         ])
         annotate_epub("fake.epub", [chapter])
 
         injected_html = item.set_content.call_args[0][0].decode("utf-8")
-        self.assertIn('id="ch1-el0000"', injected_html)
-        self.assertIn('id="ch1-el0001"', injected_html)
+        self.assertIn('id="sec1-el0000"', injected_html)
+        self.assertIn('id="sec1-el0001"', injected_html)
 
     @patch("openshelf.pipeline.epub_annotator.epub.write_epub")
     @patch("openshelf.pipeline.epub_annotator.epub.read_epub")
@@ -113,16 +124,16 @@ class TestAnnotateEpubIdInjection(unittest.TestCase):
         mock_write.side_effect = lambda buf, book: buf.write(b"")
 
         chapter = _make_chapter(1, "ch01.xhtml", [
-            _make_content_element("ch1-el0000", "p", "Para one."),
-            _make_content_element("ch1-el0001", "p", "Para two."),
-            _make_content_element("ch1-el0002", "p", "Para three."),
+            _make_content_element("sec1-el0000", "p", "Para one."),
+            _make_content_element("sec1-el0001", "p", "Para two."),
+            _make_content_element("sec1-el0002", "p", "Para three."),
         ])
         annotate_epub("fake.epub", [chapter])
 
         injected = item.set_content.call_args[0][0].decode("utf-8")
-        self.assertIn('id="ch1-el0000"', injected)
-        self.assertIn('id="ch1-el0001"', injected)
-        self.assertIn('id="ch1-el0002"', injected)
+        self.assertIn('id="sec1-el0000"', injected)
+        self.assertIn('id="sec1-el0001"', injected)
+        self.assertIn('id="sec1-el0002"', injected)
 
     @patch("openshelf.pipeline.epub_annotator.epub.write_epub")
     @patch("openshelf.pipeline.epub_annotator.epub.read_epub")
@@ -137,15 +148,15 @@ class TestAnnotateEpubIdInjection(unittest.TestCase):
         mock_write.side_effect = lambda buf, book: buf.write(b"")
 
         chapter = _make_chapter(1, "ch01.xhtml", [
-            _make_content_element("ch1-el0000", "p", "Stanza one."),
-            _make_content_element("ch1-el0001", "p", "Stanza two."),
+            _make_content_element("sec1-el0000", "p", "Stanza one."),
+            _make_content_element("sec1-el0001", "p", "Stanza two."),
         ])
         annotate_epub("fake.epub", [chapter])
 
         injected = item.set_content.call_args[0][0].decode("utf-8")
         self.assertIn('<blockquote>', injected)
-        self.assertIn('<p id="ch1-el0000">Stanza one.</p>', injected)
-        self.assertIn('<p id="ch1-el0001">Stanza two.</p>', injected)
+        self.assertIn('<p id="sec1-el0000">Stanza one.</p>', injected)
+        self.assertIn('<p id="sec1-el0001">Stanza two.</p>', injected)
         self.assertNotIn('<blockquote id=', injected)
 
 
@@ -161,7 +172,7 @@ class TestAnnotateEpubSkippedItems(unittest.TestCase):
         mock_write.side_effect = lambda buf, book: buf.write(b"")
 
         chapter = _make_chapter(1, "ch01.xhtml", [
-            _make_content_element("ch1-el0000", "p", "Hello world."),
+            _make_content_element("sec1-el0000", "p", "Hello world."),
         ])
         annotate_epub("fake.epub", [chapter])
 
@@ -180,8 +191,8 @@ class TestAnnotateEpubSkippedItems(unittest.TestCase):
         mock_write.side_effect = lambda buf, book: buf.write(b"")
 
         chapters = [
-            _make_chapter(1, "ch01.xhtml", [_make_content_element("ch1-el0000", "p", words_a)]),
-            _make_chapter(2, "ch02.xhtml", [_make_content_element("ch2-el0000", "p", words_b)]),
+            _make_chapter(1, "ch01.xhtml", [_make_content_element("sec1-el0000", "p", words_a)]),
+            _make_chapter(2, "ch02.xhtml", [_make_content_element("sec2-el0000", "p", words_b)]),
         ]
         annotate_epub("fake.epub", chapters)
 
@@ -190,8 +201,8 @@ class TestAnnotateEpubSkippedItems(unittest.TestCase):
 
         html_a = item_a.set_content.call_args[0][0].decode("utf-8")
         html_b = item_b.set_content.call_args[0][0].decode("utf-8")
-        self.assertIn('id="ch1-el0000"', html_a)
-        self.assertIn('id="ch2-el0000"', html_b)
+        self.assertIn('id="sec1-el0000"', html_a)
+        self.assertIn('id="sec2-el0000"', html_b)
 
 
 if __name__ == "__main__":

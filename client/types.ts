@@ -7,7 +7,7 @@ export interface CatalogBook {
   rendition: string;
   current_build: string;
   total_duration_seconds: number;
-  chapter_count: number;
+  section_count: number;
   has_cover?: boolean;
 }
 
@@ -20,9 +20,32 @@ export interface CatalogResponse {
   limit: number;
 }
 
-export interface ManifestChapter {
-  number: number;
-  title: string;
+export type SectionType =
+  | "opening_credits"
+  | "chapter"
+  | "prologue"
+  | "epilogue"
+  | "epigraph"
+  | "preface"
+  | "introduction"
+  | "afterword"
+  | "appendix"
+  | "part"
+  | "closing_credits"
+  | "other";
+
+export interface SectionHeading {
+  display_label: string;
+  display_title: string;
+  spoken_text: string;
+}
+
+export interface ManifestSection {
+  sequence: number;
+  section_type: SectionType;
+  ordinal: number | null;
+  display_label: string;
+  display_title: string;
   filename: string;
   duration_seconds: number;
   word_count: number;
@@ -42,7 +65,7 @@ export interface ManifestRendition {
   current_build: string;
   available_builds: string[];
   total_duration_seconds: number;
-  chapters: ManifestChapter[];
+  sections: ManifestSection[];
 }
 
 export interface BookBuildsResponse {
@@ -69,13 +92,15 @@ export interface BookBuildOption {
   is_current: boolean;
   uploaded_at: string;
   total_duration_seconds: number;
-  chapter_count: number;
-  chapters: ManifestChapter[];
+  section_count: number;
+  sections: ManifestSection[];
 }
 
-export interface ChapterResponse {
-  number: number;
-  title: string;
+export interface SectionResponse {
+  sequence: number;
+  section_type: SectionType;
+  ordinal: number | null;
+  heading: SectionHeading;
   chunks: string[];
   word_count: number;
   words?: WordEntry[];
@@ -85,6 +110,7 @@ export interface WordEntry {
   word: string;
   start: number;
   end: number;
-  chunk_idx: number;
+  region: "heading" | "body";
+  chunk_idx: number | null;
   element_id?: string;
 }

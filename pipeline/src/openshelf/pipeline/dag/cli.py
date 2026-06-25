@@ -23,14 +23,14 @@ from openshelf.pipeline.epub_parser import (
 )
 from openshelf.pipeline.text_chunker import (
     chunk_text,
-    read_chapter_chunks_artifact,
-    write_chapter_chunks_artifact,
+    read_section_chunks_artifact,
+    write_section_chunks_artifact,
 )
 
 
-CHAPTER_DATA_VERSION = 1
-_CHUNKS_RE = re.compile(r"chapter-(\d+)\.chunks\.json$")
-_SYNC_RE = re.compile(r"chapter-(\d+)\.sync\.json$")
+SECTION_DATA_VERSION = 2
+_CHUNKS_RE = re.compile(r"section-(\d+)\.chunks\.json$")
+_SYNC_RE = re.compile(r"section-(\d+)\.sync\.json$")
 _REGISTRY_OPENING_CHARS = 12000
 _PERFORMANCE_DIRECTION_CHOICES = ("batched", "chunk", "off")
 logger = logging.getLogger("openshelf.pipeline.dag.cli")
@@ -67,6 +67,31 @@ def _display_name_for_voice(voice: str) -> str:
     return voice.title()
 
 
+def _credit_headings(title: str, author: str, voice_display: str) -> tuple[dict, dict]:
+    opening = (
+        f"{title}. Written by {author}. Narrated by OpenShelf "
+        f"using the {voice_display} voice."
+    )
+    closing = (
+        f"The end of {title}, written by {author}, narrated by OpenShelf "
+        f"using the {voice_display} voice."
+    )
+    return (
+        {
+            "display_label": "Opening Credits",
+            "display_title": "",
+            "spoken_text": opening,
+            "element_ids": [],
+        },
+        {
+            "display_label": "Closing Credits",
+            "display_title": "",
+            "spoken_text": closing,
+            "element_ids": [],
+        },
+    )
+
+
 def _voice_id_for_manifest(voice) -> str:
     return voice.preset_name or voice.id
 
@@ -80,19 +105,19 @@ def _derive_rendition(engine_name: str, voice) -> str:
 
 
 def _chapter_direction_path(build_dir: str, chapter_number: int) -> str:
-    return os.path.join(build_dir, f"chapter-{chapter_number:02d}.voice_direction.json")
+    return os.path.join(build_dir, f"section-{chapter_number:02d}.voice_direction.json")
 
 
 def _chapter_chunks_path(build_dir: str, chapter_number: int) -> str:
-    return os.path.join(build_dir, f"chapter-{chapter_number:02d}.chunks.json")
+    return os.path.join(build_dir, f"section-{chapter_number:02d}.chunks.json")
 
 
 def _chapter_sync_path(build_dir: str, chapter_number: int) -> str:
-    return os.path.join(build_dir, f"chapter-{chapter_number:02d}.sync.json")
+    return os.path.join(build_dir, f"section-{chapter_number:02d}.sync.json")
 
 
 def _chapter_synthesis_units_path(build_dir: str, chapter_number: int) -> str:
-    return os.path.join(build_dir, f"chapter-{chapter_number:02d}.synthesis_units.json")
+    return os.path.join(build_dir, f"section-{chapter_number:02d}.synthesis_units.json")
 
 
 def _direction_speed_summary(chapter_payload: dict) -> dict:
@@ -133,11 +158,11 @@ def _chapter_direction_payload_matches(
         return False
     if payload.get("cast_mode") != cast_mode:
         return False
-    chapters = payload.get("chapters", [])
+    chapters = payload.get("sections", [])
     if len(chapters) != 1:
         return False
     chapter = chapters[0]
-    if int(chapter.get("number", -1)) != chapter_number:
+    if int(chapter.get("sequence", -1)) != chapter_number:
         return False
     chunks = chapter.get("chunks", [])
     if len(chunks) != len(chunk_texts):
@@ -167,7 +192,7 @@ def _remap_direction_payload_for_build(
     remapped["cast_mode"] = cast_mode
 
     voice = _narrator_voice_dict(narrator_voice)
-    for chapter in remapped.get("chapters", []):
+    for chapter in remapped.get("sections", []):
         for chunk in chapter.get("chunks", []):
             for segment in chunk.get("segments", []):
                 if (
@@ -195,7 +220,7 @@ def _find_cached_chapter_direction(
         "*",
         "builds",
         "*",
-        f"chapter-{chapter_number:02d}.voice_direction.json",
+        f"section-{chapter_number:02d}.voice_direction.json",
     )
     candidates = sorted(
         glob.glob(pattern),
@@ -368,7 +393,7 @@ def _sync_path_for_chunks_path(chunks_path: str) -> str:
 def _chapter_number_from_sync_path(path: str) -> int:
     match = _SYNC_RE.search(os.path.basename(path))
     if not match:
-        raise ValueError(f"not a chapter sync artifact: {path}")
+        raise ValueError(f"not a section sync artifact: {path}")
     return int(match.group(1))
 
 
@@ -379,17 +404,17 @@ def _coverage_ratio(aligned_word_count: int, reader_word_count: int) -> float:
 
 
 def collect_coverage(build_dir: str) -> dict:
-    """Aggregate per-chapter coverage from chapter-NN.sync.json into a book report.
+    """Aggregate per-section coverage from section-NN.sync.json.
 
-    Diagnostic only: this reads the `coverage` block already recorded in each sync
-    artifact and rolls it up. It does not judge whether coverage is acceptable.
+    Diagnostic only: this reads the coverage block already recorded in each
+    sync artifact and rolls it up without judging acceptability.
     """
     sync_paths = sorted(
-        glob.glob(os.path.join(build_dir, "chapter-*.sync.json")),
+        glob.glob(os.path.join(build_dir, "section-*.sync.json")),
         key=_chapter_number_from_sync_path,
     )
     if not sync_paths:
-        raise FileNotFoundError(f"no chapter sync artifacts found in {build_dir}")
+        raise FileNotFoundError(f"no section sync artifacts found in {build_dir}")
 
     chapters: list[dict] = []
     total_reader_words = 0
@@ -398,7 +423,7 @@ def collect_coverage(build_dir: str) -> dict:
 
     for sync_path in sync_paths:
         sync_payload = _read_json(sync_path)
-        number = sync_payload["number"]
+        number = sync_payload["sequence"]
         coverage = sync_payload.get("coverage", {})
         reader_words = coverage.get("reader_word_count", 0)
         aligned_words = coverage.get("aligned_word_count", 0)
@@ -425,7 +450,7 @@ def collect_coverage(build_dir: str) -> dict:
         "aligned_word_count": total_aligned_words,
         "coverage_ratio": _coverage_ratio(total_aligned_words, total_reader_words),
         "first_missing_word_offset": first_missing_word_offset,
-        "chapters": chapters,
+        "sections": chapters,
     }
 
 
@@ -439,48 +464,48 @@ def _format_coverage_report(report: dict) -> str:
         lines.append(
             f"  First missing word offset: {report['first_missing_word_offset']}"
         )
-    for chapter in report["chapters"]:
+    for chapter in report["sections"]:
         missing = chapter["first_missing_word_offset"]
         missing_label = "" if missing is None else f"  first missing @ {missing}"
         lines.append(
-            f"  Chapter {chapter['number']:>2}: "
+            f"  Section {chapter['number']:>2}: "
             f"{chapter['aligned_word_count']}/{chapter['reader_word_count']} "
             f"(ratio {chapter['coverage_ratio']}){missing_label}"
         )
     return "\n".join(lines)
 
 
-def build_chapter_data_payload(
+def build_section_data_payload(
     build_dir: str,
     rendition: str,
     build_id: str,
     selected_chapters: set[int] | None = None,
 ) -> dict:
-    """Assemble the public chapter_data.json payload from chunk + sync artifacts.
+    """Assemble the public section_data.json payload from chunk + sync artifacts.
 
     Shared by the `assemble` DAG command and the full DAG runner.
     ``selected_chapters`` restricts assembly to a subset (e.g. a local
     --chapters sample run); None assembles every chapter present.
     """
     chunks_paths = sorted(
-        glob.glob(os.path.join(build_dir, "chapter-*.chunks.json")),
+        glob.glob(os.path.join(build_dir, "section-*.chunks.json")),
         key=_chapter_number_from_chunks_path,
     )
     if not chunks_paths:
         raise FileNotFoundError(f"no chapter chunks artifacts found in {build_dir}")
 
     payload: dict = {
-        "version": CHAPTER_DATA_VERSION,
+        "version": SECTION_DATA_VERSION,
         "rendition": rendition,
         "build": build_id,
-        "chapters": [],
+        "sections": [],
     }
 
     for chunks_path in chunks_paths:
         number = _chapter_number_from_chunks_path(chunks_path)
         if selected_chapters is not None and number not in selected_chapters:
             continue
-        chunk_payload = read_chapter_chunks_artifact(chunks_path)
+        chunk_payload = read_section_chunks_artifact(chunks_path)
         sync_path = _sync_path_for_chunks_path(chunks_path)
         if not os.path.exists(sync_path):
             raise FileNotFoundError(f"missing sync artifact for {chunks_path}: {sync_path}")
@@ -491,9 +516,17 @@ def build_chapter_data_payload(
         }
         chunks = chunk_payload.get("chunks", [])
         entry = {
-            "number": chunk_payload["number"],
-            "title": chunk_payload["title"],
-            "word_count": sum(len(chunk["text"].split()) for chunk in chunks),
+            "sequence": chunk_payload["sequence"],
+            "section_type": chunk_payload["section_type"],
+            "ordinal": chunk_payload.get("ordinal"),
+            "heading": {
+                **chunk_payload["heading"],
+                "words": sync_payload.get("heading_words", []),
+            },
+            "word_count": (
+                len(chunk_payload["heading"].get("spoken_text", "").split())
+                + sum(len(chunk["text"].split()) for chunk in chunks)
+            ),
             "chunks": [],
         }
         for chunk in chunks:
@@ -502,12 +535,12 @@ def build_chapter_data_payload(
                 "text": chunk["text"],
                 "words": sync_chunks.get(index, []),
             })
-        payload["chapters"].append(entry)
+        payload["sections"].append(entry)
 
     return payload
 
 
-def assemble_chapter_data(
+def assemble_section_data(
     build_dir: str,
     rendition: str,
     build_id: str,
@@ -515,10 +548,10 @@ def assemble_chapter_data(
     selected_chapters: set[int] | None = None,
     force: bool = False,
 ) -> str:
-    payload = build_chapter_data_payload(
+    payload = build_section_data_payload(
         build_dir, rendition, build_id, selected_chapters=selected_chapters
     )
-    destination = output_path or os.path.join(build_dir, "chapter_data.json")
+    destination = output_path or os.path.join(build_dir, "section_data.json")
     return _write_json_idempotent(destination, payload, force=force)
 
 
@@ -553,12 +586,12 @@ def parse_book(
     force: bool = False,
 ) -> str:
     """Parse an EPUB into the durable ``book_parse.json`` artifact."""
-    chapters = parse_epub(epub_path)
-    if not chapters:
-        raise ValueError(f"no chapters found in EPUB: {epub_path}")
+    sections = parse_epub(epub_path)
+    if not sections:
+        raise ValueError(f"no audiobook sections found in EPUB: {epub_path}")
     metadata = read_book_metadata(epub_path)
     metadata["source"] = source
-    payload = build_book_parse_artifact(chapters, epub_sha256(epub_path), metadata)
+    payload = build_book_parse_artifact(sections, epub_sha256(epub_path), metadata)
     return write_book_parse_artifact(output_path, payload, force=force)
 
 
@@ -568,27 +601,66 @@ def chunk_chapters(
     selected_chapters: set[int] | None = None,
     force: bool = False,
 ) -> list[str]:
-    """Write ``chapter-NN.chunks.json`` for each selected chapter in book_parse."""
+    """Write ``section-NN.chunks.json`` for selected parsed sections."""
     book_parse = read_book_parse_artifact(book_parse_path)
+    rendition, _build_id = _rendition_build_from_build_dir(build_dir)
+    voice_token = rendition.split("-", 1)[1] if "-" in rendition else rendition
+    voice_display = _display_name_for_voice(voice_token.replace("-", "_"))
+    metadata = book_parse.get("metadata", {})
+    opening_heading, closing_heading = _credit_headings(
+        metadata.get("title", ""),
+        metadata.get("author", ""),
+        voice_display,
+    )
+    artifact_sections = [{
+        "sequence": 1,
+        "section_type": "opening_credits",
+        "ordinal": None,
+        "heading": opening_heading,
+        "elements": [],
+    }]
+    artifact_sections.extend(
+        {**section, "sequence": int(section["sequence"]) + 1}
+        for section in book_parse.get("sections", [])
+    )
+    artifact_sections.append({
+        "sequence": len(artifact_sections) + 1,
+        "section_type": "closing_credits",
+        "ordinal": None,
+        "heading": closing_heading,
+        "elements": [],
+    })
     written: list[str] = []
-    for chapter in book_parse.get("chapters", []):
-        number = chapter["number"]
+    for section in artifact_sections:
+        number = section["sequence"]
         if selected_chapters is not None and number not in selected_chapters:
             continue
-        elements = chapter.get("elements", [])
-        paragraphs = [el["text"] for el in elements if el["spoken"]]
-        element_ids = [el["id"] for el in elements if el["spoken"]]
+        elements = section.get("elements", [])
+        heading_ids = set(section.get("heading", {}).get("element_ids", []))
+        body_elements = [
+            element
+            for element in elements
+            if element["spoken"] and element["id"] not in heading_ids
+        ]
+        paragraphs = [element["text"] for element in body_elements]
+        element_ids = [element["id"] for element in body_elements]
         chunks = chunk_text(paragraphs, element_ids=element_ids)
-        path = os.path.join(build_dir, f"chapter-{number:02d}.chunks.json")
-        write_chapter_chunks_artifact(
-            path, number, chapter["title"], chunks, force=force
+        path = os.path.join(build_dir, f"section-{number:02d}.chunks.json")
+        write_section_chunks_artifact(
+            path,
+            number,
+            section["section_type"],
+            section.get("ordinal"),
+            section["heading"],
+            chunks,
+            force=force,
         )
         written.append(path)
     if selected_chapters is not None:
         found = {
-            ch["number"]
-            for ch in book_parse.get("chapters", [])
-            if ch["number"] in selected_chapters
+            section["sequence"]
+            for section in artifact_sections
+            if section["sequence"] in selected_chapters
         }
         missing = sorted(selected_chapters - found)
         if missing:
@@ -610,11 +682,16 @@ def _rendition_build_from_build_dir(build_dir: str) -> tuple[str, str]:
 def _book_parse_opening_text(book_parse: dict, max_chars: int = _REGISTRY_OPENING_CHARS) -> str:
     parts: list[str] = []
     total = 0
-    for chapter in book_parse.get("chapters", []):
+    for chapter in book_parse.get("sections", []):
+        heading_ids = set(chapter.get("heading", {}).get("element_ids", []))
         paragraphs = [
             element.get("text", "")
             for element in chapter.get("elements", [])
-            if element.get("spoken") and element.get("text")
+            if (
+                element.get("spoken")
+                and element.get("text")
+                and element.get("id") not in heading_ids
+            )
         ]
         if not paragraphs:
             continue
@@ -712,17 +789,18 @@ def direct_chapter(
         choices = ", ".join(_PERFORMANCE_DIRECTION_CHOICES)
         raise ValueError(f"performance direction must be one of: {choices}")
 
-    chunks_path = os.path.join(build_dir, f"chapter-{chapter_number:02d}.chunks.json")
+    chunks_path = os.path.join(build_dir, f"section-{chapter_number:02d}.chunks.json")
     registry_path = os.path.join(build_dir, "character_registry.json")
     direction_path = os.path.join(
-        build_dir, f"chapter-{chapter_number:02d}.voice_direction.json"
+        build_dir, f"section-{chapter_number:02d}.voice_direction.json"
     )
     for required in (chunks_path, registry_path):
         if not os.path.exists(required):
             raise FileNotFoundError(f"missing required input for direct: {required}")
 
-    chunk_payload = read_chapter_chunks_artifact(chunks_path)
-    title = chunk_payload["title"]
+    chunk_payload = read_section_chunks_artifact(chunks_path)
+    heading = chunk_payload["heading"]
+    title = heading.get("display_title") or heading.get("display_label") or ""
     chunks = chunk_payload.get("chunks", [])
     chunk_texts = [chunk["text"] for chunk in chunks]
 
@@ -751,7 +829,7 @@ def direct_chapter(
 
     registry, directed_chunks = director.direct_chapter(title, windows, registry)
     chapter = build_direction_chapter(
-        chunk_payload["number"],
+        chunk_payload["sequence"],
         title,
         chunk_texts,
         directed_chunks,
@@ -794,15 +872,16 @@ def synth_chapter(
     from openshelf.pipeline.tts import build_chunk_infos, synthesize_chapter_to_files
     from openshelf.pipeline.voice_director import (
         directed_chunks_from_chapter_direction_artifact,
+        voice_spec_from_dict,
     )
 
-    chunks_path = os.path.join(build_dir, f"chapter-{chapter_number:02d}.chunks.json")
+    chunks_path = os.path.join(build_dir, f"section-{chapter_number:02d}.chunks.json")
     direction_path = os.path.join(
-        build_dir, f"chapter-{chapter_number:02d}.voice_direction.json"
+        build_dir, f"section-{chapter_number:02d}.voice_direction.json"
     )
-    m4a_path = os.path.join(build_dir, f"chapter-{chapter_number:02d}.m4a")
-    wav_path = os.path.join(build_dir, f"chapter-{chapter_number:02d}.wav")
-    sync_path = os.path.join(build_dir, f"chapter-{chapter_number:02d}.sync.json")
+    m4a_path = os.path.join(build_dir, f"section-{chapter_number:02d}.m4a")
+    wav_path = os.path.join(build_dir, f"section-{chapter_number:02d}.wav")
+    sync_path = os.path.join(build_dir, f"section-{chapter_number:02d}.sync.json")
     synthesis_units_path = _chapter_synthesis_units_path(build_dir, chapter_number)
 
     for required in (chunks_path, direction_path):
@@ -817,7 +896,7 @@ def synth_chapter(
     ):
         return sync_path
 
-    chunk_payload = read_chapter_chunks_artifact(chunks_path)
+    chunk_payload = read_section_chunks_artifact(chunks_path)
     chunks = chunk_payload.get("chunks", [])
     directed_chunks = directed_chunks_from_chapter_direction_artifact(direction_path)
 
@@ -828,11 +907,12 @@ def synth_chapter(
     ]
     chunk_infos = build_chunk_infos(chunk_texts, ends_paragraph, directed_chunks)
 
-    if voice is None:
-        registry_path = os.path.join(build_dir, "character_registry.json")
-        if os.path.exists(registry_path):
-            narrator = _read_json(registry_path).get("narrator_voice", {})
-            voice = narrator.get("preset_name") or narrator.get("id")
+    registry_narrator_voice = None
+    registry_path = os.path.join(build_dir, "character_registry.json")
+    if os.path.exists(registry_path):
+        narrator = _read_json(registry_path).get("narrator_voice")
+        if narrator:
+            registry_narrator_voice = voice_spec_from_dict(narrator)
 
     if engine is None:
         from openshelf.config import TTS_ENGINE
@@ -846,6 +926,17 @@ def synth_chapter(
         if aligner is None:
             aligner = create_aligner(engine, device=device)
 
+    narrator_voice = (
+        _voice_spec_for_override(engine, voice)
+        if voice is not None
+        else registry_narrator_voice
+    )
+    if narrator_voice is None and getattr(engine, "name", "") != "kokoro":
+        raise FileNotFoundError(
+            "reference-voice synthesis requires character_registry.json with "
+            "a complete narrator_voice VoiceSpec"
+        )
+
     synthesize_chapter_to_files(
         engine,
         chunk_infos,
@@ -855,10 +946,11 @@ def synth_chapter(
         synthesis_units_path,
         chapter_number,
         chunk_texts,
-        voice=voice,
+        narrator_voice=narrator_voice,
         aligner=aligner,
         keep_wav=keep_wav,
         force=force,
+        heading_text=chunk_payload["heading"].get("spoken_text", ""),
     )
     return sync_path
 
@@ -880,22 +972,22 @@ def sync_chapter(
     from openshelf.pipeline.tts_engine import WordTimestamp
     from openshelf.pipeline.word_aligner import (
         align_chapter,
-        read_chapter_sync_artifact,
-        write_chapter_sync_artifact,
+        read_section_sync_artifact,
+        write_section_sync_artifact,
     )
 
-    chunks_path = os.path.join(build_dir, f"chapter-{chapter_number:02d}.chunks.json")
-    sync_path = os.path.join(build_dir, f"chapter-{chapter_number:02d}.sync.json")
-    m4a_path = os.path.join(build_dir, f"chapter-{chapter_number:02d}.m4a")
+    chunks_path = os.path.join(build_dir, f"section-{chapter_number:02d}.chunks.json")
+    sync_path = os.path.join(build_dir, f"section-{chapter_number:02d}.sync.json")
+    m4a_path = os.path.join(build_dir, f"section-{chapter_number:02d}.m4a")
 
     for required in (chunks_path, sync_path, m4a_path):
         if not os.path.exists(required):
             raise FileNotFoundError(f"missing required input for sync: {required}")
 
-    chunk_payload = read_chapter_chunks_artifact(chunks_path)
+    chunk_payload = read_section_chunks_artifact(chunks_path)
     chunk_texts = [chunk["text"] for chunk in chunk_payload.get("chunks", [])]
 
-    prior_sync = read_chapter_sync_artifact(sync_path)
+    prior_sync = read_section_sync_artifact(sync_path)
     chunk_audio_starts = prior_sync["chunk_audio_starts"]
 
     word_entries = align_chapter(
@@ -909,13 +1001,16 @@ def sync_chapter(
                 WordTimestamp(word=entry.word, start=entry.start, end=entry.end)
             )
 
-    return write_chapter_sync_artifact(
+    return write_section_sync_artifact(
         sync_path,
         chapter_number,
         os.path.basename(m4a_path),
         chunk_audio_starts,
         chunk_words,
         chunk_texts=chunk_texts,
+        heading_words=[
+            WordTimestamp(**word) for word in prior_sync.get("heading_words", [])
+        ],
         force=force,
     )
 
@@ -932,12 +1027,12 @@ def _refresh_repaired_rendition_manifest(
     from openshelf.pipeline.encoder import audio_duration
 
     payload = _read_json(manifest_path)
-    chapters = payload.get("chapters", [])
+    sections = payload.get("sections", [])
     duration_seconds = audio_duration(m4a_path)
     updated = False
-    for chapter in chapters:
-        if int(chapter.get("number", -1)) == chapter_number:
-            chapter["duration_seconds"] = duration_seconds
+    for section in sections:
+        if int(section.get("sequence", -1)) == chapter_number:
+            section["duration_seconds"] = duration_seconds
             updated = True
             break
     if not updated:
@@ -949,24 +1044,24 @@ def _refresh_repaired_rendition_manifest(
         return None
 
     payload["total_duration_seconds"] = sum(
-        float(chapter.get("duration_seconds", 0.0) or 0.0)
-        for chapter in chapters
+        float(section.get("duration_seconds", 0.0) or 0.0)
+        for section in sections
     )
     _write_json(manifest_path, payload)
     return manifest_path
 
 
-def _refresh_repaired_chapter_data(build_dir: str) -> str | None:
-    chapter_data_path = os.path.join(build_dir, "chapter_data.json")
-    if not os.path.exists(chapter_data_path):
+def _refresh_repaired_section_data(build_dir: str) -> str | None:
+    section_data_path = os.path.join(build_dir, "section_data.json")
+    if not os.path.exists(section_data_path):
         return None
 
     rendition, build_id = _rendition_build_from_build_dir(build_dir)
-    return assemble_chapter_data(
+    return assemble_section_data(
         build_dir,
         rendition,
         build_id,
-        output_path=chapter_data_path,
+        output_path=section_data_path,
         force=True,
     )
 
@@ -985,13 +1080,13 @@ def repair_pauses_chapter(
     chunks_path = _chapter_chunks_path(build_dir, chapter_number)
     sync_path = _chapter_sync_path(build_dir, chapter_number)
     synthesis_units_path = _chapter_synthesis_units_path(build_dir, chapter_number)
-    m4a_path = os.path.join(build_dir, f"chapter-{chapter_number:02d}.m4a")
+    m4a_path = os.path.join(build_dir, f"section-{chapter_number:02d}.m4a")
 
     for required in (chunks_path, sync_path, synthesis_units_path, m4a_path):
         if not os.path.exists(required):
             raise FileNotFoundError(f"missing required input for pause repair: {required}")
 
-    chunk_payload = read_chapter_chunks_artifact(chunks_path)
+    chunk_payload = read_section_chunks_artifact(chunks_path)
     chunk_texts = [chunk["text"] for chunk in chunk_payload.get("chunks", [])]
     edits = repair_chapter_pause_files(
         m4a_path=m4a_path,
@@ -1000,10 +1095,10 @@ def repair_pauses_chapter(
         chunk_texts=chunk_texts,
         force=True,
     )
-    refreshed_chapter_data = None
+    refreshed_section_data = None
     refreshed_manifest = None
     if edits:
-        refreshed_chapter_data = _refresh_repaired_chapter_data(build_dir)
+        refreshed_section_data = _refresh_repaired_section_data(build_dir)
         refreshed_manifest = _refresh_repaired_rendition_manifest(
             build_dir,
             chapter_number,
@@ -1012,14 +1107,14 @@ def repair_pauses_chapter(
     logger.info(
         (
             "Chapter %d pause repair complete edits=%d m4a=%s sync=%s "
-            "synthesis_units=%s chapter_data=%s rendition_manifest=%s"
+            "synthesis_units=%s section_data=%s rendition_manifest=%s"
         ),
         chapter_number,
         len(edits),
         m4a_path,
         sync_path,
         synthesis_units_path,
-        refreshed_chapter_data or "",
+        refreshed_section_data or "",
         refreshed_manifest or "",
     )
     return sync_path
@@ -1052,14 +1147,14 @@ def upload_build(
     author_slug = os.path.basename(os.path.dirname(book_dir))
     build_dir = os.path.join(book_dir, "audio", rendition, "builds", build_id)
 
-    chapter_data_path = os.path.join(build_dir, "chapter_data.json")
+    section_data_path = os.path.join(build_dir, "section_data.json")
     rendition_manifest_path = os.path.join(build_dir, "rendition-manifest.json")
     character_registry_path = os.path.join(build_dir, "character_registry.json")
     voice_direction_path = os.path.join(build_dir, "voice_direction.json")
     run_context_path = os.path.join(build_dir, "run.json")
     book_manifest_path = os.path.join(book_dir, "manifest.json")
 
-    for required in (chapter_data_path, rendition_manifest_path, book_manifest_path):
+    for required in (section_data_path, rendition_manifest_path, book_manifest_path):
         if not os.path.exists(required):
             raise FileNotFoundError(f"missing required artifact for upload: {required}")
 
@@ -1083,7 +1178,7 @@ def upload_build(
     uploaded += r2.upload_rendition_build(
         client, bucket, author_slug, title_slug, rendition, build_id,
         audio_dir=build_dir,
-        chapter_data_path=chapter_data_path,
+        section_data_path=section_data_path,
         rendition_manifest_path=rendition_manifest_path,
         character_registry_path=character_registry_path,
         voice_direction_path=voice_direction_path,
@@ -1106,7 +1201,37 @@ def upload_build(
         available_builds=[build_id],
     )
     prior = r2.fetch_prior_book_manifest(client, bucket, author_slug, title_slug)
-    base = prior if prior else local_manifest
+    legacy_builds: dict[str, list[str]] = {}
+    if prior:
+        compatible = json.loads(json.dumps(prior))
+        compatible["renditions"] = {}
+        for prior_rendition, prior_entry in prior.get("renditions", {}).items():
+            retained: list[str] = []
+            for prior_build in dict.fromkeys(prior_entry.get("available_builds", [])):
+                manifest_key = r2.r2_keys.rendition_manifest_key(
+                    author_slug,
+                    title_slug,
+                    prior_rendition,
+                    prior_build,
+                )
+                try:
+                    obj = client.get_object(Bucket=bucket, Key=manifest_key)
+                    manifest_payload = json.loads(obj["Body"].read().decode("utf-8"))
+                except Exception:
+                    manifest_payload = {}
+                if manifest_payload.get("version") == 2:
+                    retained.append(prior_build)
+                else:
+                    legacy_builds.setdefault(prior_rendition, []).append(prior_build)
+            if retained:
+                compatible_entry = dict(prior_entry)
+                compatible_entry["available_builds"] = retained
+                if compatible_entry.get("current_build") not in retained:
+                    compatible_entry["current_build"] = retained[0]
+                compatible["renditions"][prior_rendition] = compatible_entry
+        base = compatible
+    else:
+        base = local_manifest
     merged = merge_book_manifest(base, rendition, new_entry)
     merged["title"] = local_manifest.get("title", "")
     merged["author"] = local_manifest.get("author", "")
@@ -1116,6 +1241,15 @@ def upload_build(
     uploaded.append(
         r2.upload_book_manifest(client, bucket, author_slug, title_slug, book_manifest_path)
     )
+    for legacy_rendition, build_ids in legacy_builds.items():
+        uploaded += r2.delete_build_prefixes(
+            client,
+            bucket,
+            author_slug,
+            title_slug,
+            legacy_rendition,
+            build_ids,
+        )
     return uploaded
 
 
@@ -1138,7 +1272,7 @@ def run_book(args) -> dict:
         configure_pipeline_logging,
     )
     from openshelf.pipeline.manifest import (
-        ChapterMeta,
+        SectionMeta,
         generate_book_manifest,
         generate_rendition_entry,
         generate_rendition_manifest,
@@ -1199,11 +1333,11 @@ def run_book(args) -> dict:
     with Heartbeat(logger, "Parsing EPUB"):
         chapters = parse_epub(epub_path)
     if not chapters:
-        raise ValueError(f"no chapters found in EPUB: {epub_path}")
+        raise ValueError(f"no audiobook sections found in EPUB: {epub_path}")
 
     total_words = sum(ch.word_count for ch in chapters)
-    print(f"Found {len(chapters)} chapters ({total_words:,} words)\n")
-    logger.info("Parsed %d chapters (%d words)", len(chapters), total_words)
+    print(f"Found {len(chapters)} source sections ({total_words:,} body words)\n")
+    logger.info("Parsed %d source sections (%d body words)", len(chapters), total_words)
 
     metadata = read_book_metadata(epub_path)
     book_title = metadata.get("title") or sanitize(os.path.splitext(os.path.basename(epub_path))[0])
@@ -1213,19 +1347,50 @@ def run_book(args) -> dict:
     book_author = metadata.get("author") or author_slug
     book_dir = os.path.join(args.output, author_slug, title_slug)
 
-    chunked_chapters = []
+    chunked_chapters = [{
+        "number": 1,
+        "section_type": "opening_credits",
+        "ordinal": None,
+        "heading": {
+            "display_label": "Opening Credits",
+            "display_title": "",
+            "spoken_text": "",
+            "element_ids": [],
+        },
+        "title": "Opening Credits",
+        "word_count": 0,
+        "chunks": [],
+    }]
     for ch in chapters:
-        spoken_ids = [el.id for el in ch.elements if el.spoken]
+        spoken_ids = [el.id for el in ch.body_elements]
         chunks = chunk_text(ch.paragraphs, element_ids=spoken_ids)
         chunked_chapters.append({
-            "number": ch.number,
+            "number": ch.number + 1,
+            "section_type": ch.section_type,
+            "ordinal": ch.ordinal,
+            "heading": asdict(ch.heading),
             "title": ch.title,
+            "word_count": ch.word_count,
             "chunks": chunks,
         })
         print(
-            f"  [{ch.number:>2}/{len(chapters)}] {ch.title} - "
+            f"  [{ch.number + 1:>2}/{len(chapters) + 2}] {ch.title} - "
             f"{ch.word_count:,} words, {len(chunks)} chunks"
         )
+    chunked_chapters.append({
+        "number": len(chapters) + 2,
+        "section_type": "closing_credits",
+        "ordinal": None,
+        "heading": {
+            "display_label": "Closing Credits",
+            "display_title": "",
+            "spoken_text": "",
+            "element_ids": [],
+        },
+        "title": "Closing Credits",
+        "word_count": 0,
+        "chunks": [],
+    })
 
     selected_chapters = _parse_chapter_filter(getattr(args, "chapters", None))
     generation_chapters = chunked_chapters
@@ -1242,11 +1407,11 @@ def run_book(args) -> dict:
                 + ", ".join(str(n) for n in missing)
             )
         selected_label = ", ".join(str(ch_data["number"]) for ch_data in generation_chapters)
-        print(f"\nChapter filter: generating {selected_label} of {len(chapters)} chapters")
+        print(f"\nSection filter: generating {selected_label} of {len(chunked_chapters)} sections")
         logger.info(
-            "Chapter filter active selected=%s total_chapters=%d",
+            "Section filter active selected=%s total_sections=%d",
             sorted(selected_chapters),
-            len(chapters),
+            len(chunked_chapters),
         )
 
     print(f"\nBook:        {book_author} - {book_title}")
@@ -1259,7 +1424,7 @@ def run_book(args) -> dict:
             "build_id": build_id,
             "book_dir": book_dir,
             "dry_run": True,
-            "chapters": [ch_data["number"] for ch_data in generation_chapters],
+            "sections": [ch_data["number"] for ch_data in generation_chapters],
         }
 
     logger.info("Creating TTS engine and LLM provider")
@@ -1310,6 +1475,19 @@ def run_book(args) -> dict:
         )
     narrator_voice = registry.narrator_voice
     narrator_voice_id = _voice_id_for_manifest(narrator_voice)
+    narrator_display = _display_name_for_voice(narrator_voice_id)
+    opening_credit = (
+        f"{book_title}. Written by {book_author}. Narrated by OpenShelf "
+        f"using the {narrator_display} voice."
+    )
+    closing_credit = (
+        f"The end of {book_title}, written by {book_author}, narrated by "
+        f"OpenShelf using the {narrator_display} voice."
+    )
+    chunked_chapters[0]["heading"]["spoken_text"] = opening_credit
+    chunked_chapters[0]["word_count"] = len(opening_credit.split())
+    chunked_chapters[-1]["heading"]["spoken_text"] = closing_credit
+    chunked_chapters[-1]["word_count"] = len(closing_credit.split())
     rendition = args.rendition or _derive_rendition(engine.name, narrator_voice)
     build_dir = os.path.join(book_dir, "audio", rendition, "builds", build_id)
 
@@ -1328,7 +1506,7 @@ def run_book(args) -> dict:
         cast_mode=args.cast_mode,
         performance_direction_mode=args.performance_direction,
         language=TTS_LANGUAGE,
-        chapters=selected_chapter_numbers,
+        sections=selected_chapter_numbers,
         new_voice_direction=getattr(args, "new_voice_direction", False),
     )
     run_context_path = build_run_context_path(build_dir)
@@ -1359,7 +1537,12 @@ def run_book(args) -> dict:
         build_book_parse_artifact(
             chapters,
             epub_sha256(epub_path),
-            {"title": book_title, "author": book_author, "source": args.source},
+            {
+                "title": book_title,
+                "author": book_author,
+                "source": args.source,
+                "language": metadata.get("language", "en"),
+            },
         ),
         force=True,
     )
@@ -1395,16 +1578,18 @@ def run_book(args) -> dict:
     os.makedirs(build_dir, exist_ok=True)
     for ch_data in chunked_chapters:
         chunks_path = _chapter_chunks_path(build_dir, ch_data["number"])
-        write_chapter_chunks_artifact(
+        write_section_chunks_artifact(
             chunks_path,
             ch_data["number"],
-            ch_data["title"],
+            ch_data["section_type"],
+            ch_data["ordinal"],
+            ch_data["heading"],
             ch_data["chunks"],
             force=getattr(args, "force", False),
         )
         ch_data["chunks_artifact_path"] = chunks_path
-    print(f"Chapter chunks: {build_dir}/chapter-NN.chunks.json")
-    logger.info("Chapter chunk artifacts written under: %s", build_dir)
+    print(f"Section chunks: {build_dir}/section-NN.chunks.json")
+    logger.info("Section chunk artifacts written under: %s", build_dir)
 
     character_registry_path = os.path.join(build_dir, "character_registry.json")
     _write_json(character_registry_path, registry.to_dict())
@@ -1440,20 +1625,35 @@ def run_book(args) -> dict:
         ch_title = ch_data["title"]
         chunks = ch_data["chunks"]
 
-        print(f"  [{ch_num:>2}/{len(chapters)}] {ch_title} ({len(chunks)} chunks)")
+        print(f"  [{ch_num:>2}/{len(chunked_chapters)}] {ch_title} ({len(chunks)} body chunks)")
         chunk_texts = [c.text for c in chunks]
         chapter_direction_path = _chapter_direction_path(build_dir, ch_num)
         direction_payload = None
         direction_source = None
 
-        if getattr(args, "new_voice_direction", False):
+        if not chunks:
+            direction_chapter = build_direction_chapter(
+                ch_num,
+                ch_title,
+                [],
+                [],
+            )
+            direction_payload = build_voice_direction_payload(
+                rendition,
+                build_id,
+                engine.name,
+                args.cast_mode,
+                [direction_chapter],
+            )
+            _write_json(chapter_direction_path, direction_payload)
+        elif getattr(args, "new_voice_direction", False):
             cache_message = (
                 "voice direction cache disabled by --new-voice-direction; "
                 "generating fresh direction"
             )
             print(f"    {cache_message}")
             logger.info("Chapter %d %s", ch_num, cache_message)
-        else:
+        elif chunks:
             cached = _load_or_copy_chapter_direction(
                 book_dir=book_dir,
                 build_dir=build_dir,
@@ -1510,8 +1710,8 @@ def run_book(args) -> dict:
                 logger.info("Chapter %d direction snapshot written: %s", ch_num, chapter_direction_path)
             logger.info("Chapter %d direction complete", ch_num)
 
-        direction_chapter = direction_payload["chapters"][0]
-        voice_direction_payload["chapters"].append(direction_chapter)
+        direction_chapter = direction_payload["sections"][0]
+        voice_direction_payload["sections"].append(direction_chapter)
         speed_summary = _direction_speed_summary(direction_chapter)
         logger.info(
             "Chapter %d direction speed summary segments=%d speeds=%s "
@@ -1535,8 +1735,8 @@ def run_book(args) -> dict:
             chunk_texts, ends_paragraph, directed_chunks_for_synthesis
         )
 
-        m4a_path = os.path.join(build_dir, f"chapter-{ch_num:02d}.m4a")
-        wav_path = os.path.join(build_dir, f"chapter-{ch_num:02d}.wav")
+        m4a_path = os.path.join(build_dir, f"section-{ch_num:02d}.m4a")
+        wav_path = os.path.join(build_dir, f"section-{ch_num:02d}.wav")
         sync_path = _chapter_sync_path(build_dir, ch_num)
         synthesis_units_path = _chapter_synthesis_units_path(build_dir, ch_num)
 
@@ -1551,10 +1751,11 @@ def run_book(args) -> dict:
                 synthesis_units_path,
                 ch_num,
                 chunk_texts,
-                voice=narrator_voice_id,
+                narrator_voice=narrator_voice,
                 aligner=aligner,
                 keep_wav=getattr(args, "keep_wav", False),
                 force=getattr(args, "force", False),
+                heading_text=ch_data["heading"]["spoken_text"],
             )
 
         chapter_durations[ch_num] = duration
@@ -1598,14 +1799,19 @@ def run_book(args) -> dict:
     logger.info("Character registry finalized: %s", character_registry_path)
     logger.info("Voice direction written: %s", voice_direction_path)
 
-    word_count_map = {ch.number: ch.word_count for ch in chapters}
     chapter_metas = [
-        ChapterMeta(
-            number=ch_data["number"],
-            title=ch_data["title"],
-            filename=f"chapter-{ch_data['number']:02d}.m4a",
+        SectionMeta(
+            sequence=ch_data["number"],
+            section_type=ch_data["section_type"],
+            ordinal=ch_data["ordinal"],
+            display_label=ch_data["heading"]["display_label"],
+            display_title=ch_data["heading"]["display_title"],
+            filename=f"section-{ch_data['number']:02d}.m4a",
             duration_seconds=chapter_durations.get(ch_data["number"], 0.0),
-            word_count=word_count_map.get(ch_data["number"], 0),
+            word_count=(
+                len(ch_data["heading"].get("spoken_text", "").split())
+                + sum(len(chunk.text.split()) for chunk in ch_data["chunks"])
+            ),
         )
         for ch_data in generation_chapters
         if ch_data["number"] in chapter_durations
@@ -1618,21 +1824,21 @@ def run_book(args) -> dict:
         voice=narrator_voice_id,
         engine=engine.name,
         pipeline_version=PIPELINE_VERSION,
-        chapters=chapter_metas,
+        sections=chapter_metas,
         output_dir=build_dir,
     )
     print(f"Rendition manifest: {rendition_manifest_path}")
     logger.info("Rendition manifest written: %s", rendition_manifest_path)
 
-    chapter_data_path = assemble_chapter_data(
+    section_data_path = assemble_section_data(
         build_dir,
         rendition,
         build_id,
         selected_chapters={ch_data["number"] for ch_data in generation_chapters},
         force=True,
     )
-    print(f"Chapter data: {chapter_data_path}")
-    logger.info("Chapter data written: %s", chapter_data_path)
+    print(f"Section data: {section_data_path}")
+    logger.info("Section data written: %s", section_data_path)
 
     new_entry = generate_rendition_entry(
         voice=narrator_voice_id,
@@ -1677,7 +1883,7 @@ def run_book(args) -> dict:
         "build_dir": build_dir,
         "rendition": rendition,
         "voice": narrator_voice_id,
-        "chapter_data_path": chapter_data_path,
+        "section_data_path": section_data_path,
         "voice_direction_path": voice_direction_path,
         "uploaded": uploaded,
     }
@@ -1712,9 +1918,11 @@ def add_run_arguments(parser: argparse.ArgumentParser, *, positional_epub: bool 
     parser.add_argument("--rendition", default=None, help="Rendition slug (default: derived from engine + narrator)")
     parser.add_argument("--device", default=None, help="Device: cuda, mps, cpu (default: auto)")
     parser.add_argument(
+        "--sections",
         "--chapters",
+        dest="chapters",
         default=None,
-        help="Local sample filter: chapter number/ranges to generate, e.g. 2 or 2,4-5",
+        help="Local sample filter: section sequence/ranges, e.g. 2 or 2,4-5",
     )
     parser.add_argument("--dry-run", action="store_true", help="Parse and chunk only, no audio")
     parser.add_argument("--keep-wav", action="store_true", help="Keep WAV files after encoding")
@@ -1750,7 +1958,7 @@ def _build_parser() -> argparse.ArgumentParser:
     chunk = subparsers.add_parser("chunk")
     chunk.add_argument("--book-parse", required=True)
     chunk.add_argument("--build-dir", required=True)
-    chunk.add_argument("--chapters", default=None)
+    chunk.add_argument("--sections", "--chapters", dest="chapters", default=None)
     chunk.add_argument("--force", action="store_true")
 
     registry = subparsers.add_parser("registry")
@@ -1860,7 +2068,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "assemble":
-        path = assemble_chapter_data(
+        path = assemble_section_data(
             build_dir=args.build_dir,
             rendition=args.rendition,
             build_id=args.build_id,

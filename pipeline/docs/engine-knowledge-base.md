@@ -13,8 +13,9 @@ then open the linked adapter and the relevant step docs:
 - `pipeline/src/openshelf/pipeline/tts_engine.py` for the shared adapter contract
 - `pipeline/src/openshelf/pipeline/engines/<engine>.py` for the implementation
 
-All engines must preserve the public contract: chapter `.m4a` files plus
-`chapter_data.json` with original reader text and WhisperX word timestamps.
+All engines must preserve the version-2 public contract: section `.m4a` files
+plus `section_data.json` with separate heading/body text and WhisperX word
+timestamps.
 Engine-native timestamps, prompt markers, emotion labels, and adapter-specific
 controls are synthesis/audit details only unless a future spec explicitly
 changes the client contract.
@@ -318,7 +319,7 @@ wav = model.generate(
 
 If paralinguistic tags are enabled, they must be engine-owned synthesis text
 only. They may appear in `voice_direction.json` for audit, but must never be
-serialized into `chapter_data.json` or reader text. Keep tags disabled until
+serialized into `section_data.json` or reader text. Keep tags disabled until
 tests prove the selected Chatterbox model will not speak them literally.
 
 ### Expected Capabilities
@@ -341,6 +342,6 @@ Use WhisperX for final sync.
 1. Update this knowledge base and the relevant step docs first.
 2. Add or update the adapter under `pipeline/src/openshelf/pipeline/engines/`.
 3. Wire the factory in `engines/__init__.py`.
-4. Keep `chapter_data.json` unchanged unless the public contract intentionally changes.
+4. Keep `section_data.json` unchanged unless the public contract intentionally changes.
 5. Add mocked unit tests for capabilities, runtime-call parameters, failure modes, and forced-alignment selection.
 6. If the engine adds prompt markers or expression controls, add tests proving those controls cannot leak into reader text.

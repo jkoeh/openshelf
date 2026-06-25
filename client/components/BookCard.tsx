@@ -100,7 +100,7 @@ export default function BookCard({ book }: { book: CatalogBook }) {
 						{book.author}
 					</Text>
 					<Text style={{ color: colors.textSecondary, fontSize: 13 }}>
-						{book.chapter_count} chapters · {formatDuration(book.total_duration_seconds)}
+						{book.section_count} sections · {formatDuration(book.total_duration_seconds)}
 					</Text>
 				</View>
 

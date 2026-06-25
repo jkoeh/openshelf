@@ -26,7 +26,7 @@ SE_BASE = "https://standardebooks.org"
 # Pipeline version — bumped manually when code changes affect TTS output bytes
 # but config constants below are unchanged. Combined with config + voice + rendition
 # into the build_id hash. See pipeline/docs/step6-r2.md.
-PIPELINE_VERSION = "1"
+PIPELINE_VERSION = "2"
 
 # TTS
 TTS_VOICE = "af_heart"
@@ -39,6 +39,7 @@ SILENCE_MID_PARAGRAPH_MS = 90
 SILENCE_INTERNAL_PARAGRAPH_BREAK_MS = 300
 CROSSFADE_MS = 15
 LEAD_IN_SILENCE_MS = 50
+HEADING_TO_BODY_SILENCE_MS = 750
 VOICES_DIR = PROJECT_ROOT / "pipeline" / "voices"
 
 # LLM voice direction

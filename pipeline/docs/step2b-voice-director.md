@@ -6,7 +6,9 @@
 
 ## Purpose
 
-Prepare each text chunk for directed TTS while preserving the public audio contract. The director:
+Prepare each section body chunk for directed TTS while preserving the public
+audio contract. Section headings and generated credits do not enter this
+director. The director:
 
 1. Builds a book-level character registry once.
 2. Assigns narrator and character voices from the selected engine's voice pool.
@@ -17,7 +19,18 @@ Prepare each text chunk for directed TTS while preserving the public audio contr
    narrator voice only; opt-in `multicast` mode may switch voices by character.
 7. Adds engine-owned performance direction only when the engine supports it.
 
-The public playback contract remains `.m4a` plus `chapter_data.json` word timestamps. The build also writes two immutable audit/client-feature artifacts beside them: `character_registry.json` and `voice_direction.json`. These files are uploaded to R2 under the build prefix but must not change the reader text or sync source.
+The public playback contract is `.m4a` plus `section_data.json` word
+timestamps. The build also writes two immutable audit/client-feature artifacts
+beside them: `character_registry.json` and `voice_direction.json`. These files
+are uploaded to R2 under the build prefix but must not change reader text or
+sync.
+
+## Heading and credit boundary
+
+`heading.spoken_text` is deterministic narrator input. It bypasses registry
+expansion, quote attribution, adaptive performance direction, and
+character-voice switching. `voice_direction.json` stores only body chunks.
+The TTS stage prepends a narrator heading region before those chunks.
 
 ## Cast Modes
 
@@ -125,7 +138,7 @@ New characters use the same strict registry item shape as the book-level registr
 - the canonical spelling can be grounded in nearby source text, or a tiny misspelling can be repaired to the unique nearby source spelling
 - the assigned voice comes from the selected engine's voice pool or can be filled deterministically
 
-The updated `character_registry.json` is written locally and uploaded with the build. It may grow as later chapters introduce new speakers. Clients may later use it for character-list editing or display, but `chapter_data.json` remains the playback text and sync source.
+The updated `character_registry.json` is written locally and uploaded with the build. It may grow as later chapters introduce new speakers. Clients may later use it for character-list editing or display, but `section_data.json` remains the playback text and sync source.
 
 ## Speaker Annotation Firewall
 
@@ -236,7 +249,7 @@ use engine-level speed defaults and tight joins, but it must not receive
 LLM-written inline cues, bracket directions, SSML-like tags, or rewritten
 performance text.
 
-These annotations are never reader text. They may modify `DirectedSegment.text` for synthesis only, while `ChunkInfo.text` remains the original chunk text and is the only text serialized to `chapter_data.json`. The LLM may return `pause_after_ms` for audit/backward compatibility, but final seam pause durations are owned by the TTS `PausePolicy`, not by voice direction.
+These annotations are never reader text. They may modify `DirectedSegment.text` for synthesis only, while `ChunkInfo.text` remains the original body chunk text and is the only body text serialized to `section_data.json`. The LLM may return `pause_after_ms` for audit/backward compatibility, but final seam pause durations are owned by the TTS `PausePolicy`, not by voice direction.
 
 Direction is capability-gated:
 
@@ -281,7 +294,7 @@ F5-TTS maps `emotion` to same-voice style/reference clips where available.
 Chatterbox maps `emotion` plus `intensity` to its documented expression
 controls (`exaggeration` and `cfg_weight`). These controls are serialized in
 `voice_direction.json` under `engine_controls` for audit and must not be
-serialized into `chapter_data.json`.
+serialized into `section_data.json`.
 
 On any direction failure, return a conservative neutral direction for the
 affected chunk rather than preserving an unsafe overactive split.
@@ -299,26 +312,26 @@ deleting a valid chunk or leaking visible/audio control text.
 
 ### Direction Artifact
 
-`voice_direction.json` is written once per build and uploaded beside `chapter_data.json`. It is an audit artifact for the exact cast/performance plan used to synthesize the audio.
+`voice_direction.json` is written once per build and uploaded beside `section_data.json`. It is an audit artifact for the exact cast/performance plan used to synthesize the audio.
 
 For long-running local builds, the pipeline also writes a local-only chapter snapshot immediately after each chapter is directed:
 
 ```text
-chapter-01.voice_direction.json
-chapter-02.voice_direction.json
+section-01.voice_direction.json
+section-02.voice_direction.json
 ...
 ```
 
 Each chapter snapshot uses the same top-level shape as the final aggregate but
 contains only the completed chapter. The chapter snapshot is the canonical local
 input to synthesis for that chapter: after direction succeeds, audio generation
-reconstructs `DirectedSegment`s from `chapter-NN.voice_direction.json` rather
+reconstructs `DirectedSegment`s from `section-NN.voice_direction.json` rather
 than relying on transient in-memory LLM output. This lets an audio repair rerun
 avoid another LLM call as long as the directive artifact is present and valid.
 
 Full DAG runs default to reusing local chapter direction before calling the LLM.
 Unless `--new-voice-direction` is passed, `dag run` looks for an earlier local
-`chapter-NN.voice_direction.json` for the same author/title, engine, and cast
+`section-NN.voice_direction.json` for the same author/title, engine, and cast
 mode, regardless of voice/rendition/build. The cached chapter must also have
 the same chapter number and chunk text. A compatible cached chapter is copied
 into the new build prefix, with the top-level `rendition`/`build` and narrator
@@ -334,7 +347,7 @@ also records a speed summary for each chapter before synthesis begins, including
 total segment count, counts by numeric speed, and whether any narrator segment
 exceeds `1.0`.
 
-The final aggregate shape is:
+The final aggregate shape uses section playback sequences:
 
 ```json
 {
@@ -343,9 +356,9 @@ The final aggregate shape is:
   "build": "2a4f9c1b3d8e7f60",
   "engine": "kokoro",
   "cast_mode": "solo",
-  "chapters": [
+  "sections": [
     {
-      "number": 1,
+      "sequence": 2,
       "title": "Down the Rabbit-Hole",
       "chunks": [
         {
@@ -377,7 +390,7 @@ The final aggregate shape is:
 }
 ```
 
-`text` and `original_text` are copied from the unmodified EPUB-derived chunk text. `synthesis_text` is the only field that may include engine-owned delivery hints. `delivery_type`, `voice_policy`, and `join_policy` describe the internal performance decision that produced the segment. `pause_after_ms` is preserved in the artifact for compatibility and audit, but synthesis uses the shared seam pause policy for actual emitted silence. For Kokoro in this phase, `synthesis_text` must match the source segment text because Kokoro skips LLM performance direction. The reader UI must continue to render `chapter_data.json`, not `voice_direction.json`.
+`text` and `original_text` are copied from the unmodified EPUB-derived body chunk text. `synthesis_text` is the only field that may include engine-owned delivery hints. `delivery_type`, `voice_policy`, and `join_policy` describe the internal performance decision that produced the segment. `pause_after_ms` is preserved in the artifact for compatibility and audit, but synthesis uses the shared seam pause policy for actual emitted silence. For Kokoro in this phase, `synthesis_text` must match the source segment text because Kokoro skips LLM performance direction. The reader UI must continue to render `section_data.json`, not `voice_direction.json`.
 
 ## AudioDirector
 
@@ -395,7 +408,7 @@ class AudioDirector:
 - `chunk`: preserve the previous one-LLM-call-per-chunk behavior. This is mainly a debugging or narrow repair mode.
 - `off`: skip performance LLM calls and apply deterministic neutral/default direction.
 
-The output remains `list[list[DirectedSegment]]`, aligned to the original TTS chunks. Adaptive batching may increase the number of `DirectedSegment`s inside a chunk, but it does not change `chapter-NN.voice_direction.json`, `chapter_data.json`, TTS chunking, R2 layout, or client behavior. Kokoro advertises neither capability in the default path, so it avoids extra LLM performance calls regardless of mode.
+The output remains `list[list[DirectedSegment]]`, aligned to the original body chunks. Adaptive batching may increase the number of `DirectedSegment`s inside a chunk, but it does not merge the separate heading into `section-NN.voice_direction.json` body chunks or `section_data.json`. Kokoro advertises neither capability in the default path, so it avoids extra LLM performance calls regardless of mode.
 
 `direct_chunk` follows the same cast mode. In `solo`, it returns a single narrator segment. In `multicast`, it runs chunk-level speaker annotation with fallback. It is used by tests, debugging harnesses, and as the fallback if chapter-level attribution fails.
 
