@@ -21,7 +21,7 @@ class TestPausePolicy(unittest.TestCase):
         policy = PausePolicy()
 
         self.assertEqual(policy.classify("painting them red.", "Alice thought"), "sentence")
-        self.assertEqual(policy.pause_ms("sentence"), 250)
+        self.assertEqual(policy.pause_ms("sentence"), 350)
 
     def test_classifies_phrase_boundary(self):
         policy = PausePolicy()
@@ -33,7 +33,7 @@ class TestPausePolicy(unittest.TestCase):
         policy = PausePolicy()
 
         self.assertEqual(policy.classify("end.", "next", paragraph=True), "paragraph")
-        self.assertEqual(policy.pause_ms("paragraph"), 400)
+        self.assertEqual(policy.pause_ms("paragraph"), 600)
 
 
 class TestRepairPcmPauses(unittest.TestCase):
@@ -125,12 +125,12 @@ class TestRepairPcmPauses(unittest.TestCase):
         )
 
         self.assertEqual(len(edits), 1)
-        self.assertEqual(len(repaired_audio), 1130)
-        self.assertEqual(updated_synthesis["chunks"][0]["seams"][0]["pause_ms"], 250)
-        self.assertEqual(updated_synthesis["chunks"][0]["seams"][0]["pause_end_frame"], 650)
-        self.assertAlmostEqual(updated_sync["chunk_audio_starts"][1], 0.73)
-        self.assertAlmostEqual(updated_sync["chunks"][0]["words"][1]["start"], 0.65)
-        self.assertAlmostEqual(updated_sync["chunks"][1]["words"][0]["start"], 0.75)
+        self.assertEqual(len(repaired_audio), 1230)
+        self.assertEqual(updated_synthesis["chunks"][0]["seams"][0]["pause_ms"], 350)
+        self.assertEqual(updated_synthesis["chunks"][0]["seams"][0]["pause_end_frame"], 750)
+        self.assertAlmostEqual(updated_sync["chunk_audio_starts"][1], 0.83)
+        self.assertAlmostEqual(updated_sync["chunks"][0]["words"][1]["start"], 0.75)
+        self.assertAlmostEqual(updated_sync["chunks"][1]["words"][0]["start"], 0.85)
 
 
 if __name__ == "__main__":

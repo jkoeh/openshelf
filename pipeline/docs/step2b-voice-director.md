@@ -281,6 +281,40 @@ small lift on short transition lines; long narrator segments are capped at the
 normal audiobook value. Character dialogue may use the full map for short bursts
 of urgency.
 
+The `chunk` performance mode is a patch-based local-model path. Code first
+builds a complete deterministic neutral direction for every current segment.
+The LLM then receives a compact edit task with:
+
+- `previous_context`: a short tail of the previous chunk, for continuity only.
+- `current`: the current chunk text plus its existing segment indexes and the
+  neutral baseline direction.
+- `next_context`: a short head of the next chunk, for disambiguation only.
+
+The LLM returns sparse `edits` for current segment indexes only. An edit may set
+`emotion`, `speed`, normalized `0.0`-to-`1.0` `intensity`, or
+`pause_after_ms`; omitted fields keep the neutral baseline. Code may also
+provide deterministic `candidate_units` for a segment. Candidate units are
+sentence/quote-level subunits whose text is produced by code, not by the LLM,
+and whose texts concatenate exactly to the parent segment text. When a
+meaningful delivery shift warrants smaller performance units, the LLM returns
+`unit_edits` that reference those `unit_index` values. The LLM never writes unit
+text.
+
+Splits are rare, usually two or three units, and never more than eight units;
+long descriptive narration should not be split merely to vary neutral pacing.
+Candidate split boundaries are sentence/quote-level by default: a boundary must
+follow terminal sentence punctuation, a complete quoted unit, or a
+quote-introducing colon/dash before a complete quoted unit. Mid-sentence clause
+splits are not offered to the LLM. Unit edits may set the same performance
+fields as a normal edit. The patch response cannot rewrite text, cannot edit
+previous/next context, cannot invent unit boundaries, and cannot split across
+multiple parent segments. Code applies the edits to the neutral baseline and
+validates segment indexes, duplicate edits, candidate unit indexes, engine
+emotion vocabulary, speed labels, intensity limits, pause limits, and short-unit
+guards. If the patch is invalid, the model gets one repair attempt with the
+validation error. If repair is also invalid, that chunk keeps the neutral
+baseline rather than preserving a partial or unsafe direction.
+
 LLM pause direction is deliberately limited. Ordinary quote/tag/quote joins,
 narrator-compatible internal thought, and tight joins must not receive
 LLM-added pause. Other performance pauses are clamped to a small maximum so
@@ -405,7 +439,7 @@ class AudioDirector:
 `direct_chapter` is the production path. In `solo` mode, it returns one narrator segment per chunk. In `multicast` mode, it performs chapter-level speaker attribution and registry expansion before producing renderable segments. Engines that advertise `emotion_control` or `performance_direction` then apply performance direction according to `performance_direction_mode`:
 
 - `batched` (default): group consecutive chunks into direction batches capped at about 1,500 words or 10,000 characters. The LLM decides per chunk whether one shared performance setting should apply to the whole chunk or whether that chunk should be split into smaller performance units. `whole` mode applies one emotion/speed/intensity decision to every existing segment in the chunk. `split` mode is accepted only when the chunk currently has one parent segment and the returned unit texts concatenate exactly to that segment text. Code validates exact coverage and text preservation, retries a failed batch as smaller halves, and finally falls back to deterministic neutral direction for that failed chunk.
-- `chunk`: preserve the previous one-LLM-call-per-chunk behavior. This is mainly a debugging or narrow repair mode.
+- `chunk`: run one patch-style LLM call per chunk. Code starts from deterministic neutral direction and accepts only sparse edits to current segment indexes. A sparse edit may either adjust performance metadata for one segment or split that one segment into exact-copy performance units. Previous/next text is passed only as trimmed context. Invalid patches get one repair attempt before the chunk falls back to neutral. This mode is intended for local models and narrow repair work where smaller, more constrained JSON is more reliable than the adaptive batched contract.
 - `off`: skip performance LLM calls and apply deterministic neutral/default direction.
 
 The output remains `list[list[DirectedSegment]]`, aligned to the original body chunks. Adaptive batching may increase the number of `DirectedSegment`s inside a chunk, but it does not merge the separate heading into `section-NN.voice_direction.json` body chunks or `section_data.json`. Kokoro advertises neither capability in the default path, so it avoids extra LLM performance calls regardless of mode.

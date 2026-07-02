@@ -488,8 +488,8 @@ class TestPerformanceDirection(unittest.TestCase):
             speaker="Sherlock Holmes",
             original_text='"Run!"',
         )
-        llm = StubLLM([{"annotations": [{
-            "index": 0,
+        llm = StubLLM([{"edits": [{
+            "segment_index": 0,
             "emotion": "neutral",
             "speed": "fast",
         }]}])
@@ -517,8 +517,8 @@ class TestPerformanceDirection(unittest.TestCase):
             speaker="narrator",
             original_text=text,
         )
-        llm = StubLLM([{"annotations": [{
-            "index": 0,
+        llm = StubLLM([{"edits": [{
+            "segment_index": 0,
             "emotion": "neutral",
             "speed": "fast",
         }]}])
@@ -545,8 +545,8 @@ class TestPerformanceDirection(unittest.TestCase):
             speaker="narrator",
             original_text="Suddenly.",
         )
-        llm = StubLLM([{"annotations": [{
-            "index": 0,
+        llm = StubLLM([{"edits": [{
+            "segment_index": 0,
             "emotion": "neutral",
             "speed": "fast",
         }]}])
@@ -575,8 +575,8 @@ class TestPerformanceDirection(unittest.TestCase):
             delivery_type="internal_thought",
             voice_policy="narrator_compatible",
         )
-        llm = StubLLM([{"annotations": [{
-            "index": 0,
+        llm = StubLLM([{"edits": [{
+            "segment_index": 0,
             "emotion": "neutral",
             "speed": "normal",
             "pause_after_ms": 600,
@@ -606,8 +606,8 @@ class TestPerformanceDirection(unittest.TestCase):
             delivery_type="narration",
             voice_policy="narrator",
         )
-        llm = StubLLM([{"annotations": [{
-            "index": 0,
+        llm = StubLLM([{"edits": [{
+            "segment_index": 0,
             "emotion": "neutral",
             "speed": "slow",
             "pause_after_ms": 600,
@@ -621,6 +621,235 @@ class TestPerformanceDirection(unittest.TestCase):
         )
 
         self.assertEqual(directed[0].pause_after_ms, 120)
+
+    def test_chunk_patch_sparse_edits_keep_unedited_segments_neutral(self):
+        cfg = self._cfg()
+        segments = [
+            DirectedSegment(
+                text="Plain narration.",
+                voice=VoiceSpec(id="narrator"),
+                speaker="narrator",
+                original_text="Plain narration.",
+            ),
+            DirectedSegment(
+                text='"Hurry!"',
+                voice=VoiceSpec(id="alice"),
+                speaker="Alice",
+                original_text='"Hurry!"',
+                delivery_type="spoken_dialogue",
+                voice_policy="character",
+            ),
+        ]
+        llm = StubLLM([{"edits": [{
+            "segment_index": 1,
+            "emotion": "anxious",
+            "speed": "fast",
+            "intensity": 0.8,
+        }]}])
+
+        directed = add_emotion_direction(
+            segments,
+            ChunkWindow("", "Plain narration.\"Hurry!\"", ""),
+            llm,
+            cfg,
+        )
+
+        self.assertEqual(len(directed), 2)
+        self.assertEqual(directed[0].emotion, "neutral")
+        self.assertEqual(directed[0].speed, 0.95)
+        self.assertEqual(directed[1].emotion, "anxious")
+        self.assertEqual(directed[1].speed, 1.05)
+        self.assertEqual(directed[1].engine_controls["intensity"], 0.6)
+
+    def test_chunk_patch_can_split_one_segment_inside_multi_segment_chunk(self):
+        cfg = self._cfg()
+        first = "The hallway stayed quiet for several heavy seconds before the door opened. "
+        second = '"Run now!"'
+        segments = [
+            DirectedSegment(
+                text="She listened.",
+                voice=VoiceSpec(id="narrator"),
+                speaker="narrator",
+                original_text="She listened.",
+            ),
+            DirectedSegment(
+                text=first + second,
+                voice=VoiceSpec(id="alice"),
+                speaker="Alice",
+                original_text=first + second,
+                delivery_type="spoken_dialogue",
+                voice_policy="character",
+            ),
+        ]
+        llm = StubLLM([{"edits": [{
+            "segment_index": 1,
+            "unit_edits": [
+                {"unit_index": 1, "emotion": "anxious", "speed": "fast", "intensity": 0.8},
+            ],
+        }]}])
+
+        directed = add_emotion_direction(
+            segments,
+            ChunkWindow("", "She listened." + first + second, ""),
+            llm,
+            cfg,
+        )
+
+        self.assertEqual([segment.text for segment in directed], ["She listened.", first, second])
+        self.assertEqual("".join(segment.text for segment in directed), "She listened." + first + second)
+        self.assertEqual([segment.speaker for segment in directed], ["narrator", "Alice", "Alice"])
+        self.assertEqual(directed[1].emotion, "neutral")
+        self.assertEqual(directed[2].emotion, "anxious")
+        self.assertEqual(directed[2].speed, 1.05)
+        self.assertIn("candidate_units", llm.calls[0]["user"])
+        self.assertIn('"unit_index": 1', llm.calls[0]["user"])
+
+    def test_chunk_patch_applies_later_edits_by_original_index_after_split(self):
+        cfg = self._cfg()
+        first = "The hallway stayed quiet for several heavy seconds before the door opened. "
+        second = '"Run now!"'
+        segments = [
+            DirectedSegment(
+                text=first + second,
+                voice=VoiceSpec(id="alice"),
+                speaker="Alice",
+                original_text=first + second,
+                delivery_type="spoken_dialogue",
+                voice_policy="character",
+            ),
+            DirectedSegment(
+                text="The narrator closed the scene with a careful sentence.",
+                voice=VoiceSpec(id="narrator"),
+                speaker="narrator",
+                original_text="The narrator closed the scene with a careful sentence.",
+            ),
+        ]
+        llm = StubLLM([{"edits": [
+            {
+                "segment_index": 0,
+                "unit_edits": [
+                    {"unit_index": 1, "emotion": "anxious", "speed": "fast"},
+                ],
+            },
+            {"segment_index": 1, "emotion": "sad", "speed": "slow"},
+        ]}])
+
+        directed = add_emotion_direction(
+            segments,
+            ChunkWindow("", (first + second) + segments[1].text, ""),
+            llm,
+            cfg,
+        )
+
+        self.assertEqual([segment.text for segment in directed], [first, second, segments[1].text])
+        self.assertEqual([segment.emotion for segment in directed], ["neutral", "anxious", "sad"])
+        self.assertEqual(directed[2].speaker, "narrator")
+
+    def test_chunk_patch_merges_adjacent_unchanged_candidate_units(self):
+        cfg = self._cfg()
+        first = "The first sentence remains ordinary and calm for the narrator. "
+        second = "The second sentence also remains ordinary and calm for the narrator. "
+        third = "The final sentence suddenly changes the emotional temperature."
+        text = first + second + third
+        segment = DirectedSegment(
+            text=text,
+            voice=VoiceSpec(id="narrator"),
+            speaker="narrator",
+            original_text=text,
+        )
+        llm = StubLLM([{"edits": [{
+            "segment_index": 0,
+            "unit_edits": [
+                {"unit_index": 2, "emotion": "anxious", "speed": "slow"},
+            ],
+        }]}])
+
+        directed = add_emotion_direction(
+            [segment],
+            ChunkWindow("", text, ""),
+            llm,
+            cfg,
+        )
+
+        self.assertEqual([unit.text for unit in directed], [first + second, third])
+        self.assertEqual([unit.emotion for unit in directed], ["neutral", "anxious"])
+
+    def test_chunk_patch_retries_once_after_invalid_response(self):
+        cfg = self._cfg()
+        segment = DirectedSegment(
+            text="A careful sentence.",
+            voice=VoiceSpec(id="narrator"),
+            speaker="narrator",
+            original_text="A careful sentence.",
+        )
+        llm = StubLLM([
+            {"edits": [{"segment_index": 99, "emotion": "sad"}]},
+            {"edits": [{"segment_index": 0, "emotion": "sad", "speed": "slow"}]},
+        ])
+
+        directed = add_emotion_direction(
+            [segment],
+            ChunkWindow("", segment.text, ""),
+            llm,
+            cfg,
+        )
+
+        self.assertEqual(len(llm.calls), 2)
+        self.assertIn("previous patch was invalid", llm.calls[1]["user"])
+        self.assertEqual(directed[0].emotion, "sad")
+        self.assertEqual(directed[0].speed, 0.85)
+
+    def test_chunk_patch_rejects_synthesis_text_and_falls_back_to_neutral(self):
+        cfg = self._cfg()
+        segment = DirectedSegment(
+            text="A careful sentence.",
+            voice=VoiceSpec(id="narrator"),
+            speaker="narrator",
+            original_text="A careful sentence.",
+        )
+        llm = StubLLM([{"edits": [{
+            "segment_index": 0,
+            "emotion": "sad",
+            "speed": "slow",
+            "synthesis_text": "[sad] A careful sentence.",
+        }]}])
+
+        directed = add_emotion_direction(
+            [segment],
+            ChunkWindow("", segment.text, ""),
+            llm,
+            cfg,
+        )
+
+        self.assertEqual(len(llm.calls), 2)
+        self.assertEqual(directed[0].text, "A careful sentence.")
+        self.assertEqual(directed[0].emotion, "neutral")
+        self.assertEqual(directed[0].speed, 0.95)
+
+    def test_chunk_patch_prompt_trims_previous_and_next_context(self):
+        cfg = self._cfg()
+        segment = DirectedSegment(
+            text="Current sentence.",
+            voice=VoiceSpec(id="narrator"),
+            speaker="narrator",
+            original_text="Current sentence.",
+        )
+        previous = "p" * 600
+        next_text = "n" * 600
+        llm = StubLLM([{"edits": []}])
+
+        add_emotion_direction(
+            [segment],
+            ChunkWindow(previous, segment.text, next_text),
+            llm,
+            cfg,
+        )
+
+        user = str(llm.calls[0]["user"])
+        self.assertIn('"previous_context": "' + ("p" * 500) + '"', user)
+        self.assertNotIn("p" * 501, user)
+        self.assertIn('"next_context": "' + ("n" * 500) + '"', user)
+        self.assertNotIn("n" * 501, user)
 
     def test_performance_direction_batches_are_deterministic_by_size(self):
         windows = [
@@ -765,6 +994,82 @@ class TestPerformanceDirection(unittest.TestCase):
         self.assertEqual(directed[0][0].emotion, "neutral")
         self.assertEqual(directed[0][1].emotion, "anxious")
         self.assertEqual(directed[0][1].engine_controls["intensity"], 0.6)
+
+    def test_batched_emotion_direction_allows_sentence_boundary_split(self):
+        cfg = self._cfg()
+        first = "Calm narration settles the room with measured detail before the sudden interruption. "
+        second = (
+            "Then the whole house seemed to hold its breath while every listener waited for the door."
+        )
+        text = first + second
+        windows = [ChunkWindow("", text, "")]
+        directed_chunks = [[
+            DirectedSegment(text=text, voice=VoiceSpec(id="narrator"), speaker="narrator")
+        ]]
+        llm = StubLLM([{"chunks": [{
+            "chunk_index": 0,
+            "mode": "split",
+            "units": [
+                {"text": first, "emotion": "neutral", "speed": "normal"},
+                {"text": second, "emotion": "anxious", "speed": "slow", "intensity": 0.7},
+            ],
+        }]}])
+
+        directed = add_batched_emotion_direction(directed_chunks, windows, llm, cfg)
+
+        self.assertEqual([segment.text for segment in directed[0]], [first, second])
+        self.assertEqual(directed[0][1].emotion, "anxious")
+
+    def test_batched_emotion_direction_allows_quote_intro_boundary_split(self):
+        cfg = self._cfg()
+        first = "After a long pause that held the entire room in silence, he said: "
+        second = '"Then terror!"'
+        text = first + second
+        windows = [ChunkWindow("", text, "")]
+        directed_chunks = [[
+            DirectedSegment(text=text, voice=VoiceSpec(id="narrator"), speaker="narrator")
+        ]]
+        llm = StubLLM([{"chunks": [{
+            "chunk_index": 0,
+            "mode": "split",
+            "units": [
+                {"text": first, "emotion": "neutral", "speed": "normal"},
+                {"text": second, "emotion": "anxious", "speed": "normal", "intensity": 0.8},
+            ],
+        }]}])
+
+        directed = add_batched_emotion_direction(directed_chunks, windows, llm, cfg)
+
+        self.assertEqual([segment.text for segment in directed[0]], [first, second])
+        self.assertEqual(directed[0][1].emotion, "anxious")
+
+    def test_batched_emotion_direction_rejects_mid_sentence_clause_split(self):
+        cfg = self._cfg()
+        first = (
+            "A long clause described the room with enough ordinary words to avoid the short unit guard; "
+        )
+        second = (
+            "another long clause continued the same sentence without a real performance boundary."
+        )
+        text = first + second
+        windows = [ChunkWindow("", text, "")]
+        directed_chunks = [[
+            DirectedSegment(text=text, voice=VoiceSpec(id="narrator"), speaker="narrator")
+        ]]
+        llm = StubLLM([{"chunks": [{
+            "chunk_index": 0,
+            "mode": "split",
+            "units": [
+                {"text": first, "emotion": "neutral", "speed": "normal"},
+                {"text": second, "emotion": "sad", "speed": "slow"},
+            ],
+        }]}])
+
+        directed = add_batched_emotion_direction(directed_chunks, windows, llm, cfg)
+
+        self.assertEqual(len(directed[0]), 1)
+        self.assertEqual(directed[0][0].text, text)
+        self.assertEqual(directed[0][0].emotion, "neutral")
 
     def test_batched_emotion_direction_merges_short_nonquoted_split_unit(self):
         cfg = self._cfg()

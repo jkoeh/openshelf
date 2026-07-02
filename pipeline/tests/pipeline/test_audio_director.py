@@ -325,8 +325,8 @@ class TestAudioDirector(unittest.TestCase):
             ChunkWindow("First chunk.", "Second chunk.", ""),
         ]
         llm = StubLLM([
-            {"annotations": [{"index": 0, "emotion": "anxious", "speed": "normal"}]},
-            {"annotations": [{"index": 0, "emotion": "sad", "speed": "slow"}]},
+            {"edits": [{"segment_index": 0, "emotion": "anxious", "speed": "normal"}]},
+            {"edits": [{"segment_index": 0, "emotion": "sad", "speed": "slow"}]},
         ])
         director = AudioDirector(
             FakePerformanceEngine(),
@@ -340,7 +340,7 @@ class TestAudioDirector(unittest.TestCase):
         self.assertEqual(len(llm.calls), 2)
         self.assertEqual(directed[0][0].emotion, "anxious")
         self.assertEqual(directed[1][0].emotion, "sad")
-        self.assertIn('"index": 0', llm.calls[0]["user"])
+        self.assertIn('"segment_index": 0', llm.calls[0]["user"])
 
     def test_off_performance_direction_uses_neutral_without_llm_calls(self):
         windows = [ChunkWindow("", "Plain narration.", "")]

@@ -302,7 +302,7 @@ for audit and repair tooling, but the worker/client do not read it.
   "sequence": 9,
   "audio_filename": "section-09.m4a",
   "sample_rate": 24000,
-  "policy": "audiobook-v1",
+  "policy": "audiobook-v2",
   "chunks": [
     {
       "chunk_index": 0,
@@ -333,8 +333,8 @@ for audit and repair tooling, but the worker/client do not read it.
           "after_segment_index": 0,
           "after_unit_index": 0,
           "pause_start_frame": 302400,
-          "pause_end_frame": 308400,
-          "pause_ms": 250,
+          "pause_end_frame": 310800,
+          "pause_ms": 350,
           "before_text": "... painting them red.",
           "after_text": "Alice thought this ..."
         }
@@ -346,12 +346,12 @@ for audit and repair tooling, but the worker/client do not read it.
 
 `PausePolicy` is the single owner of pause durations. Splitters identify text
 boundaries; they do not choose final millisecond values. The default
-`audiobook-v1` policy is:
+`audiobook-v2` policy is:
 
 | Break type | Pause |
 |---|---:|
-| Paragraph or true double-newline break | 400 ms |
-| Sentence boundary (`.`, `?`, `!`) | 250 ms |
+| Paragraph or true double-newline break | 600 ms |
+| Sentence boundary (`.`, `?`, `!`) | 350 ms |
 | Phrase boundary (comma, semicolon, colon, dash) | 180 ms |
 | Quote/dialogue-tag boundary | 180 ms |
 | Inner thought transition | 180 ms |
@@ -494,11 +494,11 @@ and engine-owned synthesis units:
 ```
 
 - Lead-in: `LEAD_IN_SILENCE_MS`
-- Paragraph/newline seam: 400 ms
-- Sentence seam: 250 ms
+- Paragraph/newline seam: 600 ms
+- Sentence seam: 350 ms
 - Phrase/quote/inner-thought seam: 180 ms
 - Word-level technical seam: 120 ms
-- Internal paragraph break inside a packed chunk: 400 ms
+- Internal paragraph break inside a packed chunk: 600 ms
 - `chunk_audio_start = frames_so_far / sample_rate`
 
 Voice-transition silence is internal to a chunk and configured by the engine.

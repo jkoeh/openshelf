@@ -29,7 +29,7 @@ PauseBreakType = Literal[
 ]
 SeamKind = Literal["chunk", "directed_segment", "engine_unit"]
 
-AUDIOBOOK_PAUSE_POLICY = "audiobook-v1"
+AUDIOBOOK_PAUSE_POLICY = "audiobook-v2"
 
 
 @dataclass(frozen=True)
@@ -95,8 +95,8 @@ class PausePolicy:
 
     name = AUDIOBOOK_PAUSE_POLICY
     durations_ms: dict[PauseBreakType, int] = {
-        "paragraph": 400,
-        "sentence": 250,
+        "paragraph": 600,
+        "sentence": 350,
         "phrase": 180,
         "quote": 180,
         "inner_thought": 180,

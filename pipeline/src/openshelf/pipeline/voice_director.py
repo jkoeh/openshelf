@@ -249,28 +249,42 @@ REGISTRY_SCHEMA = {
     "required": ["narrator_voice_id", "characters"],
 }
 
-EMOTION_SCHEMA = {
+CHUNK_PERFORMANCE_PATCH_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
-        "annotations": {
+        "edits": {
             "type": "array",
             "items": {
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {
-                    "index": {"type": "integer"},
+                    "segment_index": {"type": "integer"},
                     "emotion": {"type": "string"},
                     "speed": {"type": "string"},
                     "intensity": {"type": "number"},
-                    "synthesis_text": {"type": "string"},
                     "pause_after_ms": {"type": "integer"},
+                    "unit_edits": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "unit_index": {"type": "integer"},
+                                "emotion": {"type": "string"},
+                                "speed": {"type": "string"},
+                                "intensity": {"type": "number"},
+                                "pause_after_ms": {"type": "integer"},
+                            },
+                            "required": ["unit_index"],
+                        },
+                    },
                 },
-                "required": ["index", "emotion", "speed"],
+                "required": ["segment_index"],
             },
         },
     },
-    "required": ["annotations"],
+    "required": ["edits"],
 }
 
 BATCHED_EMOTION_SCHEMA = {
@@ -319,6 +333,7 @@ CHAPTER_ATTRIBUTION_QUOTE_BATCH_SIZE = 20
 PERFORMANCE_DIRECTION_MODES = {"batched", "chunk", "off"}
 PERFORMANCE_DIRECTION_BATCH_WORDS = 1500
 PERFORMANCE_DIRECTION_BATCH_CHARS = 10000
+CHUNK_PERFORMANCE_CONTEXT_CHARS = 500
 MAX_ADAPTIVE_UNITS_PER_SEGMENT = 8
 MIN_STANDALONE_SPLIT_WORDS = 12
 MIN_STANDALONE_SPLIT_CHARS = 60
@@ -327,6 +342,20 @@ SHORT_EXPRESSIVE_INTENSITY_CAP = 0.6
 SHORT_PROSE_INTENSITY_CAP = 0.45
 MEDIUM_EXPRESSIVE_INTENSITY_CAP = 0.65
 LONG_EXPRESSIVE_INTENSITY_CAP = 0.8
+SPLIT_BOUNDARY_TERMINALS = {".", "!", "?"}
+SPLIT_BOUNDARY_CLOSERS = {'"', "\u201d", "\u2019", "'", ")", "]", "}"}
+SPLIT_QUOTE_INTRODUCERS = {":", "\u2014", "-"}
+SENTENCE_BOUNDARY_ABBREVIATIONS = {
+    "mr",
+    "mrs",
+    "ms",
+    "dr",
+    "prof",
+    "st",
+    "jr",
+    "sr",
+    "etc",
+}
 DELIVERY_TYPES = {
     "spoken_dialogue",
     "internal_thought",
@@ -417,6 +446,103 @@ def _is_short_performance_unit(text: str) -> bool:
     )
 
 
+def _boundary_tail(text: str) -> str:
+    stripped = text.rstrip()
+    while stripped and stripped[-1] in SPLIT_BOUNDARY_CLOSERS:
+        stripped = stripped[:-1].rstrip()
+    return stripped[-1] if stripped else ""
+
+
+def _ends_sentence_or_quote_boundary(text: str) -> bool:
+    return _boundary_tail(text) in SPLIT_BOUNDARY_TERMINALS or _is_complete_quoted_unit(text)
+
+
+def _ends_quote_intro_boundary(text: str) -> bool:
+    return _boundary_tail(text) in SPLIT_QUOTE_INTRODUCERS
+
+
+def _split_boundary_allowed(left: str, right: str) -> bool:
+    if not left.strip() or not right.strip():
+        return False
+    if _ends_sentence_or_quote_boundary(left):
+        return True
+    return _ends_quote_intro_boundary(left) and _is_complete_quoted_unit(right)
+
+
+def _validate_split_unit_boundaries(units: list[dict[str, Any]]) -> None:
+    for index in range(len(units) - 1):
+        left = str(units[index].get("text", ""))
+        right = str(units[index + 1].get("text", ""))
+        if not _split_boundary_allowed(left, right):
+            raise ValueError("split unit boundary must be sentence or quote level")
+
+
+def _previous_sentence_word(text: str, terminal_index: int) -> str:
+    match = re.search(r"([A-Za-z]+)\.$", text[:terminal_index + 1])
+    return match.group(1).lower() if match else ""
+
+
+def _sentence_split_positions(text: str) -> list[int]:
+    positions: list[int] = []
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char not in SPLIT_BOUNDARY_TERMINALS:
+            index += 1
+            continue
+        if char == "." and _previous_sentence_word(text, index) in SENTENCE_BOUNDARY_ABBREVIATIONS:
+            index += 1
+            continue
+        cursor = index + 1
+        while cursor < len(text) and text[cursor] in SPLIT_BOUNDARY_CLOSERS:
+            cursor += 1
+        if cursor < len(text) and not text[cursor].isspace():
+            index += 1
+            continue
+        while cursor < len(text) and text[cursor].isspace():
+            cursor += 1
+        if cursor < len(text):
+            positions.append(cursor)
+        index = cursor
+    return positions
+
+
+def _split_quote_intro_unit(text: str) -> list[str]:
+    match = re.search(r"([:\u2014]\s*)([\"“‘])", text)
+    if not match:
+        match = re.search(r"(\s-\s+)([\"“‘])", text)
+    if not match:
+        return [text]
+    split_at = match.end(1)
+    left = text[:split_at]
+    right = text[split_at:]
+    if _split_boundary_allowed(left, right):
+        return [left, right]
+    return [text]
+
+
+def performance_candidate_units(segment: DirectedSegment) -> list[str]:
+    text = segment.text
+    positions = _sentence_split_positions(text)
+    units: list[str] = []
+    cursor = 0
+    for position in positions:
+        units.extend(_split_quote_intro_unit(text[cursor:position]))
+        cursor = position
+    units.extend(_split_quote_intro_unit(text[cursor:]))
+    units = [unit for unit in units if unit]
+    if len(units) <= 1 or len(units) > MAX_ADAPTIVE_UNITS_PER_SEGMENT:
+        return [text]
+    if "".join(units) != text:
+        return [text]
+    wrapped = [{"text": unit} for unit in units]
+    try:
+        _validate_split_unit_boundaries(wrapped)
+    except ValueError:
+        return [text]
+    return units
+
+
 def _intensity_cap_for_text(segment: DirectedSegment, text: str) -> float:
     words = _performance_word_count(text)
     if words < MIN_STANDALONE_SPLIT_WORDS or len(text.strip()) < MIN_STANDALONE_SPLIT_CHARS:
@@ -457,10 +583,21 @@ def _directed_pause_after_ms(value: Any, segment: DirectedSegment) -> int:
 
 def _performance_system_prompt(cfg: EmotionPromptConfig) -> str:
     return (
-        "You are directing an audiobook performance. For each speech segment, "
-        "assign one emotion and one speaking pace. Do not split segments. "
-        "Avoid pause_after_ms for ordinary joins; use it only for a brief breath "
-        "at real rhetorical breaks.\n"
+        "You are directing an audiobook performance by proposing a sparse patch. "
+        "Previous and next context are for continuity and disambiguation only; "
+        "return edits only for CURRENT segment indexes. Omit segments that should "
+        "keep the neutral baseline. A normal edit may set emotion, speed, "
+        "intensity, or pause_after_ms. Intensity must be a normalized number "
+        "from 0.0 to 1.0. When code provides candidate_units for a segment, you "
+        "may return unit_edits that reference those unit_index values. Do not "
+        "invent unit text or boundaries. Use unit_edits rarely, only for a clear "
+        "performance shift inside one current segment. Do not split long "
+        "descriptive narration merely to vary neutral pacing. "
+        "Do not rewrite text, add synthesis_text, edit context, split across "
+        "multiple parent segments, isolate punctuation-driven fragments, or "
+        "create tiny prose tails. Prefer no edit unless a performance change is "
+        "clearly useful. Avoid pause_after_ms for ordinary joins; use it only "
+        "for a brief breath at real rhetorical breaks.\n"
         f"{cfg.injection_rules}\n"
         f"Pace labels: {', '.join(cfg.speed_labels)}."
     )
@@ -490,6 +627,103 @@ def _segment_annotation_prompt(segment: DirectedSegment, index: int) -> dict[str
         "voice_policy": segment.voice_policy,
         "text": segment.text,
     }
+
+
+CHUNK_PERFORMANCE_EDIT_KEYS = {
+    "segment_index",
+    "emotion",
+    "speed",
+    "intensity",
+    "pause_after_ms",
+    "unit_edits",
+}
+CHUNK_PERFORMANCE_UNIT_EDIT_KEYS = {
+    "unit_index",
+    "emotion",
+    "speed",
+    "intensity",
+    "pause_after_ms",
+}
+CHUNK_PERFORMANCE_METADATA_KEYS = {
+    "emotion",
+    "speed",
+    "intensity",
+    "pause_after_ms",
+}
+
+
+def _trim_previous_context(text: str) -> str:
+    return text[-CHUNK_PERFORMANCE_CONTEXT_CHARS:]
+
+
+def _trim_next_context(text: str) -> str:
+    return text[:CHUNK_PERFORMANCE_CONTEXT_CHARS]
+
+
+def _chunk_patch_prompt_segment(
+    segment: DirectedSegment,
+    neutral_segment: DirectedSegment,
+    index: int,
+) -> dict[str, Any]:
+    prompt = _segment_annotation_prompt(segment, index)
+    prompt["segment_index"] = prompt.pop("index")
+    candidates = performance_candidate_units(segment)
+    if len(candidates) > 1:
+        prompt["candidate_units"] = [
+            {"unit_index": unit_index, "text": text}
+            for unit_index, text in enumerate(candidates)
+        ]
+    return {
+        **prompt,
+        "baseline": {
+            "emotion": neutral_segment.emotion,
+            "speed": "normal",
+            "intensity": neutral_segment.engine_controls.get("intensity", 0.5),
+            "pause_after_ms": neutral_segment.pause_after_ms,
+        },
+    }
+
+
+def _chunk_patch_user_prompt(
+    segments: list[DirectedSegment],
+    neutral_segments: list[DirectedSegment],
+    window: ChunkWindow,
+    cfg: EmotionPromptConfig,
+    *,
+    validation_error: str | None = None,
+) -> str:
+    current = {
+        "text": window.text,
+        "segments": [
+            _chunk_patch_prompt_segment(segment, neutral_segment, index)
+            for index, (segment, neutral_segment) in enumerate(
+                zip(segments, neutral_segments)
+            )
+        ],
+    }
+    repair = (
+        "The previous patch was invalid. Return a complete replacement patch "
+        f"that fixes this validation error: {validation_error}\n\n"
+        if validation_error
+        else ""
+    )
+    return (
+        repair
+        + f"Available emotions: {', '.join(cfg.emotion_vocabulary)}\n\n"
+        "Return sparse edits only. Use segment_index values from current.segments. "
+        "Do not return edits for previous_context or next_context. Do not include "
+        "synthesis_text, rewritten text, or split unit text. For a candidate "
+        "unit split, include only segment_index and unit_edits at the edit level; "
+        "put unit_index plus emotion/speed/intensity/pause_after_ms on each unit "
+        "edit. Intensity must be between 0.0 and 1.0 inclusive. Prefer a normal "
+        "segment edit over unit_edits unless the delivery shift is obvious.\n\n"
+        "Direction task:\n"
+        f"{json.dumps({
+            'previous_context': _trim_previous_context(window.prev),
+            'current': current,
+            'next_context': _trim_next_context(window.next),
+        }, ensure_ascii=False)}"
+    )
 
 
 def _apply_emotion_annotation(
@@ -1844,6 +2078,152 @@ def annotate_with_fallback(
         return narrator_segment(window.text, registry)
 
 
+def _validate_chunk_patch_keys(item: dict[str, Any], allowed: set[str], label: str) -> None:
+    unknown = set(item) - allowed
+    if unknown:
+        raise ValueError(f"{label} includes unsupported fields: {', '.join(sorted(unknown))}")
+    if "synthesis_text" in item:
+        raise ValueError(f"{label} must not include synthesis_text")
+
+
+def _metadata_patch(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: item[key]
+        for key in CHUNK_PERFORMANCE_METADATA_KEYS
+        if key in item
+    }
+
+
+def _merge_adjacent_candidate_unit_segments(
+    segments: list[DirectedSegment],
+) -> list[DirectedSegment]:
+    merged: list[DirectedSegment] = []
+    for segment in segments:
+        if (
+            merged
+            and merged[-1].speaker == segment.speaker
+            and merged[-1].voice == segment.voice
+            and merged[-1].emotion == segment.emotion
+            and merged[-1].speed == segment.speed
+            and merged[-1].pause_after_ms == 0
+            and segment.pause_after_ms == 0
+            and merged[-1].delivery_type == segment.delivery_type
+            and merged[-1].voice_policy == segment.voice_policy
+            and merged[-1].join_policy == segment.join_policy
+            and merged[-1].engine_controls == segment.engine_controls
+        ):
+            merged[-1] = replace(
+                merged[-1],
+                text=merged[-1].text + segment.text,
+                original_text=(
+                    (merged[-1].original_text or merged[-1].text)
+                    + (segment.original_text or segment.text)
+                ),
+            )
+        else:
+            merged.append(segment)
+    return merged
+
+
+def _apply_chunk_performance_patch(
+    segments: list[DirectedSegment],
+    neutral_segments: list[DirectedSegment],
+    response: dict[str, Any],
+    cfg: EmotionPromptConfig,
+) -> list[DirectedSegment]:
+    edits = response.get("edits", [])
+    if not isinstance(edits, list):
+        raise ValueError("chunk performance patch requires edits array")
+
+    edits_by_index: dict[int, dict[str, Any]] = {}
+    for item in edits:
+        if not isinstance(item, dict):
+            raise ValueError("chunk performance edit must be an object")
+        _validate_chunk_patch_keys(
+            item,
+            CHUNK_PERFORMANCE_EDIT_KEYS,
+            "chunk performance edit",
+        )
+        index = int(item["segment_index"])
+        if index < 0 or index >= len(segments):
+            raise ValueError("chunk performance edit index out of range")
+        if index in edits_by_index:
+            raise ValueError("duplicate chunk performance edit")
+        edits_by_index[index] = item
+
+    updated: list[DirectedSegment] = []
+    for index, neutral_segment in enumerate(neutral_segments):
+        item = edits_by_index.get(index)
+        if item is None:
+            updated.append(neutral_segment)
+            continue
+        unit_edits = item.get("unit_edits")
+        if unit_edits is None:
+            updated.append(
+                _apply_emotion_annotation(
+                    segments[index],
+                    _metadata_patch(item),
+                    cfg,
+                )
+            )
+            continue
+
+        parent_fields = set(item) - {"segment_index", "unit_edits"}
+        if parent_fields:
+            raise ValueError("unit edit must put performance fields on candidate units")
+        if not isinstance(unit_edits, list) or not unit_edits:
+            raise ValueError("unit edit requires non-empty unit_edits")
+        candidate_texts = performance_candidate_units(segments[index])
+        if len(candidate_texts) < 2:
+            raise ValueError("unit edit requires multiple candidate units")
+
+        edits_by_unit: dict[int, dict[str, Any]] = {}
+        for unit in unit_edits:
+            if not isinstance(unit, dict):
+                raise ValueError("candidate unit edit must be an object")
+            _validate_chunk_patch_keys(
+                unit,
+                CHUNK_PERFORMANCE_UNIT_EDIT_KEYS,
+                "candidate unit edit",
+            )
+            unit_index = int(unit["unit_index"])
+            if unit_index < 0 or unit_index >= len(candidate_texts):
+                raise ValueError("candidate unit edit index out of range")
+            if unit_index in edits_by_unit:
+                raise ValueError("duplicate candidate unit edit")
+            edits_by_unit[unit_index] = unit
+
+        unit_segments: list[DirectedSegment] = []
+        for unit_index, text in enumerate(candidate_texts):
+            unit_segment = replace(
+                segments[index],
+                text=text,
+                original_text=text,
+            )
+            unit_segments.append(
+                _apply_emotion_annotation(
+                    unit_segment,
+                    _metadata_patch(edits_by_unit.get(unit_index, {})),
+                    cfg,
+                )
+            )
+        unit_segments = _merge_adjacent_candidate_unit_segments(unit_segments)
+
+        if all(
+            segment.emotion == neutral_segment.emotion
+            and segment.speed == neutral_segment.speed
+            and segment.pause_after_ms == neutral_segment.pause_after_ms
+            and segment.engine_controls.get("intensity")
+            == neutral_segment.engine_controls.get("intensity")
+            for segment in unit_segments
+        ):
+            updated.append(neutral_segment)
+        else:
+            updated.extend(unit_segments)
+
+    return updated
+
+
 def add_emotion_direction(
     segments: list[DirectedSegment],
     window: ChunkWindow,
@@ -1854,27 +2234,41 @@ def add_emotion_direction(
         return segments
 
     system = _performance_system_prompt(cfg)
-    segments_json = [
-        _segment_annotation_prompt(segment, i)
-        for i, segment in enumerate(segments)
-    ]
-    user = (
-        f"Available emotions: {', '.join(cfg.emotion_vocabulary)}\n\n"
-        f"Segments:\n{json.dumps(segments_json, ensure_ascii=False)}\n\n"
-        f"Context:\n---\n{window.text}\n---"
-    )
+    neutral_segments = neutral_emotion_direction(segments, cfg)
+    user = _chunk_patch_user_prompt(segments, neutral_segments, window, cfg)
 
+    validation_error = ""
     try:
-        response = llm.complete_json(system=system, user=user, schema=EMOTION_SCHEMA)
-        updated = list(segments)
-        for item in response.get("annotations", []):
-            index = int(item["index"])
-            if index < 0 or index >= len(updated):
-                raise ValueError("emotion annotation index out of range")
-            updated[index] = _apply_emotion_annotation(updated[index], item, cfg)
-        return updated
-    except Exception:
-        return segments
+        response = llm.complete_json(
+            system=system,
+            user=user,
+            schema=CHUNK_PERFORMANCE_PATCH_SCHEMA,
+        )
+        return _apply_chunk_performance_patch(segments, neutral_segments, response, cfg)
+    except Exception as exc:
+        validation_error = str(exc)
+        logger.warning("Chunk performance patch failed; retrying once: %s", exc)
+
+    repair_user = _chunk_patch_user_prompt(
+        segments,
+        neutral_segments,
+        window,
+        cfg,
+        validation_error=validation_error,
+    )
+    try:
+        response = llm.complete_json(
+            system=system,
+            user=repair_user,
+            schema=CHUNK_PERFORMANCE_PATCH_SCHEMA,
+        )
+        return _apply_chunk_performance_patch(segments, neutral_segments, response, cfg)
+    except Exception as repair_exc:
+        logger.warning(
+            "Chunk performance patch repair failed; using neutral direction: %s",
+            repair_exc,
+        )
+        return neutral_segments
 
 
 def _count_words(text: str) -> int:
@@ -1994,6 +2388,7 @@ def _merge_split_units(
 
     if len(guarded) == 1 and original_count > 1:
         raise ValueError("split direction collapsed to one performance unit")
+    _validate_split_unit_boundaries(guarded)
     return guarded
 
 
