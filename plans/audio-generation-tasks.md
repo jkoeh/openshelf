@@ -81,10 +81,9 @@ sequenceDiagram
     R->>R2: upload m4a + task_data.json
     R->>W: PATCH /runner/tasks/:id {from: uploading, to: succeeded}
 
-    loop client polls while screen open
-        C->>W: GET /tasks/:id
-        W-->>C: {status, error?}
-    end
+    Note over C: user refreshes manually
+    C->>W: GET /tasks/:id
+    W-->>C: {status, error?}
     C->>W: GET /tasks/:id/audio
     W->>R2: range read
     W-->>C: m4a stream
@@ -128,7 +127,7 @@ Public (client-facing):
 | Route | Purpose | Cache |
 |---|---|---|
 | `POST /api/v1/tasks` | Create task. Body `{text, engine, voice, title?}`, Zod-validated (length caps, enum of engine/voice pairs). Returns `201 {id, status}` | — |
-| `GET /api/v1/tasks/:id` | Status for the client's polling UI: `{id, status, error?, created_at, updated_at, title, engine, voice}` (not the full text) | `no-store` |
+| `GET /api/v1/tasks/:id` | Status, fetched on screen load and manual refresh: `{id, status, error?, created_at, updated_at, title, engine, voice}` (not the full text) | `no-store` |
 | `GET /api/v1/tasks/:id/audio` | Streams `tasks/{id}/audio.m4a` from R2 once succeeded; supports Range like `audio.ts` | `immutable` (bytes for a task id never change) |
 
 Runner (authenticated with `Authorization: Bearer $RUNNER_TOKEN`, a wrangler secret;
@@ -225,9 +224,10 @@ cache-policy invariant in `worker/CLAUDE.md`).
    submit button.
 2. `createTask()` in `client/lib/api.ts` → `POST /tasks` → store returned id locally
    (AsyncStorage list of "my tasks", since there are no accounts yet).
-3. Task list/detail screen polls `GET /tasks/:id` every ~5 s **only while the screen is
-   focused** (plain `setInterval` in a `useFocusEffect`; no background polling), rendering
-   the status and, on `failed`, the `error` reason.
+3. Task list/detail screen fetches `GET /tasks/:id` on load and on **manual refresh**
+   (pull-to-refresh / a refresh button) — no timers, no auto-polling, no push. TTS jobs
+   take minutes, so live status adds machinery without adding information. The screen
+   renders the status and, on `failed`, the `error` reason.
 4. On `succeeded`, show a play button wired to `GET /tasks/:id/audio` through the existing
    `expo-audio` player; word highlighting can reuse `useSyncEngine` against
    `task_data.json` later (phase 2 — phase 1 is audio only).
