@@ -151,7 +151,7 @@ WHERE id = (
   SELECT id FROM tasks
   WHERE status = 'pending'
      OR (status = 'processing' AND lease_expires_at < :now AND attempts < 3)
-  ORDER BY created_at
+  ORDER BY created_at, id
   LIMIT 1
 )
 RETURNING *;
@@ -160,6 +160,12 @@ RETURNING *;
 D1 executes this as one serialized statement, so two runners (or one runner double-polling)
 can never both receive the same task: the second `UPDATE` matches zero rows and returns
 nothing → the worker responds `204`.
+
+**Ordering is plain FIFO**: `ORDER BY created_at, id` executes tasks oldest-first (`id` is
+only a deterministic tie-breaker for same-millisecond creations). No priority scheme —
+task volume is human-scale and every task is equally important. If prioritization is ever
+needed, the upgrade is a `priority INTEGER NOT NULL DEFAULT 0` column prepended to the
+`ORDER BY`; no protocol or client change.
 
 ### Status transitions are also CAS
 
