@@ -68,7 +68,7 @@ flowchart LR
         W_EPUB[GET /books/:a/:t/epub]
         W_SPEC[GET /openapi.json + /docs<br/>auto-generated from Zod schemas]
         W_SEARCH[GET /source-books<br/>bounded autocomplete]
-        W_JOBS[Owner job create/status/retry<br/>PC claim/heartbeat/finish]
+        W_JOBS[Public default job requests/status<br/>Owner cancel/retry/direction<br/>PC claim/heartbeat/finish]
     end
 
     R_CAT --> W_CAT
@@ -141,6 +141,12 @@ Notes:
   entry count, and parsed source spoken words before starting LLM or synthesis.
   The default source-word budget is 100,000 words, including spoken headings;
   `--max-words` is an explicit owner override for larger books.
+- Generation requests for the fixed local Kokoro voice may be public, subject to
+  the atomic daily-start and queue caps. Only the owner can cancel or retry;
+  paid model direction is reserved for a future authenticated admin flow.
+  Cancellation is a terminal job state: queued
+  work cannot be claimed, and a running consumer loses its lease on the next
+  heartbeat and stops its child process. A canceled start is not refunded.
 
 ### Rendition vs build invariant
 
@@ -185,6 +191,7 @@ client/                 # TypeScript — Expo app (web + iOS + Android)
 download/               # (gitignored) downloaded EPUBs
 audio/                  # (gitignored) generated audio files
 plans/                  # design docs and plans
+design-qa.md             # catalog visual comparison and responsive QA record
 .github/workflows/      # offline API, consumer, and headless browser CI gate
 ```
 

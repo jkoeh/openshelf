@@ -42,6 +42,16 @@ describe("source discovery and owner jobs", () => {
 		await retryGenerationJob("job-1", "owner-secret");
 		expect(mockFetch.mock.calls[2][0]).toContain("/generation-jobs/job-1/retry");
 	});
+
+	it("creates and reads a public job without an authorization header", async () => {
+		mockFetch.mockImplementation(async () => jsonResponse({ id: "job-1" }));
+		await createGenerationJob("gutenberg:11");
+		const createInit = mockFetch.mock.calls[0][1] as RequestInit;
+		expect(createInit.headers).toEqual({ "Content-Type": "application/json" });
+		await fetchGenerationJob("job-1");
+		const statusInit = mockFetch.mock.calls[1][1] as RequestInit;
+		expect(statusInit.headers).toBeUndefined();
+	});
 });
 
 function jsonResponse(data: unknown, status = 200) {

@@ -6,7 +6,7 @@ OpenShelf is an open source public domain audiobook platform. Its Python pipelin
 
 - The client searches the **published audiobook catalog** by title or author, browses books and retained rendition builds, streams audio, highlights the current word, and seeks when a word is tapped.
 - The Python CLI searches and downloads source EPUBs, generates audiobooks locally, resumes a specified build, and uploads completed builds to R2.
-- A first Gutenberg-only generation slice is live in production: bounded typo-tolerant source suggestions, owner-protected job requests, D1 job leases, and an outbound PC consumer using Kokoro `af_heart`.
+- A first Gutenberg-only generation slice is live in production: bounded typo-tolerant source suggestions, D1 job leases, and an outbound PC consumer using Kokoro `af_heart`. The showcase flow supports capped public requests with owner cancellation.
 
 The [book discovery and generation job plan](plans/search-and-generation-jobs.md) tracks the wider rollout, including Standard Ebooks and more voices.
 
@@ -54,16 +54,18 @@ Build files use immutable cache headers. The book manifest and catalog use a sho
 
 Under `/api/v1`, the Worker serves `GET /catalog`, `/books/:author/:title`, `/books/:author/:title/builds`, `/books/:author/:title/sections/:sequence`, `/books/:author/:title/sections/:sequence/audio`, and book cover and EPUB routes. Section and audio requests identify a rendition and build. The catalog contains already-published audiobooks and its `q` search is a case-insensitive title/author substring filter. The API contract is generated from route schemas at `/api/v1/openapi.json`, with interactive docs at `/api/v1/docs`.
 
-The additive job API has `GET /source-books` suggestions, owner-authenticated
-job create/status/retry routes, and PC-only source sync, claim, heartbeat,
-progress, and finish routes. D1 stores the source index and leases. The Worker
+The additive job API has public `GET /source-books` suggestions, capped public
+job creation and status reads, owner-authenticated cancel/retry/regeneration,
+and PC-only source sync, claim, heartbeat, progress, and finish routes. D1 stores the source index and leases. The Worker
 checks the R2 book pointer, section objects, and catalog before completion.
 Rate-limit bindings protect public search and authentication attempts. A bounded
 15-second cache within each Worker instance can save D1 reads for repeated
 suggestions after rate limiting; it is best effort because instances do not
 share memory. Clients receive `no-store` and may see job availability lag by up
 to 15 seconds. D1 caps queued jobs, daily starts, and job attempts. Generation
-stays owner-only.
+is public for the fixed Kokoro voice; authenticated owner token routes handle
+cancel, retry, and regeneration. Browser admin sign-in and paid direction are
+planned separately.
 
 ## Development
 
@@ -117,41 +119,43 @@ Downloads go to `download/books/{source}/{author-slug}/{title-slug}.epub`. Local
 
 Voice direction uses the configured LLM provider (`LLM_PROVIDER`, with provider credentials such as `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`). Uploads use `R2_ACCOUNT_ID`, `R2_ACCESS_KEY`, `R2_SECRET_KEY`, and optional `R2_BUCKET`. Defaults and audio settings live in `pipeline/src/openshelf/config.py`.
 
-### Owner generation jobs
+### Generation jobs
 
 The first generation path accepts exact Project Gutenberg IDs and uses Kokoro
 `af_heart`. The PC pulls work over outbound HTTPS; no inbound port is needed.
 Production uses `openshelf-jobs` D1 and the `openshelf` R2 bucket. Staging uses
 isolated `openshelf-jobs-staging` D1 and `openshelf-staging` R2 resources. Both
 Workers have distinct owner and PC credentials, and the production source index
-has its first 64 Gutenberg editions.
+held 519 Gutenberg editions when checked on September 30, 2026.
 The client identifies this as a limited source index; an empty suggestion list
-does not mean Gutenberg lacks the book. Only the owner can submit generation
-jobs, using a dedicated OpenShelf key rather than a Cloudflare credential.
+does not mean Gutenberg lacks the book. Visitors can request the fixed Kokoro
+voice within the Worker daily and queue caps. Owner retry, regeneration, and
+cancellation currently use the local owner token. Browser admin sign-in and
+paid direction are planned separately.
 
 On this PC, the two locally generated tokens are in the ignored
-`worker/.secrets/` directory. The **owner token** is entered in the client only
-when creating or retrying a job; the **PC token** stays on the PC. To run the
+`worker/.secrets/` directory. The **owner token** stays on this PC for local
+administration; the **PC token** authenticates the outbound consumer. Neither
+is entered into the public client. To run the
 staging path from the repository root in PowerShell:
 
 ```powershell
 $env:EXPO_PUBLIC_API_BASE = 'https://openshelf-api-staging.johnkoeh.workers.dev/api/v1'
 npm --prefix client run web
-# In a separate terminal, after the owner submits a job:
+# In a separate terminal, after a visitor submits a job:
 $env:OPENSHELF_PC_TOKEN = (Get-Content worker/.secrets/pc-token -Raw).Trim()
 $env:R2_BUCKET = 'openshelf-staging'
 .\.venv\Scripts\python.exe pipeline/scripts/openshelf-pipeline.py books consume-jobs --api-base https://openshelf-api-staging.johnkoeh.workers.dev/api/v1 --sync-pages 2
 ```
 
-Copy the owner token from `worker/.secrets/owner-token` into the client's token
-field. For production, use `worker/.secrets/prod-owner-token` in the client,
-`worker/.secrets/prod-pc-token` as `OPENSHELF_PC_TOKEN` on the PC, the
+For production, use `worker/.secrets/prod-pc-token` as `OPENSHELF_PC_TOKEN`
+on the PC, the
 `https://openshelf-api.johnkoeh.workers.dev/api/v1` API base, and
 `R2_BUCKET=openshelf`. Keep these environment credentials separate.
 Source sync can cover a few more Gutendex pages with `--sync-pages N` (up to
 10 per run); use the bounded, rights-checked official catalog import below for
-broader coverage. The initial production seed has 64 popular editions,
-including Gutenberg #11. The PC
+broader coverage. The first seed had 64 popular editions, including Gutenberg
+#11; the later rights-verified import brought the index to 519. The PC
 must have its pipeline dependencies, GPU, ffmpeg, and R2 upload credentials.
 For a broader, operator-controlled index, download Gutenberg's weekly
 [compressed CSV catalog](https://www.gutenberg.org/ebooks/offline_catalogs.html)
@@ -180,11 +184,23 @@ and 500-record default keep each import small. Repeat with `--after-id <last imp
 to cover later ranges only after checking D1's daily row-write usage and the
 account plan; the cap applies per run, not per day.
 Use `--once` to claim at most one job. The Worker caps generation at two starts
-per UTC day, three queued jobs, and three attempts per job; a search request is
-limited to 60 per minute per client IP. Worker rate limits reduce D1 work, but
+per UTC day, three queued jobs, and three attempts per job; public job creation
+is limited to five attempts per minute per client IP and search to 60 per
+minute per client IP. Cancellation revokes a running lease and stops the PC
+child process on its next 30-second heartbeat; it does not refund a daily start
+or delete already uploaded audio. Worker rate limits reduce D1 work, but
 a large bot flood can still invoke the Worker on `workers.dev`. A custom-domain
 WAF rule can reject such traffic before invocation if this becomes public at
 larger scale.
+To cancel one queued or running production job from this PC, copy its job ID
+from the request status and run:
+
+```powershell
+.\worker\scripts\cancel-job.ps1 -JobId '<job UUID>'
+```
+
+The script reads the ignored production owner key locally; it never asks for
+that key in the public site. Add `-Environment staging` for a staging job.
 The PC consumer rejects EPUB archives above 2 MiB ZIP metadata, 256 MiB
 expanded size, or 5,000 entries, and books over 100,000 source spoken words
 (body plus spoken headings) before starting any LLM or synthesis work.

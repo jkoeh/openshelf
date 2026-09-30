@@ -110,8 +110,11 @@ archive before syncing; the Worker still validates source IDs and URL hosts.
 Search uses the longest typed query token as the indexed prefix at three or more
 characters, then tries indexed adjacent-transposition candidates, then a
 two-character indexed sample; each lookup is limited to 80 candidates. The
-owner can create or retry a Kokoro `af_heart` job with an exact `gutenberg:<id>`
-source ID. A separate PC credential synchronizes source metadata and claims a
+visitor can request a fixed Kokoro `af_heart` job with an exact `gutenberg:<id>`
+source ID under a dedicated create rate limit. Owner authentication is required
+for retry, regeneration, and cancellation. Paid model direction is reserved
+for a future authenticated admin flow. A separate PC
+credential synchronizes source metadata and claims a
 job with a renewable lease. The PC downloads only allowlisted Gutenberg EPUB
 URLs and runs the existing exact-EPUB pipeline. Completion checks the R2 book
 pointer, rendition manifest and every listed section audio object. Public
@@ -121,10 +124,14 @@ responses enter the cache. Isolates do not share memory, so cold instances
 still query D1; clients receive `no-store`, and job state can lag by at most
 15 seconds. D1 enforces active-job
 deduplication, three pending jobs, two successful start reservations per UTC
-day and three attempts per job.
+day and three attempts per job. Canceling a queued/running job moves it to a
+terminal `canceled` state and revokes its lease without refunding the start;
+the PC stops at its next rejected heartbeat.
 Only invalid owner or PC credentials count against the separate authentication
 rate limit; valid consumer requests remain usable. Rejected queue-full or
-duplicate submissions consume no daily reservation. All job responses are
+duplicate submissions consume no daily reservation. Public job status uses
+the search rate limiter before D1. Public job responses omit internal build
+IDs, attempt counts, and arbitrary PC error codes. All job responses are
 `no-store`. Neither credential is sent in a public bundle.
 
 ## `GET /books/:author/:title` response shape
