@@ -54,6 +54,12 @@ export default app;
 
 ## Shared schemas
 
+For generation routes, each request/response stays in `createRoute` Zod schemas.
+Owner and PC bearer tokens are distinct Worker secrets. No job route is cached.
+The PC may finish only while its lease token matches; completion validates the
+published R2 build and catalog before returning success. The database can be
+absent in an environment, in which case discovery and job routes return 503.
+
 - `schemas/error.ts` — `ErrorSchema` for `{ error: { code, message } }`. Use for all error responses.
 - `schemas/params.ts` — `SlugSchema`, `ChapterNumberStringSchema`. Use for any path param that matches the same regex.
 

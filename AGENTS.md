@@ -44,6 +44,8 @@ flowchart LR
         R_CAT[catalog.json]
     end
 
+    R_JOBS[(D1 source index + generation jobs)]
+
     P5 --> R_M4A
     P6 --> R_CD
     P6A --> R_REG
@@ -65,6 +67,8 @@ flowchart LR
         W_COVER[GET /books/:a/:t/cover]
         W_EPUB[GET /books/:a/:t/epub]
         W_SPEC[GET /openapi.json + /docs<br/>auto-generated from Zod schemas]
+        W_SEARCH[GET /source-books<br/>bounded autocomplete]
+        W_JOBS[Owner job create/status/retry<br/>PC claim/heartbeat/finish]
     end
 
     R_CAT --> W_CAT
@@ -77,10 +81,14 @@ flowchart LR
     R_M4A --> W_AUDIO
     R_COVER --> W_COVER
     R_EPUB --> W_EPUB
+    R_JOBS --> W_SEARCH
+    R_JOBS --> W_JOBS
+    W_JOBS --> R_JOBS
 
     subgraph Client[Client — Expo]
         direction TB
         C1[Catalog page<br/>fetchCatalog]
+        C_SEARCH[Source search + generation status]
         C2[Book detail<br/>fetchBook → manifest with renditions]
         C2B[Collapsed rendition picker<br/>engine -> voice -> upload time]
         C3[Reader page<br/>pin build at section load<br/>fetchSection rendition build → heading + body + words]
@@ -92,11 +100,21 @@ flowchart LR
     end
 
     W_CAT  --> C1
+    W_SEARCH --> C_SEARCH
+    C_SEARCH --> W_JOBS
     W_BOOK --> C2
     W_BUILDS --> C2B
     C2B --> C3
     W_CH   --> C3
     W_AUDIO --> C4
+
+    subgraph PC[Owner PC — outbound consumer]
+        J1[Poll + lease job] --> J2[Exact Gutenberg EPUB]
+        J2 --> J3[Existing Kokoro/WhisperX pipeline]
+    end
+    J1 <--> W_JOBS
+    J3 --> R_M4A
+    J3 --> R_CD
 ```
 
 
@@ -162,6 +180,7 @@ client/                 # TypeScript — Expo app (web + iOS + Android)
 download/               # (gitignored) downloaded EPUBs
 audio/                  # (gitignored) generated audio files
 plans/                  # design docs and plans
+.github/workflows/      # offline API, consumer, and headless browser CI gate
 ```
 
 ## Root Commands

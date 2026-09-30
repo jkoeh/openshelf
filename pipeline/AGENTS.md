@@ -48,6 +48,10 @@ under `pipeline/src/openshelf/pipeline/engines/`.
 ## CLI Rules
 
 - `openshelf-pipeline` is the canonical command surface.
+- `openshelf-pipeline books consume-jobs` polls outward to the Worker, downloads
+  an exact Gutenberg EPUB after host and EPUB validation, renews its lease, and
+  invokes the existing exact-EPUB DAG runner with a fixed build ID. It never
+  opens a listener or stores the owner credential.
 - `openshelf-pipeline books ...` owns user-facing book workflows: search,
   download, process local EPUBs, upload, and catalog refresh.
 - `openshelf-pipeline dag ...` owns repairable artifact stages and full DAG

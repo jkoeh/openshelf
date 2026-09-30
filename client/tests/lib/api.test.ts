@@ -8,6 +8,10 @@ import {
 	fetchBookBuilds,
 	fetchCatalog,
 	fetchSection,
+	fetchSourceBooks,
+	createGenerationJob,
+	fetchGenerationJob,
+	retryGenerationJob,
 } from "../../lib/api";
 
 const mockFetch = vi.fn();
@@ -15,6 +19,29 @@ const mockFetch = vi.fn();
 beforeEach(() => {
 	mockFetch.mockReset();
 	vi.stubGlobal("fetch", mockFetch);
+});
+
+describe("source discovery and owner jobs", () => {
+	it("encodes autocomplete text and uses no-store", async () => {
+		mockFetch.mockResolvedValue(jsonResponse({ books: [] }));
+		await fetchSourceBooks("Alice & Bob");
+		expect(mockFetch.mock.calls[0][0]).toContain("q=Alice%20%26%20Bob");
+		expect(mockFetch.mock.calls[0][1]).toEqual({ cache: "no-store" });
+	});
+
+	it("sends the exact source ID and owner bearer token only on job calls", async () => {
+		mockFetch.mockImplementation(async () => jsonResponse({ id: "job-1" }));
+		await createGenerationJob("gutenberg:11", "owner-secret");
+		const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+		expect(url).toContain("/generation-jobs");
+		expect(init.method).toBe("POST");
+		expect((init.headers as Record<string, string>).Authorization).toBe("Bearer owner-secret");
+		expect(JSON.parse(init.body as string)).toEqual({ source_id: "gutenberg:11" });
+		await fetchGenerationJob("job-1", "owner-secret");
+		expect(mockFetch.mock.calls[1][0]).toContain("/generation-jobs/job-1");
+		await retryGenerationJob("job-1", "owner-secret");
+		expect(mockFetch.mock.calls[2][0]).toContain("/generation-jobs/job-1/retry");
+	});
 });
 
 function jsonResponse(data: unknown, status = 200) {

@@ -30,8 +30,10 @@ src/
     catalog.ts          # GET /api/v1/catalog — catalog.json fast path, manifest-derived fallback
     book.ts             # GET /api/v1/books/:author/:title
     builds.ts           # GET /api/v1/books/:author/:title/builds — retained build selection metadata
-    chapters.ts         # GET /api/v1/books/:author/:title/chapters/:number?rendition=&build= — text + inline word timestamps (immutable)
-    audio.ts            # GET /api/v1/books/:author/:title/audio/:chapter?rendition=&build= — m4a stream, supports Range (immutable)
+    sections.ts         # GET /api/v1/books/:author/:title/sections/:sequence — text + word timestamps
+    audio.ts            # GET /api/v1/books/:author/:title/sections/:sequence/audio — m4a Range stream
+    source-books.ts     # GET /api/v1/source-books and internal source sync
+    generation-jobs.ts  # Owner job control and PC lease protocol
     cover.ts            # GET /api/v1/books/:author/:title/cover
     epub.ts             # GET /api/v1/books/:author/:title/epub
   utils/
@@ -52,7 +54,9 @@ tests/
 - TypeScript, Hono v4 + `@hono/zod-openapi` v0.18, `@hono/swagger-ui` v0.5
 - Zod v3 (pinned; v4 is incompatible with `@hono/zod-openapi` v0.18)
 - Cloudflare Workers runtime
-- R2 bucket binding (`R2_BUCKET`)
+- R2 bucket binding (`R2_BUCKET`); optional D1 job/index binding (`JOB_DB`) and
+  Worker search/auth rate-limit bindings. Job features return 503 when D1 or
+  server-side secrets are absent; production must provision these before use.
 - Vitest + miniflare for testing
 - Biome for linting/formatting
 
@@ -95,7 +99,22 @@ npm run seed
 - Inside `app.openapi(...)` handlers, return errors with inline `c.json({ error: { code, message } }, status)` so the response is type-checked against `ErrorSchema`. The helpers in `utils/response.ts` are reserved for the global `onError`/`notFound` (which run outside any `createRoute`).
 - Path/query schemas live in `schemas/params.ts` if shared across routes; route-local response shapes live in the route file.
 - Tests use `@cloudflare/vitest-pool-workers` with fixture data in `fixtures/`. They use `app.request(...)` and are unaffected by the OpenAPI migration.
-- `chapters.ts` reads `audio/{rendition}/builds/{build}/chapter_data.json` (single source of truth for chunk text + word timestamps). It flattens per-chunk word arrays and adds `chunk_idx` per word in the response.
+- `sections.ts` reads `audio/{rendition}/builds/{build}/section_data.json` (single source of truth for heading, body text and word timestamps).
+
+## Search and generation v1
+
+Gutenberg-only source suggestions come from a bounded, indexed D1 table. The
+owner can create or retry a Kokoro `af_heart` job with an exact `gutenberg:<id>`
+source ID. A separate PC credential synchronizes source metadata and claims a
+job with a renewable lease. The PC downloads only allowlisted Gutenberg EPUB
+URLs and runs the existing exact-EPUB pipeline. Completion checks the R2 book
+pointer, rendition manifest and every listed section audio object. Public
+search is rate-limited; D1 enforces active-job deduplication, three pending
+jobs, two successful start reservations per UTC day and three attempts per job.
+Only invalid owner or PC credentials count against the separate authentication
+rate limit; valid consumer requests remain usable. Rejected queue-full or
+duplicate submissions consume no daily reservation. All job responses are
+`no-store`. Neither credential is sent in a public bundle.
 
 ## `GET /books/:author/:title` response shape
 
@@ -203,7 +222,12 @@ The client treats rendition as a setting and build as transparent by default: it
 ## Environments
 
 - **staging**: `openshelf-api-staging` worker, `openshelf-staging` R2 bucket
-- **production**: `openshelf-api` worker, `openshelf` R2 bucket
+- **production**: `openshelf-api` worker, `openshelf` R2 bucket,
+  `openshelf-jobs` D1, separate owner/PC secrets, and search/failed-auth limits.
+  Apply D1 migrations and seed the source index before exposing generation.
+  The top-level Wrangler bindings also name production resources because
+  Cloudflare Workers Builds runs `wrangler versions upload` without `--env` for
+  PR previews; local `wrangler dev` still uses local D1 storage by default.
 
 Production deploys are automated by Cloudflare Workers Builds / Git integration:
 

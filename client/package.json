@@ -10,6 +10,7 @@
     "check": "biome check .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "build:web": "expo export --platform web",
     "build:ios": "eas build --platform ios",
     "build:android": "eas build --platform android"
@@ -41,6 +42,7 @@
     "tailwindcss": "^3.4.19"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/react": "~19.2.2",
     "typescript": "~5.9.2",
     "vitest": "^4.1.0"

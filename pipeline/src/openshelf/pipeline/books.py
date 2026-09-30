@@ -589,6 +589,12 @@ def _build_parser() -> argparse.ArgumentParser:
     reprocess.add_argument("title")
     _add_processing_options(reprocess)
 
+    consume = subparsers.add_parser("consume-jobs", help="Poll and run owner generation jobs")
+    consume.add_argument("--api-base", required=True)
+    consume.add_argument("--sync-pages", type=int, default=0)
+    consume.add_argument("--once", action="store_true")
+    consume.add_argument("--device", choices=["auto", "cuda", "mps", "cpu"], default="auto")
+
     return parser
 
 
@@ -602,6 +608,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             return process_books(args, parser)
         if args.command == "reprocess":
             return reprocess_book(args, parser)
+        if args.command == "consume-jobs":
+            from openshelf.pipeline import job_consumer
+            passed = ["--api-base", args.api_base, "--sync-pages", str(args.sync_pages), "--device", args.device]
+            if args.once:
+                passed.append("--once")
+            return job_consumer.main(passed)
     except ValueError as exc:
         parser.error(str(exc))
     return 2

@@ -11,6 +11,30 @@ export interface CatalogBook {
   has_cover?: boolean;
 }
 
+export interface SourceBook {
+  source_id: string;
+  title: string;
+  author: string;
+  state: "ready_to_generate" | "queued" | "running" | "failed" | "available";
+  job_id: string | null;
+  author_slug: string | null;
+  title_slug: string | null;
+}
+
+export interface GenerationJob {
+  id: string;
+  source_id: string;
+  build_id: string;
+  state: "queued" | "running" | "completed" | "failed";
+  stage: string;
+  attempts: number;
+  author_slug: string | null;
+  title_slug: string | null;
+  error_code: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface CatalogResponse {
   version: number;
   generated_at: string;
