@@ -1,84 +1,123 @@
 import { expect, test } from "@playwright/test";
 
-test("searches an edition, creates one owner job, and opens the completed audiobook", async ({ page }) => {
-  let createCount = 0;
-  let statusCount = 0;
+const edition = {
+  source_id: "gutenberg:11", title: "Alice's Adventures in Wonderland", author: "Lewis Carroll",
+  state: "ready_to_generate", job_id: null, author_slug: null, title_slug: null,
+};
+
+async function mockCatalog(page: import("@playwright/test").Page, books = [edition]) {
   await page.route("**/api/v1/catalog**", async (route) => route.fulfill({ json: {
     version: 2, generated_at: "2026-09-29", books: [], total: 0, page: 1, limit: 20,
   } }));
-  await page.route("**/api/v1/source-books**", async (route) => route.fulfill({ json: { books: [{
-    source_id: "gutenberg:11", title: "Alice's Adventures in Wonderland", author: "Lewis Carroll",
-    state: "ready_to_generate", job_id: null, author_slug: null, title_slug: null,
-  }] } }));
+  await page.route("**/api/v1/source-books**", async (route) => route.fulfill({ json: { books } }));
+}
+
+test("mobile visitor requests an audiobook without a token and opens it when ready", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  let createCount = 0;
+  let statusCount = 0;
+  await mockCatalog(page);
   await page.route("**/api/v1/generation-jobs", async (route) => {
-    expect(route.request().headers().authorization).toBe("Bearer test-owner-token-longer-than-twenty-four");
+    expect(route.request().headers().authorization).toBeUndefined();
     expect(route.request().postDataJSON()).toEqual({ source_id: "gutenberg:11" });
     createCount++;
-    await route.fulfill({ json: { id: "job-1", source_id: "gutenberg:11", build_id: "1234567890abcdef",
-      state: "queued", stage: "queued", attempts: 0, author_slug: null, title_slug: null,
+    await route.fulfill({ json: { id: "job-1", source_id: "gutenberg:11",
+      state: "queued", stage: "queued", author_slug: null, title_slug: null,
       error_code: null, created_at: "2026-09-29", updated_at: "2026-09-29" } });
   });
   await page.route("**/api/v1/generation-jobs/job-1", async (route) => {
+    expect(route.request().headers().authorization).toBeUndefined();
     statusCount++;
-    await route.fulfill({ json: { id: "job-1", source_id: "gutenberg:11", build_id: "1234567890abcdef",
-      state: "completed", stage: "completed", attempts: 1, author_slug: "lewis-carroll", title_slug: "alice-g11",
+    await route.fulfill({ json: { id: "job-1", source_id: "gutenberg:11",
+      state: "completed", stage: "completed", author_slug: "lewis-carroll", title_slug: "alice-g11",
       error_code: null, created_at: "2026-09-29", updated_at: "2026-09-29" } });
   });
   await page.route("**/api/v1/books/lewis-carroll/alice-g11**", async (route) => route.fulfill({ status: 404, json: { error: { code: "NOT_FOUND", message: "Fixture stops at navigation" } } }));
 
   await page.goto("/");
-  await page.getByPlaceholder("Search books...").fill("alcie");
-  await expect(page.getByText("Alice's Adventures in Wonderland")).toBeVisible();
-  await page.getByRole("button", { name: "Generate audio" }).click();
-  await expect(page.getByLabel("Owner token")).toBeVisible();
-  await page.getByLabel("Owner token").fill("test-owner-token-longer-than-twenty-four");
-  await page.getByRole("button", { name: "Submit generation job" }).click();
-  await expect(page.getByText("Generation queued")).toBeVisible();
+  await page.getByRole("textbox", { name: "Search books" }).fill("alice");
+  await expect(page.getByText(edition.title)).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("catalog-mobile.png"), fullPage: true });
+  await expect(page.getByText("No books found")).toHaveCount(0);
+  await page.getByRole("button", { name: "Request audiobook" }).click();
+  await expect(page.getByLabel("Owner token")).toHaveCount(0);
   await expect(page.getByText("Generation completed")).toBeVisible({ timeout: 10_000 });
-  await page.getByRole("link", { name: "Open finished audiobook" }).click();
+  await page.getByRole("link", { name: "Open audiobook" }).click();
   await expect(page).toHaveURL(/\/book\/lewis-carroll\/alice-g11/);
   expect(createCount).toBe(1);
   expect(statusCount).toBeGreaterThan(0);
 });
 
-test("keeps retry available after rights verification fails", async ({ page }) => {
+test("desktop shows two edition cards and keeps failed jobs out of public retry", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const second = { ...edition, source_id: "gutenberg:12", title: "Another Edition" };
+  await mockCatalog(page, [edition, second]);
   let createCount = 0;
   let retryCount = 0;
-  await page.route("**/api/v1/catalog**", async (route) => route.fulfill({ json: {
-    version: 2, generated_at: "2026-09-29", books: [], total: 0, page: 1, limit: 20,
-  } }));
-  await page.route("**/api/v1/source-books**", async (route) => route.fulfill({ json: { books: [{
-    source_id: "gutenberg:11", title: "Alice's Adventures in Wonderland", author: "Lewis Carroll",
-    state: "ready_to_generate", job_id: null, author_slug: null, title_slug: null,
-  }] } }));
   await page.route("**/api/v1/generation-jobs", async (route) => {
     createCount++;
-    await route.fulfill({ json: { id: "job-1", source_id: "gutenberg:11", build_id: "1234567890abcdef",
-      state: "queued", stage: "queued", attempts: 0, author_slug: null, title_slug: null,
+    await route.fulfill({ json: { id: "job-1", source_id: "gutenberg:11",
+      state: "queued", stage: "queued", author_slug: null, title_slug: null,
       error_code: null, created_at: "2026-09-29", updated_at: "2026-09-29" } });
   });
   await page.route("**/api/v1/generation-jobs/job-1", async (route) => route.fulfill({ json: {
-    id: "job-1", source_id: "gutenberg:11", build_id: "1234567890abcdef",
-    state: "failed", stage: "failed", attempts: 1, author_slug: null, title_slug: null,
-    error_code: "RightsNotVerified", created_at: "2026-09-29", updated_at: "2026-09-29",
+    id: "job-1", source_id: "gutenberg:11", state: "failed", stage: "failed",
+    author_slug: null, title_slug: null, error_code: "RIGHTS_NOT_VERIFIED",
+    created_at: "2026-09-29", updated_at: "2026-09-29",
   } }));
   await page.route("**/api/v1/generation-jobs/job-1/retry", async (route) => {
-    expect(route.request().headers().authorization).toBe("Bearer test-owner-token-longer-than-twenty-four");
     retryCount++;
-    await route.fulfill({ json: { id: "job-1", source_id: "gutenberg:11", build_id: "1234567890abcdef",
-      state: "queued", stage: "queued", attempts: 1, author_slug: null, title_slug: null,
-      error_code: null, created_at: "2026-09-29", updated_at: "2026-09-29" } });
+    await route.fulfill({ status: 403, json: { error: { code: "UNAUTHORIZED" } } });
   });
 
   await page.goto("/");
-  await page.getByPlaceholder("Search books...").fill("alice");
-  await page.getByRole("button", { name: "Generate audio" }).click();
-  await page.getByLabel("Owner token").fill("test-owner-token-longer-than-twenty-four");
-  await page.getByRole("button", { name: "Submit generation job" }).click();
-  await expect(page.getByText("Generation failed")).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByText(/Rights could not be verified/)).toBeVisible();
-  await page.getByRole("button", { name: "Retry generation" }).click();
-  await expect.poll(() => retryCount).toBe(1);
-  await expect(page.getByRole("button", { name: "View generation" })).toBeVisible();
+  await page.getByRole("textbox", { name: "Search books" }).fill("alice");
+  await expect(page.getByText(edition.title)).toBeVisible();
+  await expect(page.getByText(second.title)).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("catalog-desktop.png"), fullPage: true });
+  const first = await page.getByText(edition.title).boundingBox();
+  const other = await page.getByText(second.title).boundingBox();
+  expect(first).not.toBeNull();
+  expect(other).not.toBeNull();
+  expect(Math.abs(first!.y - other!.y)).toBeLessThan(40);
+  await page.getByRole("button", { name: "Request audiobook" }).first().click();
+  await expect(page.getByText(/Rights could not be verified/)).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("button", { name: "Retry generation" })).toHaveCount(0);
+  await expect(page.getByLabel("Owner token")).toHaveCount(0);
   expect(createCount).toBe(1);
+  expect(retryCount).toBe(0);
+});
+
+test("tablet keeps edition cards within the viewport", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 820, height: 1180 });
+  await mockCatalog(page, [edition, { ...edition, source_id: "gutenberg:12", title: "Another Edition" }]);
+  await page.goto("/");
+  await page.getByRole("textbox", { name: "Search books" }).fill("alice");
+  await expect(page.getByText("Another Edition")).toBeVisible();
+  const cards = await page.getByRole("button", { name: "Request audiobook" }).all();
+  const first = await cards[0].boundingBox();
+  const second = await cards[1].boundingBox();
+  expect(first).not.toBeNull();
+  expect(second).not.toBeNull();
+  expect(Math.abs(first!.y - second!.y)).toBeLessThan(40);
+  expect(second!.x + second!.width).toBeLessThanOrEqual(820);
+  await page.screenshot({ path: testInfo.outputPath("catalog-tablet.png"), fullPage: true });
+});
+
+test("mobile search presents two matching editions without overflow", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const consoleErrors: string[] = [];
+  page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  await mockCatalog(page, [
+    { ...edition, source_id: "gutenberg:2554", title: "Crime and Punishment", author: "Dostoyevsky, Fyodor" },
+    { ...edition, source_id: "gutenberg:2760", title: "Celebrated Crimes (Complete)", author: "Dumas, Alexandre" },
+  ]);
+  await page.goto("/");
+  await page.getByRole("textbox", { name: "Search books" }).fill("crime and pu");
+  await expect(page.getByText("Celebrated Crimes (Complete)")).toBeVisible();
+  const rightEdge = await page.evaluate(() => document.documentElement.scrollWidth);
+  expect(rightEdge).toBeLessThanOrEqual(390);
+  await expect(page.getByRole("button", { name: "Request audiobook" })).toHaveCount(2);
+  await page.screenshot({ path: testInfo.outputPath("design-mobile.png"), fullPage: true });
+  expect(consoleErrors).toEqual([]);
 });

@@ -75,11 +75,14 @@ flowchart LR
   geographically restricted; the operator is responsible for distribution
   rights beyond the U.S. marker used by the automatic path. A rights-failed
   job may be retried by the owner, but every attempt repeats the PC preflight.
-- v1 generation is owner-only. The web client prompts the owner for a token
-  held in session storage; native uses secure device storage. A Worker secret
-  validates that token. A separate Worker secret authorizes PC claim, progress,
-  completion, and source-index writes. Neither secret is bundled in the app.
-  Listening and searching remain public.
+- Public visitors may request the fixed Kokoro `af_heart` narration without a
+  credential. Worker rate limiting runs before D1 for creation and status reads,
+  and atomic D1 daily-start,
+  queue, and active-source caps remain authoritative. Owner operations such as
+  canceling, retrying, and regeneration require the owner token. Paid model
+  direction is reserved for a future browser admin sign-in; a separate PC secret authorizes claim, progress,
+  completion, and source-index writes. Neither PC nor owner secrets are bundled
+  in the app. Listening and searching remain public.
 - One active job per `(source_id, rendition)` is enforced in D1. Duplicate
   requests return the existing job. An already published edition opens its
   audiobook unless the owner explicitly requests regeneration. Retrying a
@@ -91,6 +94,11 @@ flowchart LR
   `build_id` is reused after a crash, with `--resume` and the existing `run.json`
   input check. A job is complete only after the rendition manifest, section
   artifacts, book pointer, and catalog are published and readable.
+- Cancel is terminal for a queued or running job. It revokes the current lease;
+  a running PC checks in every 30 seconds and stops its child process after a
+  rejected heartbeat. Daily start reservations remain spent. Cancel does not
+  delete already published R2 artifacts or guarantee interruption of an upload
+  already in progress.
 - Source metadata and audiobook catalog entries join on `source_id`. Add an
   optional source ID to newly generated book manifests/catalog rows while
   preserving compatibility with existing R2 objects and local EPUB workflows.
@@ -130,8 +138,9 @@ per-book cost. Electricity is `average PC kW × runtime hours × local $/kWh`.
 
 ## Bot and abuse controls
 
-The Worker now exposes owner-only generation jobs alongside public reads. Its
-public autocomplete is rate-limited before D1 access. The following controls
+The Worker exposes capped public fixed-voice generation requests and status,
+with owner-only administration alongside public reads. Its autocomplete is
+rate-limited before D1 access. The following controls
 are the current baseline and near-term hardening rules:
 
 1. **Public search:** use a Worker rate-limiting binding keyed by route and
@@ -144,15 +153,18 @@ are the current baseline and near-term hardening rules:
    to clients; availability may lag by 15 seconds. Make
    audio/range routes a separate, more generous category so normal playback
    is not throttled. Adjust thresholds from measured traffic.
-2. **Job creation:** require an owner credential on every create, retry, and
-   regeneration request; reject invalid credentials before a job write. Store
-   the verifier as a Worker secret, never in the public client bundle or logs.
-   Apply a separate rate limit to authentication failures. Enforce, with atomic
+2. **Job creation:** allow unauthenticated fixed-voice requests through a
+   dedicated, per-IP Worker limit before D1. Require owner authentication for
+   regeneration, retry, cancellation, and paid direction; reject invalid
+   credentials before a job write. Store owner credentials as Worker secrets,
+   never in the public client bundle or logs. Apply a separate rate limit to
+   authentication failures. Enforce, with atomic
    D1 writes, one active job per source/rendition, at most three queued jobs,
    an initial owner budget of two generation starts per day including retries,
    and at most three attempts per job. Return the existing job for duplicate
    requests. Only accept known source IDs and allowed engine/voice choices.
-   The D1 quota is the authoritative GPU cost cap.
+   The D1 quota is the authoritative GPU cost cap. Canceled reservations stay
+   spent so an owner cannot cancel and create repeatedly to exceed that cap.
 3. **PC access:** require a distinct, revocable consumer credential for claim,
    heartbeat, progress, source sync, and finish. Keep it only on the PC.
    Require a valid lease token for job updates. No inbound PC port is exposed.
@@ -193,8 +205,9 @@ typos, then uses a bounded two-character sample as a final fallback. Each
 lookup uses the token index and scans at most 80 candidates.
 
 `GET /api/v1/source-books?q=&limit=` returns ranked suggestions with source ID,
-title, author, source, and one of `ready_to_generate`, `queued`, `running`,
-`failed`, or `available`, derived from jobs and published audiobook metadata.
+title, author, and one of `ready_to_generate`, `queued`, `running`, `failed`, or
+`available`, derived from jobs and published audiobook metadata. A canceled
+latest job maps back to `ready_to_generate`.
 An available result carries the existing book route slugs. Query
 length is bounded; queries shorter than two characters return no suggestions.
 Ranking favors exact title, title prefix, author prefix, then word matches.
@@ -205,11 +218,11 @@ stale responses; do not invoke a model for each keystroke. Preserve
 
 ### Jobs and authorization
 
-`generation_jobs` stores a random job ID, source ID, engine, voice, rendition,
-fresh 16-hex build ID, state, stage, completed/total sections when known,
-timestamps, attempt count, lease token and expiry, concise error code/message,
-and eventual book slugs. Keep a database constraint for at most one active job
-per source/rendition. Treat voice/engine options as a server-side allowlist.
+`generation_jobs` stores a random job ID, source ID, fresh 16-hex build ID,
+state, stage, timestamps, attempt count, lease token and expiry, concise error
+code, and eventual book slugs. The first path fixes engine/voice/rendition to
+Kokoro `af_heart` on the PC. Keep a database constraint for at most one active
+job per source.
 
 All new HTTP shapes must be defined in Zod route schemas so
 `/api/v1/openapi.json` is the contract:
@@ -217,22 +230,23 @@ All new HTTP shapes must be defined in Zod route schemas so
 | Method and route | Caller | Behavior |
 | --- | --- | --- |
 | `GET /api/v1/source-books` | Public | Ranked downloadable-book suggestions and current availability. |
-| `POST /api/v1/generation-jobs` | Owner | Create or return the active job for a source ID and allowed rendition; require an explicit `regenerate` flag for an available book. |
-| `GET /api/v1/generation-jobs/:id` | Owner | Current state, stage, section counts, error, and completed book link. |
+| `POST /api/v1/generation-jobs` | Public fixed voice; owner for regeneration/direction | Create or return the active job for a source ID and allowed rendition; require an explicit `regenerate` flag for an available book. |
+| `GET /api/v1/generation-jobs/:id` | Public | Current state, stage, safe error category, and completed book link; no internal build ID or lease details. |
 | `POST /api/v1/generation-jobs/:id/retry` | Owner | Requeue a failed job with the same build ID. |
+| `POST /api/v1/generation-jobs/:id/cancel` | Owner | Set queued/running job to canceled, revoke its lease, and retain its daily start reservation. |
 | `POST /api/v1/internal/generation-jobs/claim` | PC | Atomically lease one eligible queued/expired job, or return no work. |
 | `POST /api/v1/internal/generation-jobs/:id/heartbeat` | PC | Renew a matching lease. |
 | `POST /api/v1/internal/generation-jobs/:id/progress` | PC | Update stage/counts under a matching lease. |
 | `POST /api/v1/internal/generation-jobs/:id/finish` | PC | Mark success or failure under a matching lease; verify R2 before success. |
 | `POST /api/v1/internal/source-books/sync` | PC | Upsert validated source metadata in bounded batches. |
 
-Terminal states are `completed` and `failed`; `queued` and `running` are active.
+Terminal states are `completed`, `failed`, and `canceled`; `queued` and `running` are active.
 Within `running`, stage values such as `download`, `parse`, `direction`,
-`synthesis`, `alignment`, `encode`, and `upload` are informational. Expose section
-counts where trustworthy; avoid a fabricated percent. Use an atomic D1 claim
-statement and a lease-token compare on every subsequent mutation. Protect all
-state-changing routes, bound request sizes, and use `Cache-Control: no-store`
-for job responses. Expand CORS for the new authenticated POSTs and preflights.
+`synthesis`, `alignment`, `encode`, and `upload` are informational. Do not
+fabricate a percent or section count. Use an atomic D1 claim statement and a
+lease-token compare on every subsequent mutation. Rate limit public creation;
+authorize owner and PC mutations, bound request sizes, and use
+`Cache-Control: no-store` for job responses.
 
 ### PC process and publication
 
@@ -262,9 +276,9 @@ run the end-to-end gate only after the independent tests pass.
 | --- | --- | --- | --- |
 | **0. Contracts and docs** | Integrator: root `AGENTS.md` flow, `worker/CLAUDE.md`, `worker/docs/openapi.md`, `client/CLAUDE.md`, `pipeline/AGENTS.md` and affected step docs; shared Worker D1/rate-limit bindings, route mount, and CLI registration | Confirm source IDs, job states, API schemas, R2 metadata, CLI/event shape, and route-specific abuse budgets. Reconcile the known stale chapter references in `worker/CLAUDE.md` and `client/CLAUDE.md` before touching those components. Reserve distinct D1 migration numbers for packages 1 and 2. | None |
 | **1. Source discovery** | Search agent: `pipeline/src/openshelf/scrapers/`, a dedicated source-index module; a distinct `worker/` D1 migration and search route/tests | Exact source IDs, initial import/refresh, ranked bounded suggestions, search 429s, reviewed existing-book link. Gutenberg first, then Standard Ebooks. | 0 |
-| **2. Job control** | Worker agent: separate job routes, auth/lease helpers, distinct D1 migration/tests | Owner creation/status/retry and PC claim/heartbeat/progress/finish with atomic deduplication, daily/pending quotas, failed-auth throttling, and lease expiration. | 0 |
+| **2. Job control** | Worker agent: separate job routes, auth/lease helpers, distinct D1 migration/tests | Capped public fixed-voice creation/status, owner cancel/retry/regeneration, and PC claim/heartbeat/progress/finish with atomic deduplication, daily/pending quotas, failed-auth throttling, and lease expiration. | 0 |
 | **3. PC runner** | Pipeline agent: dedicated consumer and exact-book process modules, CLI/docs/tests | Preflight, exact EPUB acquisition, structured events, lease renewal, resume and publish verification. Use a stub Worker API while package 2 is in flight. | 0 |
-| **4. Client** | Client agent: `client/app/`, `components/`, `lib/api.ts`, `types.ts`, tests | Autocomplete, exact edition selection, owner token entry, generate/retry, status, and book opening. | 1, 2 |
+| **4. Client** | Client agent: `client/app/`, `components/`, `lib/api.ts`, `types.ts`, tests | Autocomplete, exact edition selection, public fixed-voice request and status, and book opening without token entry. | 1, 2 |
 | **5. Integration and operations** | Integrator: shared contracts, README/Windows setup, staging bindings/secrets, smoke scripts | One real queued book proceeds through PC generation to playable section sync; deployment and recovery instructions. | 1–4 |
 
 The integrator wires shared `worker/src/index.ts`, `worker/src/types.ts`,
@@ -283,8 +297,9 @@ Keep route shapes in Zod; do not hand-maintain an OpenAPI copy.
    search requests receive 429 before an expensive D1 query.
 2. Two simultaneous requests for the same source/rendition create one active
    job. A client cannot submit an arbitrary EPUB URL, engine, or voice. Requests
-   without owner credentials cannot start or retry jobs. A flood of create and
-   retry requests cannot exceed the D1-enforced daily and pending-job caps;
+   without owner credentials can start a fixed-voice job but cannot retry,
+   cancel, regenerate, or select paid direction. A flood of create and retry
+   requests cannot exceed the D1-enforced daily and pending-job caps;
    expired or revoked credentials fail closed.
 3. With the PC stopped, the job stays queued. Starting the consumer claims it
    without inbound network configuration. A second consumer cannot claim it
@@ -303,12 +318,13 @@ Keep route shapes in Zod; do not hand-maintain an OpenAPI copy.
 ## Release sequence
 
 Deploy additive D1 schema and read-only search first; seed and inspect its
-index. Next deploy the authenticated job routes, then run the PC consumer in
-staging with one small book. Enable the client Generate control after the
+index. Next deploy the job routes, then run the PC consumer in
+staging with one small book. Enable the client Request control after the
 staging acceptance gates pass. Existing `/catalog`, book, section, and audio
 routes stay compatible throughout. Keep the old client usable if generation is
 disabled; failed jobs remain inspectable and retryable.
 
-The first live release can limit creation to the owner and Kokoro. Add Standard
-Ebooks ingestion and additional engine/voice options only after exact-source
-handling and resume behavior are demonstrated in staging.
+The initial live release limited creation to the owner and Kokoro. The public
+showcase path retains Kokoro and fixed voice under the same global caps. Add
+Standard Ebooks ingestion and additional engine/voice options only after
+exact-source handling and resume behavior are demonstrated in staging.

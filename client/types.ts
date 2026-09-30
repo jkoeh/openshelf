@@ -24,13 +24,11 @@ export interface SourceBook {
 export interface GenerationJob {
   id: string;
   source_id: string;
-  build_id: string;
-  state: "queued" | "running" | "completed" | "failed";
+	state: "queued" | "running" | "completed" | "failed" | "canceled";
   stage: string;
-  attempts: number;
   author_slug: string | null;
   title_slug: string | null;
-  error_code: string | null;
+	error_code: "RIGHTS_NOT_VERIFIED" | "BOOK_TOO_LONG" | "GENERATION_FAILED" | null;
   created_at: string;
   updated_at: string;
 }

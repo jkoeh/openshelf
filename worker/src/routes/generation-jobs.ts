@@ -15,13 +15,11 @@ const Job = z
 	.object({
 		id: z.string(),
 		source_id: z.string(),
-		build_id: z.string(),
-		state: z.enum(["queued", "running", "completed", "failed"]),
+		state: z.enum(["queued", "running", "completed", "failed", "canceled"]),
 		stage: z.string(),
-		attempts: z.number().int(),
 		author_slug: z.string().nullable(),
 		title_slug: z.string().nullable(),
-		error_code: z.string().nullable(),
+		error_code: z.enum(["RIGHTS_NOT_VERIFIED", "BOOK_TOO_LONG", "GENERATION_FAILED"]).nullable(),
 		created_at: z.string(),
 		updated_at: z.string(),
 	})
@@ -47,6 +45,9 @@ const Finish = Lease.extend({
 	error_code: z.string().max(60).optional(),
 });
 const ClaimJob = Job.extend({
+	error_code: z.string().nullable(),
+	build_id: z.string(),
+	attempts: z.number().int(),
 	epub_url: z.string().url(),
 	title: z.string(),
 	author: z.string(),
@@ -60,7 +61,7 @@ const create = createRoute({
 	method: "post",
 	path: "/",
 	tags: ["generation"],
-	summary: "Create one owner generation job",
+	summary: "Request a capped fixed-voice generation job",
 	request: { body: { content: { "application/json": { schema: Create } } } },
 	responses: {
 		200: jobResponse,
@@ -76,9 +77,25 @@ const status = createRoute({
 	method: "get",
 	path: "/:id",
 	tags: ["generation"],
-	summary: "Read owner job status",
+	summary: "Read generation job status",
 	request: { params: Id },
-	responses: { 200: jobResponse, 400: error, 401: error, 404: error, 429: error, 503: error },
+	responses: { 200: jobResponse, 400: error, 404: error, 429: error, 503: error },
+});
+const cancel = createRoute({
+	method: "post",
+	path: "/:id/cancel",
+	tags: ["generation"],
+	summary: "Owner cancels queued or running work",
+	request: { params: Id },
+	responses: {
+		200: jobResponse,
+		400: error,
+		401: error,
+		404: error,
+		409: error,
+		429: error,
+		503: error,
+	},
 });
 const retry = createRoute({
 	method: "post",
@@ -154,7 +171,7 @@ interface Row {
 	id: string;
 	source_id: string;
 	build_id: string;
-	state: "queued" | "running" | "completed" | "failed";
+	state: "queued" | "running" | "completed" | "failed" | "canceled";
 	stage: string;
 	attempts: number;
 	author_slug: string | null;
@@ -162,6 +179,26 @@ interface Row {
 	error_code: string | null;
 	created_at: string;
 	updated_at: string;
+}
+function publicJob(row: Row): z.infer<typeof Job> {
+	const error_code = row.error_code === "RightsNotVerified"
+		? "RIGHTS_NOT_VERIFIED" as const
+		: row.error_code === "BookTooLong"
+			? "BOOK_TOO_LONG" as const
+			: row.error_code
+				? "GENERATION_FAILED" as const
+				: null;
+	return {
+		id: row.id,
+		source_id: row.source_id,
+		state: row.state,
+		stage: row.stage,
+		author_slug: row.author_slug,
+		title_slug: row.title_slug,
+		error_code,
+		created_at: row.created_at,
+		updated_at: row.updated_at,
+	};
 }
 const fields =
 	"id,source_id,build_id,state,stage,attempts,author_slug,title_slug,error_code,created_at,updated_at";
@@ -184,7 +221,8 @@ function ready(env: Env) {
 		!!env.OWNER_TOKEN &&
 		!!env.PC_TOKEN &&
 		!!env.AUTH_RATE_LIMITER &&
-		!!env.SEARCH_RATE_LIMITER
+		!!env.SEARCH_RATE_LIMITER &&
+		!!env.CREATE_RATE_LIMITER
 	);
 }
 const reservation = (
@@ -256,7 +294,13 @@ const owner = createOpenAPIApp<{ Bindings: Env }>();
 owner.openapi(create, async (c) => {
 	if (!ready(c.env))
 		return c.json({ error: { code: "UNAVAILABLE", message: "Generation is not configured" } }, 503);
-	const authStatus = await auth(c.req.raw, c.env);
+	const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
+	if (!(await c.env.CREATE_RATE_LIMITER!.limit({ key: `create:${ip}` })).success)
+		return c.json({ error: { code: "RATE_LIMITED", message: "Try again later" } }, 429);
+	const { source_id, regenerate } = c.req.valid("json");
+	const authStatus = regenerate || c.req.header("Authorization")
+		? await auth(c.req.raw, c.env)
+		: 0;
 	if (authStatus)
 		return c.json(
 			{
@@ -267,7 +311,6 @@ owner.openapi(create, async (c) => {
 			},
 			authStatus,
 		);
-	const { source_id, regenerate } = c.req.valid("json");
 	const db = c.env.JOB_DB!;
 	const source = await db
 		.prepare("SELECT source_id,author_slug,title_slug FROM source_books WHERE source_id=?")
@@ -281,7 +324,7 @@ owner.openapi(create, async (c) => {
 		)
 		.bind(source_id)
 		.first<Row>();
-	if (existing) return c.json(existing, 200, noStore);
+	if (existing) return c.json(publicJob(existing), 200, noStore);
 	if (source.author_slug && !regenerate)
 		return c.json(
 			{ error: { code: "ALREADY_AVAILABLE", message: "This edition is already available" } },
@@ -313,7 +356,7 @@ owner.openapi(create, async (c) => {
 			)
 			.bind(source_id)
 			.first<Row>();
-		if (duplicate) return c.json(duplicate, 200, noStore);
+		if (duplicate) return c.json(publicJob(duplicate), 200, noStore);
 		return c.json({ error: { code: "LIMIT_REACHED", message: "Generation quota reached" } }, 429);
 	}
 	const job = await get(db, id);
@@ -324,29 +367,43 @@ owner.openapi(create, async (c) => {
 			)
 			.bind(source_id)
 			.first<Row>();
-		if (duplicate) return c.json(duplicate, 200, noStore);
+		if (duplicate) return c.json(publicJob(duplicate), 200, noStore);
 		return c.json({ error: { code: "LIMIT_REACHED", message: "Generation quota reached" } }, 429);
 	}
-	return c.json(job, 200, noStore);
+	return c.json(publicJob(job), 200, noStore);
 });
 owner.openapi(status, async (c) => {
+	if (!ready(c.env))
+		return c.json({ error: { code: "UNAVAILABLE", message: "Generation is not configured" } }, 503);
+	const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
+	if (!(await c.env.SEARCH_RATE_LIMITER!.limit({ key: `job-status:${ip}` })).success)
+		return c.json({ error: { code: "RATE_LIMITED", message: "Try again later" } }, 429);
+	const job = await get(c.env.JOB_DB!, c.req.valid("param").id);
+	return job
+		? c.json(publicJob(job), 200, noStore)
+		: c.json({ error: { code: "NOT_FOUND", message: "Job not found" } }, 404);
+});
+owner.openapi(cancel, async (c) => {
 	if (!ready(c.env))
 		return c.json({ error: { code: "UNAVAILABLE", message: "Generation is not configured" } }, 503);
 	const authStatus = await auth(c.req.raw, c.env);
 	if (authStatus)
 		return c.json(
-			{
-				error: {
-					code: authStatus === 429 ? "RATE_LIMITED" : "UNAUTHORIZED",
-					message: "Invalid credential or too many attempts",
-				},
-			},
+			{ error: { code: authStatus === 429 ? "RATE_LIMITED" : "UNAUTHORIZED", message: "Invalid credential or too many attempts" } },
 			authStatus,
 		);
-	const job = await get(c.env.JOB_DB!, c.req.valid("param").id);
-	return job
-		? c.json(job, 200, noStore)
-		: c.json({ error: { code: "NOT_FOUND", message: "Job not found" } }, 404);
+	const db = c.env.JOB_DB!, id = c.req.valid("param").id;
+	const existing = await get(db, id);
+	if (!existing) return c.json({ error: { code: "NOT_FOUND", message: "Job not found" } }, 404);
+	if (existing.state === "canceled") return c.json(publicJob(existing), 200, noStore);
+	if (existing.state !== "queued" && existing.state !== "running")
+		return c.json({ error: { code: "NOT_CANCELABLE", message: "Job has already finished" } }, 409);
+	await db.prepare(`UPDATE generation_jobs SET state='canceled',stage='canceled',lease_token=NULL,lease_until=NULL,updated_at=?
+		WHERE id=? AND state IN ('queued','running')`).bind(now(), id).run();
+	const updated = await get(db, id);
+	return updated?.state === "canceled"
+		? c.json(publicJob(updated), 200, noStore)
+		: c.json({ error: { code: "NOT_CANCELABLE", message: "Job has already finished" } }, 409);
 });
 owner.openapi(retry, async (c) => {
 	if (!ready(c.env))
@@ -386,7 +443,7 @@ owner.openapi(retry, async (c) => {
 	]);
 	const updated = await get(db, id);
 	return updated?.state === "queued"
-		? c.json(updated, 200, noStore)
+		? c.json(publicJob(updated), 200, noStore)
 		: c.json({ error: { code: "LIMIT_REACHED", message: "Generation quota reached" } }, 429);
 });
 
@@ -585,6 +642,6 @@ internal.openapi(finish, async (c) => {
 			.prepare("UPDATE source_books SET author_slug=?,title_slug=? WHERE source_id=?")
 			.bind(body.author_slug!, body.title_slug!, row.source_id)
 			.run();
-	return c.json((await get(db, id))!, 200, noStore);
+	return c.json(publicJob((await get(db, id))!), 200, noStore);
 });
 export { owner, internal };

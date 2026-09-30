@@ -70,12 +70,20 @@ function ownerRequest<T>(path: string, token: string, body?: object): Promise<T>
 	});
 }
 
-export function createGenerationJob(sourceId: string, token: string): Promise<GenerationJob> {
-	return ownerRequest("/generation-jobs", token, { source_id: sourceId });
+export function createGenerationJob(sourceId: string, token?: string): Promise<GenerationJob> {
+	return fetchJson<GenerationJob>(`${API_BASE}/generation-jobs`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+		body: JSON.stringify({ source_id: sourceId }),
+		cache: "no-store",
+	});
 }
 
-export function fetchGenerationJob(id: string, token: string): Promise<GenerationJob> {
-	return ownerRequest(`/generation-jobs/${encodeURIComponent(id)}`, token);
+export function fetchGenerationJob(id: string, token?: string): Promise<GenerationJob> {
+	return fetchJson<GenerationJob>(`${API_BASE}/generation-jobs/${encodeURIComponent(id)}`, {
+		...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
+		cache: "no-store",
+	});
 }
 
 export function retryGenerationJob(id: string, token: string): Promise<GenerationJob> {

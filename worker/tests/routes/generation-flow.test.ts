@@ -6,14 +6,17 @@ import type { Env } from "../../src/types";
 const ownerToken = "test-owner-token-longer-than-twenty-four";
 const pcToken = "test-consumer-token-longer-than-twenty-four";
 let searchAllowed = true;
+let createAllowed = true;
 let origin = "https://test.example";
 const limiter = { limit: async () => ({ success: searchAllowed }) } as RateLimit;
+const createLimiter = { limit: async () => ({ success: createAllowed }) } as RateLimit;
 const bindings: Env = {
 	R2_BUCKET: env.R2_BUCKET,
 	JOB_DB: env.JOB_DB,
 	OWNER_TOKEN: ownerToken,
 	PC_TOKEN: pcToken,
 	SEARCH_RATE_LIMITER: limiter,
+	CREATE_RATE_LIMITER: createLimiter,
 	AUTH_RATE_LIMITER: limiter,
 };
 const request = (path: string, method = "GET", body?: unknown, token?: string) =>
@@ -43,6 +46,7 @@ const claim = async () => request("/internal/generation-jobs/claim", "POST", und
 
 beforeEach(async () => {
 	searchAllowed = true;
+	createAllowed = true;
 	origin = `https://${crypto.randomUUID()}.example`;
 	await env.JOB_DB.exec(
 		"DELETE FROM generation_jobs; DELETE FROM generation_starts; DELETE FROM source_tokens; DELETE FROM source_books;",
@@ -178,6 +182,42 @@ describe("source search and generation API", () => {
 		expect(count?.n).toBe(2);
 	});
 
+	it("allows capped public requests but keeps regeneration owner-only", async () => {
+		await sync([source(11, "Alice")]);
+		createAllowed = false;
+		expect((await request("/generation-jobs", "POST", { source_id: "gutenberg:11" })).status).toBe(429);
+		const before = await env.JOB_DB.prepare("SELECT COUNT(*) n FROM generation_starts").first<{ n: number }>();
+		expect(before?.n).toBe(0);
+		createAllowed = true;
+		const response = await request("/generation-jobs", "POST", { source_id: "gutenberg:11" });
+		expect(response.status).toBe(200);
+		expect((await response.json<{ state: string }>()).state).toBe("queued");
+		expect((await request("/generation-jobs", "POST", { source_id: "gutenberg:11", regenerate: true })).status).toBe(401);
+	});
+
+	it("cancels queued work without refund, and prevents a claim", async () => {
+		await sync([source(11, "Alice")]);
+		const job = await (await request("/generation-jobs", "POST", { source_id: "gutenberg:11" })).json<{ id: string }>();
+		const path = `/generation-jobs/${job.id}/cancel`;
+		expect((await request(path, "POST")).status).toBe(401);
+		const canceled = await request(path, "POST", undefined, ownerToken);
+		expect(canceled.status).toBe(200);
+		expect((await canceled.json<{ state: string }>()).state).toBe("canceled");
+		expect((await request(path, "POST", undefined, ownerToken)).status).toBe(200);
+		expect((await (await claim()).json<{ job: unknown }>()).job).toBeNull();
+		const starts = await env.JOB_DB.prepare("SELECT COUNT(*) n FROM generation_starts").first<{ n: number }>();
+		expect(starts?.n).toBe(1);
+	});
+
+	it("revokes a running lease on cancellation", async () => {
+		await sync([source(11, "Alice")]);
+		const job = await (await create(11)).json<{ id: string }>();
+		const running = (await (await claim()).json<{ job: { lease_token: string } | null }>()).job!;
+		expect((await request(`/generation-jobs/${job.id}/cancel`, "POST", undefined, ownerToken)).status).toBe(200);
+		expect((await request(`/internal/generation-jobs/${job.id}/heartbeat`, "POST", { lease_token: running.lease_token }, pcToken)).status).toBe(409);
+		expect((await (await claim()).json<{ job: unknown }>()).job).toBeNull();
+	});
+
 	it("does not spend a daily slot for a full queue or rejected retry", async () => {
 		await sync([
 			source(11, "One"),
@@ -220,8 +260,8 @@ describe("source search and generation API", () => {
 
 	it("reclaims an expired lease once while preserving its build", async () => {
 		await sync([source(11, "Alice")]);
-		const made = await (await create(11)).json<{ id: string; build_id: string }>();
-		const first = (await (await claim()).json<{ job: { lease_token: string } | null }>()).job!;
+		const made = await (await create(11)).json<{ id: string }>();
+		const first = (await (await claim()).json<{ job: { lease_token: string; build_id: string } | null }>()).job!;
 		await env.JOB_DB.prepare("UPDATE generation_jobs SET lease_until=? WHERE id=?")
 			.bind("2020-01-01T00:00:00Z", made.id)
 			.run();
@@ -231,7 +271,7 @@ describe("source search and generation API", () => {
 			).json<{ job: { lease_token: string; build_id: string; attempts: number } | null }>()
 		).job!;
 		expect(second.lease_token).not.toBe(first.lease_token);
-		expect(second.build_id).toBe(made.build_id);
+		expect(second.build_id).toBe(first.build_id);
 		expect(second.attempts).toBe(2);
 		const count = await env.JOB_DB.prepare("SELECT COUNT(*) n FROM generation_starts WHERE day=?")
 			.bind(new Date().toISOString().slice(0, 10))
@@ -241,7 +281,7 @@ describe("source search and generation API", () => {
 
 	it("leases one job, rejects wrong lease, and verifies every R2 artifact before completion", async () => {
 		await sync([source(11, "Alice")]);
-		const made = await (await create(11)).json<{ id: string; build_id: string }>();
+		const made = await (await create(11)).json<{ id: string }>();
 		const claimed = await (await claim()).json<{
 			job: { id: string; lease_token: string; build_id: string } | null;
 		}>();
@@ -316,12 +356,22 @@ describe("source search and generation API", () => {
 		).toBe(409);
 	});
 
-	it("does not expose job status without owner auth and keeps responses uncached", async () => {
+	it("exposes nonsensitive job status without owner auth and keeps responses uncached", async () => {
 		await sync([source(11, "Alice")]);
-		const job = await (await create(11)).json<{ id: string }>();
-		expect((await request(`/generation-jobs/${job.id}`)).status).toBe(401);
-		const status = await request(`/generation-jobs/${job.id}`, "GET", undefined, ownerToken);
+		const created = await create(11);
+		const job = await created.json<{ id: string }>();
+		expect(Object.keys(job)).not.toContain("build_id");
+		expect(Object.keys(job)).not.toContain("attempts");
+		const status = await request(`/generation-jobs/${job.id}`);
 		expect(status.status).toBe(200);
 		expect(status.headers.get("Cache-Control")).toBe("no-store");
+		const body = await status.json<Record<string, unknown>>();
+		expect(body).not.toHaveProperty("build_id");
+		expect(body).not.toHaveProperty("attempts");
+		await env.JOB_DB.prepare("UPDATE generation_jobs SET state='failed',stage='failed',error_code='SensitiveInternalError' WHERE id=?").bind(job.id).run();
+		const failed = await (await request(`/generation-jobs/${job.id}`)).json<{ error_code: string }>();
+		expect(failed.error_code).toBe("GENERATION_FAILED");
+		searchAllowed = false;
+		expect((await request(`/generation-jobs/${job.id}`)).status).toBe(429);
 	});
 });

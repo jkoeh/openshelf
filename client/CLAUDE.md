@@ -64,7 +64,15 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
   present so Expo Router deep links fall back to `index.html`.
 - Production web deploys are automated by the `openshelf` Cloudflare Pages
   project's Git integration after merges to the configured production branch.
-- Styling via NativeWind `className` prop — no inline StyleSheet unless necessary
+- The catalog's established styling pattern is inline React Native style props;
+  keep that pattern for its responsive redesign. NativeWind remains installed
+  for components that already use it.
+- Catalog discovery uses a mobile-first, text-first library treatment: warm
+  light background, navy serif headings, blue accessible actions, comfortable
+  touch targets, and bounded centered content on wide screens. Keep sepia and
+  dark themes legible. Source edition cards can become two columns on tablet
+  and desktop. When a source query has results, do not show the published
+  catalog's empty message below them.
 - Icons use `lucide-react-native` SVG components. Do not use icon-font packages
   for app UI; web export can render those as missing-glyph squares if the font
   fails to load.
@@ -75,19 +83,23 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
   internal to URLs, local storage, and progress keys.
 - `useSyncEngine` computes active word/chunk inside a `requestAnimationFrame` loop and only setStates when the active word/chunk index changes. It reads `player.currentTime` and consumes inline `words` from the section response; there is no separate alignment fetch.
 - The catalog page keeps published-book browsing and adds debounced source
-  suggestions. Generation requires a session-only owner token entered at the
-  point of action; a missing token never blocks public search or playback.
-  The source-search UI explains that the index is limited and generation is
-  owner-only; a missing match is never presented as proof Gutenberg lacks the
-  book. Its token prompt explicitly asks for the dedicated OpenShelf owner
-  key, not a Cloudflare credential, and says it lasts only for the session.
+  suggestions. A visitor can request the fixed local Kokoro narration without
+  entering a token. The source-search UI explains that the index is limited;
+  a missing match is never presented as proof Gutenberg lacks the book. The
+  current owner token remains local for cancellation via the PC script and
+  authenticated retry/regeneration API calls. Browser admin sign-in and paid
+  direction are future controls, not a public token prompt.
   If the PC rejects an edition above its spoken-word budget, the generation
   status explains that the owner must deliberately raise `--max-words` before
-  retrying. If official Gutenberg rights cannot be verified as public domain
-  in the USA, the status explains the failure and still offers an owner retry.
+  an admin retry. If official Gutenberg rights cannot be verified as public
+  domain in the USA, the status explains the failure without offering public
+  retry.
   The PC rechecks rights before synthesis on every attempt, so retry cannot
   override the gate. For the matching edition, the action follows the latest
   local job state and ID even if its search suggestion has not refreshed yet.
+  Active public job status may be polled while the catalog remains open; show
+  the job ID so the owner can cancel it with the local CLI. Public visitors do
+  not see retry or credential entry.
 
 ## Do NOT
 
