@@ -6,6 +6,7 @@ import type { Env } from "../../src/types";
 const ownerToken = "test-owner-token-longer-than-twenty-four";
 const pcToken = "test-consumer-token-longer-than-twenty-four";
 let searchAllowed = true;
+let origin = "https://test.example";
 const limiter = { limit: async () => ({ success: searchAllowed }) } as RateLimit;
 const bindings: Env = {
 	R2_BUCKET: env.R2_BUCKET,
@@ -17,7 +18,7 @@ const bindings: Env = {
 };
 const request = (path: string, method = "GET", body?: unknown, token?: string) =>
 	app.request(
-		`/api/v1${path}`,
+		`${origin}/api/v1${path}`,
 		{
 			method,
 			headers: {
@@ -42,6 +43,7 @@ const claim = async () => request("/internal/generation-jobs/claim", "POST", und
 
 beforeEach(async () => {
 	searchAllowed = true;
+	origin = `https://${crypto.randomUUID()}.example`;
 	await env.JOB_DB.exec(
 		"DELETE FROM generation_jobs; DELETE FROM generation_starts; DELETE FROM source_tokens; DELETE FROM source_books;",
 	);
@@ -60,6 +62,24 @@ describe("source search and generation API", () => {
 		expect((await request("/source-books?q=alice")).status).toBe(429);
 	});
 
+	it("briefly caches identical public suggestions without bypassing rate limits", async () => {
+		await sync([source(71, "Zephyr Atlas")]);
+		const first = await request("/source-books?q=Zephyr&limit=1");
+		expect(first.status).toBe(200);
+		expect(first.headers.get("Cache-Control")).toBe("no-store");
+		expect((await first.json<{ books: { source_id: string }[] }>()).books[0].source_id).toBe(
+			"gutenberg:71",
+		);
+		await env.JOB_DB.exec("DELETE FROM source_tokens; DELETE FROM source_books;");
+		const cached = await request("/source-books?q=zephyr&limit=1");
+		expect(cached.headers.get("Cache-Control")).toBe("no-store");
+		expect((await cached.json<{ books: { source_id: string }[] }>()).books[0].source_id).toBe(
+			"gutenberg:71",
+		);
+		searchAllowed = false;
+		expect((await request("/source-books?q=zephyr&limit=1")).status).toBe(429);
+	});
+
 	it("keeps autocomplete bounded and uses the token index for candidate lookup", async () => {
 		for (let page = 0; page < 4; page++) {
 			const batch = Array.from({ length: 50 }, (_, n) =>
@@ -67,7 +87,7 @@ describe("source search and generation API", () => {
 			);
 			expect((await sync(batch)).status).toBe(200);
 		}
-		const response = await request("/source-books?q=ali&limit=10");
+		const response = await request("/source-books?q=story&limit=10");
 		expect(response.status).toBe(200);
 		expect((await response.json<{ books: unknown[] }>()).books).toHaveLength(10);
 		const plan = await env.JOB_DB.prepare(

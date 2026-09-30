@@ -6,7 +6,7 @@ OpenShelf is an open source public domain audiobook platform. Its Python pipelin
 
 - The client searches the **published audiobook catalog** by title or author, browses books and retained rendition builds, streams audio, highlights the current word, and seeks when a word is tapped.
 - The Python CLI searches and downloads source EPUBs, generates audiobooks locally, resumes a specified build, and uploads completed builds to R2.
-- A first Gutenberg-only generation slice is implemented: bounded typo-tolerant source suggestions, owner-protected job requests, D1 job leases, and an outbound PC consumer using Kokoro `af_heart`. Production generation remains disabled until its own D1 and Worker secrets are configured.
+- A first Gutenberg-only generation slice is live in production: bounded typo-tolerant source suggestions, owner-protected job requests, D1 job leases, and an outbound PC consumer using Kokoro `af_heart`.
 
 The [book discovery and generation job plan](plans/search-and-generation-jobs.md) tracks the wider rollout, including Standard Ebooks and more voices.
 
@@ -58,8 +58,12 @@ The additive job API has `GET /source-books` suggestions, owner-authenticated
 job create/status/retry routes, and PC-only source sync, claim, heartbeat,
 progress, and finish routes. D1 stores the source index and leases. The Worker
 checks the R2 book pointer, section objects, and catalog before completion.
-Rate-limit bindings protect public search and authentication attempts; D1 caps
-queued jobs, daily starts, and job attempts. Generation stays owner-only.
+Rate-limit bindings protect public search and authentication attempts. A bounded
+15-second cache within each Worker instance can save D1 reads for repeated
+suggestions after rate limiting; it is best effort because instances do not
+share memory. Clients receive `no-store` and may see job availability lag by up
+to 15 seconds. D1 caps queued jobs, daily starts, and job attempts. Generation
+stays owner-only.
 
 ## Development
 

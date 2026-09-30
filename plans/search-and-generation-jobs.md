@@ -104,14 +104,18 @@ per-book cost. Electricity is `average PC kW × runtime hours × local $/kWh`.
 
 ## Bot and abuse controls
 
-The current Worker only exposes public reads; it does not yet rate-limit them
-and cannot create generation jobs. The following controls belong in the new
-implementation:
+The Worker now exposes owner-only generation jobs alongside public reads. Its
+public autocomplete is rate-limited before D1 access. The following controls
+are the current baseline and near-term hardening rules:
 
 1. **Public search:** use a Worker rate-limiting binding keyed by route and
    client IP, initially returning HTTP 429 after about 60 autocomplete requests
    per minute per IP. Require 2–80 query characters, cap suggestions at 10,
-   use indexed D1 search, and briefly cache identical public queries. Make
+   use indexed D1 search, and keep up to 128 successful suggestion responses
+   for 15 seconds per Worker instance by origin, normalized query, and limit, after
+   rate limiting. Instances do not share memory, so this is a best-effort D1
+   optimization on the production `workers.dev` hostname. Return `no-store`
+   to clients; availability may lag by 15 seconds. Make
    audio/range routes a separate, more generous category so normal playback
    is not throttled. Adjust thresholds from measured traffic.
 2. **Job creation:** require an owner credential on every create, retry, and

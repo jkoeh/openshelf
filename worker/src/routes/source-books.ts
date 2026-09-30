@@ -16,6 +16,7 @@ const BookSchema = z
 	})
 	.openapi("SourceBook");
 const SearchResponse = z.object({ books: z.array(BookSchema) }).openapi("SourceSearch");
+const suggestionCache = new Map<string, { expires: number; result: z.infer<typeof SearchResponse> }>();
 const SearchQuery = z.object({
 	q: z.string().min(2).max(80),
 	limit: z.coerce.number().int().min(1).max(10).default(10),
@@ -102,6 +103,10 @@ app.openapi(searchRoute, async (c) => {
 	const { q, limit } = c.req.valid("query");
 	const term = tokens(q)[0] ?? "";
 	if (term.length < 2) return c.json({ books: [] }, 200, noStore);
+	const cacheKey = JSON.stringify([new URL(c.req.url).origin, clean(q), limit]);
+	const cached = suggestionCache.get(cacheKey);
+	if (cached && cached.expires > Date.now()) return c.json(cached.result, 200, noStore);
+	if (cached) suggestionCache.delete(cacheKey);
 	const prefix = term.slice(0, 2);
 	const rows =
 		await c.env.JOB_DB.prepare(`SELECT DISTINCT b.source_id,b.title,b.author,b.author_slug,b.title_slug,
@@ -134,9 +139,8 @@ app.openapi(searchRoute, async (c) => {
 		.filter((x) => x.score < 99)
 		.sort((a, b) => a.score - b.score || a.row.title.localeCompare(b.row.title))
 		.slice(0, limit);
-	return c.json(
-		{
-			books: scored.map(({ row }) => ({
+	const result = {
+		books: scored.map(({ row }) => ({
 				source_id: row.source_id,
 				title: row.title,
 				author: row.author,
@@ -149,10 +153,10 @@ app.openapi(searchRoute, async (c) => {
 				author_slug: row.author_slug,
 				title_slug: row.title_slug,
 			})),
-		},
-		200,
-		noStore,
-	);
+	};
+	if (suggestionCache.size >= 128) suggestionCache.delete(suggestionCache.keys().next().value!);
+	suggestionCache.set(cacheKey, { expires: Date.now() + 15_000, result });
+	return c.json(result, 200, noStore);
 });
 
 internal.openapi(syncRoute, async (c) => {
