@@ -3,6 +3,7 @@ import { ActivityIndicator, FlatList, Pressable, Text, View } from "react-native
 import BookCard from "../components/BookCard";
 import Header from "../components/Header";
 import SearchBar from "../components/SearchBar";
+import SourceSuggestions from "../components/SourceSuggestions";
 import { useTheme } from "../hooks/useTheme";
 import { fetchCatalog } from "../lib/api";
 import type { CatalogBook } from "../types";
@@ -75,6 +76,7 @@ export default function CatalogPage() {
           keyExtractor={(item) => `${item.author_slug}/${item.title_slug}`}
           renderItem={({ item }) => <BookCard book={item} />}
           contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
+          ListHeaderComponent={<SourceSuggestions query={query} />}
           onEndReached={loadMore}
           onEndReachedThreshold={0.5}
           ListEmptyComponent={

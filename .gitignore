@@ -39,11 +39,14 @@ node_modules/
 # Cloudflare Worker
 worker/node_modules/
 worker/.wrangler/
+worker/.secrets/
 
 # Expo Client
 client/node_modules/
 client/.expo/
 client/dist/
+client/test-results/
+client/playwright-report/
 *.log
 /logs
 _audio_v1/

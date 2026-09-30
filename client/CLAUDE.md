@@ -73,7 +73,10 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
   is collapsed by default, always shows the selected engine, expands into engine ->
   voice -> upload-time choices, and collapses again after selection. Raw build IDs stay
   internal to URLs, local storage, and progress keys.
-- `useSyncEngine` computes active word/chunk inside a `requestAnimationFrame` loop and only setStates when the active word/chunk index changes. It should use status time as the primary playback clock (with `player.currentTime` fallback) for iOS reliability. The hook consumes the inline `words` array from the chapter response; there is no separate alignment fetch.
+- `useSyncEngine` computes active word/chunk inside a `requestAnimationFrame` loop and only setStates when the active word/chunk index changes. It reads `player.currentTime` and consumes inline `words` from the section response; there is no separate alignment fetch.
+- The catalog page keeps published-book browsing and adds debounced source
+  suggestions. Generation requires a session-only owner token entered at the
+  point of action; a missing token never blocks public search or playback.
 
 ## Do NOT
 

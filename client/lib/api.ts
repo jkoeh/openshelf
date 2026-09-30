@@ -1,6 +1,8 @@
 import { API_BASE } from "../constants/config";
 import type {
 	BookBuildsResponse,
+	SourceBook,
+	GenerationJob,
 	CatalogResponse,
 	SectionResponse,
 	Manifest,
@@ -53,6 +55,31 @@ export function fetchCatalog(params: CatalogParams = {}): Promise<CatalogRespons
 	if (params.sort) search.set("sort", params.sort);
 	const qs = search.toString();
 	return fetchJson<CatalogResponse>(`${API_BASE}/catalog${qs ? `?${qs}` : ""}`);
+}
+
+export function fetchSourceBooks(q: string): Promise<{ books: SourceBook[] }> {
+	return fetchJson(`${API_BASE}/source-books?q=${encodeURIComponent(q)}&limit=10`, { cache: "no-store" });
+}
+
+function ownerRequest<T>(path: string, token: string, body?: object): Promise<T> {
+	return fetchJson<T>(`${API_BASE}${path}`, {
+		method: body ? "POST" : "GET",
+		headers: { Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+		...(body ? { body: JSON.stringify(body) } : {}),
+		cache: "no-store",
+	});
+}
+
+export function createGenerationJob(sourceId: string, token: string): Promise<GenerationJob> {
+	return ownerRequest("/generation-jobs", token, { source_id: sourceId });
+}
+
+export function fetchGenerationJob(id: string, token: string): Promise<GenerationJob> {
+	return ownerRequest(`/generation-jobs/${encodeURIComponent(id)}`, token);
+}
+
+export function retryGenerationJob(id: string, token: string): Promise<GenerationJob> {
+	return ownerRequest(`/generation-jobs/${encodeURIComponent(id)}/retry`, token, {});
 }
 
 export function fetchBook(author: string, title: string): Promise<Manifest> {

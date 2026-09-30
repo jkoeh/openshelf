@@ -8,6 +8,27 @@ binding = "R2_BUCKET"
 bucket_name = "openshelf"
 preview_bucket_name = "openshelf"
 
+# Local development database. Provision separate real D1 databases and copy
+# their IDs into each deploy environment before enabling job routes there.
+[[d1_databases]]
+binding = "JOB_DB"
+database_name = "openshelf-jobs-local"
+database_id = "00000000-0000-0000-0000-000000000001"
+
+[[ratelimits]]
+name = "SEARCH_RATE_LIMITER"
+namespace_id = "1001"
+[ratelimits.simple]
+limit = 60
+period = 60
+
+[[ratelimits]]
+name = "AUTH_RATE_LIMITER"
+namespace_id = "1002"
+[ratelimits.simple]
+limit = 20
+period = 60
+
 [env.staging]
 name = "openshelf-api-staging"
 
@@ -15,12 +36,50 @@ name = "openshelf-api-staging"
 binding = "R2_BUCKET"
 bucket_name = "openshelf-staging"
 
+[[env.staging.d1_databases]]
+binding = "JOB_DB"
+database_name = "openshelf-jobs-staging"
+database_id = "0495878e-ede6-424a-bacc-2becb4a406ef"
+
+[[env.staging.ratelimits]]
+name = "SEARCH_RATE_LIMITER"
+namespace_id = "2001"
+[env.staging.ratelimits.simple]
+limit = 60
+period = 60
+
+[[env.staging.ratelimits]]
+name = "AUTH_RATE_LIMITER"
+namespace_id = "2002"
+[env.staging.ratelimits.simple]
+limit = 20
+period = 60
+
 [env.production]
 name = "openshelf-api"
 
 [[env.production.r2_buckets]]
 binding = "R2_BUCKET"
 bucket_name = "openshelf"
+
+[[env.production.d1_databases]]
+binding = "JOB_DB"
+database_name = "openshelf-jobs"
+database_id = "8677632f-8be9-4cf9-bfa1-5b5b2ad8b915"
+
+[[env.production.ratelimits]]
+name = "SEARCH_RATE_LIMITER"
+namespace_id = "3001"
+[env.production.ratelimits.simple]
+limit = 60
+period = 60
+
+[[env.production.ratelimits]]
+name = "AUTH_RATE_LIMITER"
+namespace_id = "3002"
+[env.production.ratelimits.simple]
+limit = 20
+period = 60
 
 [env.remote_r2]
 name = "openshelf-api-remote-r2-dev"

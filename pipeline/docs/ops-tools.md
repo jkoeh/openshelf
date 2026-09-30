@@ -1,5 +1,19 @@
 # Pipeline Ops Tools
 
+## Outbound generation consumer
+
+`openshelf-pipeline books consume-jobs --api-base URL` uses `OPENSHELF_PC_TOKEN`
+from the PC environment and polls the Worker over HTTPS. `--sync-pages N` first
+indexes up to N Gutenberg pages through the authenticated source-sync route.
+One job runs at a time. A claimed job names an exact Gutenberg ID and EPUB URL;
+the consumer validates its host and EPUB archive, then calls `books process
+--epub ... --engine kokoro --voice af_heart --rendition kokoro-af-heart
+--build-id ... --upload`. It renews the lease while processing and uses
+`--resume` only when the same build has a local `run.json`. A rejected lease
+immediately terminates the child; only network failures get a bounded grace
+period. On success it reports the resulting slugs; the Worker
+independently verifies R2 before marking the job complete.
+
 **Modules:** `src/openshelf/pipeline/ops/*`
 **Command:** `openshelf-pipeline ops ...`
 **Installed command:** `openshelf-pipeline`
