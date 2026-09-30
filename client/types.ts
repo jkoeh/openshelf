@@ -16,6 +16,7 @@ export interface SourceBook {
   title: string;
   author: string;
   state: "ready_to_generate" | "queued" | "running" | "failed" | "available";
+  job_state?: "queued" | "running" | "completed" | "failed" | "canceled" | null;
   job_id: string | null;
   author_slug: string | null;
   title_slug: string | null;

@@ -112,9 +112,11 @@ Search uses the longest typed query token as the indexed prefix at three or more
 characters, then tries indexed adjacent-transposition candidates, then a
 two-character indexed sample; each lookup is limited to 80 candidates. The
 visitor can request a fixed Kokoro `af_heart` job with an exact `gutenberg:<id>`
-source ID under a dedicated create rate limit. Owner authentication is required
-for retry, regeneration, and cancellation. Browser administration also accepts
-a Google Identity Services ID token after the Worker verifies its Google
+source ID under a dedicated create rate limit. Source suggestions report
+publication availability and latest job state separately, so regeneration
+progress or failure never hides the playable book. Owner authentication is
+required for retry, regeneration, and cancellation. Browser administration
+also accepts a Google Identity Services ID token after the Worker verifies its Google
 signature, issuer, configured OAuth client audience, expiry, verified email,
 and exact `johnkoeh@gmail.com` address. An unconfigured Google client ID fails
 closed; the existing owner token remains valid for local CLI administration.

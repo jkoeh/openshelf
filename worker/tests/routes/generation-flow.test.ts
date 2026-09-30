@@ -54,6 +54,16 @@ beforeEach(async () => {
 });
 
 describe("source search and generation API", () => {
+	it("keeps published availability alongside a failed regeneration job", async () => {
+		await sync([source(11, "Alice")]);
+		const made = await (await create(11)).json<{ id: string }>();
+		await env.JOB_DB.prepare("UPDATE source_books SET author_slug='lewis-carroll',title_slug='alice-g11' WHERE source_id='gutenberg:11'").run();
+		await env.JOB_DB.prepare("UPDATE generation_jobs SET state='failed',stage='failed' WHERE id=?")
+			.bind(made.id).run();
+		const result = await request("/source-books?q=alice");
+		const body = await result.json<{ books: { state: string; job_state: string; job_id: string }[] }>();
+		expect(body.books[0]).toMatchObject({ state: "available", job_state: "failed", job_id: made.id });
+	});
 	it("keeps browser admin identity closed when Google is unconfigured or invalid", async () => {
 		expect((await request("/admin/me", "GET", undefined, ownerToken)).status).toBe(503);
 		const configured = { ...bindings, GOOGLE_CLIENT_ID: "openshelf-test.apps.googleusercontent.com" };

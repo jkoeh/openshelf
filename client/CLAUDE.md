@@ -92,6 +92,9 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
   the client never persists it or bundles the local owner key. If the OAuth
   client ID is unconfigured, the admin control explains setup is needed. Paid
   narration direction remains a separate owner-only job mode.
+  A published edition stays playable while its latest regeneration job is
+  queued, running, or failed; latest job state drives progress and admin controls
+  independently of publication availability.
   If the PC rejects an edition above its spoken-word budget, the generation
   status explains that the owner must deliberately raise `--max-words` before
   an admin retry. If official Gutenberg rights cannot be verified as public

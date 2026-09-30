@@ -10,6 +10,7 @@ const BookSchema = z
 		title: z.string(),
 		author: z.string(),
 		state: z.enum(["ready_to_generate", "queued", "running", "failed", "available"]),
+		job_state: z.enum(["queued", "running", "completed", "failed", "canceled"]).nullable(),
 		job_id: z.string().nullable(),
 		author_slug: z.string().nullable(),
 		title_slug: z.string().nullable(),
@@ -159,6 +160,7 @@ app.openapi(searchRoute, async (c) => {
 						? row.state
 						: "ready_to_generate") as z.infer<typeof BookSchema>["state"],
 				job_id: row.job_id,
+				job_state: row.state as z.infer<typeof BookSchema>["job_state"],
 				author_slug: row.author_slug,
 				title_slug: row.title_slug,
 			})),

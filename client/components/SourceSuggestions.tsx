@@ -52,7 +52,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
 
   const activeIds = books.flatMap((book) => {
     const current = jobs[book.source_id];
-    const state = current?.state ?? book.state;
+    const state = current?.state ?? book.job_state ?? book.state;
     const id = current?.id ?? book.job_id;
     return id && (state === "queued" || state === "running") ? [id] : [];
   }).join(",");
@@ -79,7 +79,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
     setError("");
     try {
       const current = jobs[book.source_id];
-      const state = current?.state ?? book.state;
+      const state = current?.state ?? book.job_state ?? book.state;
       const id = current?.id ?? book.job_id;
       const next = id && (state === "queued" || state === "running")
         ? await fetchGenerationJob(id)
@@ -129,11 +129,11 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 16 }}>
       {books.map((book) => {
         const job = jobs[book.source_id];
-        const state = book.state === "available" ? book.state : job?.state ?? book.state;
+        const state = job?.state ?? book.job_state ?? book.state;
         const authorSlug = job?.author_slug ?? book.author_slug;
         const titleSlug = job?.title_slug ?? book.title_slug;
         const active = state === "queued" || state === "running";
-        const ready = state === "available" || state === "completed";
+        const ready = book.state === "available" || state === "completed";
         const failed = state === "failed";
         return <View key={book.source_id} style={{
           width: width >= 760 ? "48%" : "100%",
@@ -155,7 +155,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
             <Text selectable style={{ color: palette.muted, fontSize: 12, marginTop: 4 }}>Job ID: {job?.id ?? book.job_id}</Text>
           </View>}
           {failed && <Text style={{ color: palette.muted, lineHeight: 20, marginBottom: 16 }}>
-            {failureText(job?.error_code)}
+            {book.state === "available" ? "Latest regeneration stopped. The existing audiobook is still available." : failureText(job?.error_code)}
           </Text>}
           {state === "canceled" && <Text style={{ color: palette.muted, marginBottom: 16 }}>Request canceled.</Text>}
           {job?.state === "completed" && <Text style={{ color: palette.text, fontWeight: "600", marginBottom: 16 }}>Generation completed</Text>}
