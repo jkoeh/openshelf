@@ -101,21 +101,30 @@ app.openapi(searchRoute, async (c) => {
 	if (!(await c.env.SEARCH_RATE_LIMITER.limit({ key: `search:${ip}` })).success)
 		return c.json({ error: { code: "RATE_LIMITED", message: "Try again later" } }, 429);
 	const { q, limit } = c.req.valid("query");
-	const term = tokens(q)[0] ?? "";
+	const term = tokens(q).sort((a, b) => b.length - a.length)[0] ?? "";
 	if (term.length < 2) return c.json({ books: [] }, 200, noStore);
 	const cacheKey = JSON.stringify([new URL(c.req.url).origin, clean(q), limit]);
 	const cached = suggestionCache.get(cacheKey);
 	if (cached && cached.expires > Date.now()) return c.json(cached.result, 200, noStore);
 	if (cached) suggestionCache.delete(cacheKey);
-	const prefix = term.slice(0, 2);
-	const rows =
-		await c.env.JOB_DB.prepare(`SELECT DISTINCT b.source_id,b.title,b.author,b.author_slug,b.title_slug,
+	const select = `SELECT DISTINCT b.source_id,b.title,b.author,b.author_slug,b.title_slug,
 		(SELECT state FROM generation_jobs j WHERE j.source_id=b.source_id ORDER BY created_at DESC LIMIT 1) state,
 		(SELECT id FROM generation_jobs j WHERE j.source_id=b.source_id ORDER BY created_at DESC LIMIT 1) job_id
-		FROM source_tokens t JOIN source_books b ON b.source_id=t.source_id
-		WHERE t.token >= ? AND t.token < ? LIMIT 80`)
+		FROM source_tokens t JOIN source_books b ON b.source_id=t.source_id`;
+	const candidates = async (prefix: string) =>
+		c.env.JOB_DB!.prepare(`${select} WHERE t.token >= ? AND t.token < ? LIMIT 80`)
 			.bind(prefix, `${prefix}\uffff`)
 			.all<Row>();
+	let rows = await candidates(term.length >= 3 ? term : term.slice(0, 2));
+	if (!rows.results.length && term.length >= 3 && term.length <= 12) {
+		const variants = [...new Set(Array.from({ length: term.length - 1 }, (_, i) =>
+			term.slice(0, i) + term[i + 1] + term[i] + term.slice(i + 2),
+		))];
+		rows = await c.env.JOB_DB.prepare(
+			`${select} WHERE t.token IN (${variants.map(() => "?").join(",")}) LIMIT 80`,
+		).bind(...variants).all<Row>();
+	}
+	if (!rows.results.length && term.length >= 3) rows = await candidates(term.slice(0, 2));
 	const scored = rows.results
 		.map((row) => {
 			const title = clean(row.title),

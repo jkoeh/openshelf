@@ -110,7 +110,8 @@ flowchart LR
 
     subgraph PC[Owner PC — outbound consumer]
         J1[Poll + lease job] --> J2[Exact Gutenberg EPUB]
-        J2 --> J3[Existing Kokoro/WhisperX pipeline]
+        J2 --> J2R[Verify RDF + EPUB public-domain rights]
+        J2R --> J3[Existing Kokoro/WhisperX pipeline]
     end
     J1 <--> W_JOBS
     J3 --> R_M4A
@@ -211,6 +212,10 @@ npm run typecheck    # Type-check worker + client
   sections; source title pages are not playback sections.
 - `sanitize()` in `pipeline/src/openshelf/scrapers/http.py` is the single source of truth for slug generation
 - Idempotent at every level: file exists -> skip, R2 key exists -> skip
+- Automatic Gutenberg catalog import and PC job generation require verified
+  U.S. public-domain status. Public reading remains available globally. Manual
+  `books process` and `dag run` uploads are operator-controlled; the operator
+  is responsible for checking rights before publishing a local EPUB.
 
 ## Docs-First Workflow (mandatory)
 

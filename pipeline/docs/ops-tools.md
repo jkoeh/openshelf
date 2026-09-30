@@ -4,7 +4,9 @@
 
 `openshelf-pipeline books consume-jobs --api-base URL` uses `OPENSHELF_PC_TOKEN`
 from the PC environment and polls the Worker over HTTPS. `--sync-pages N` first
-indexes up to N Gutenberg pages through the authenticated source-sync route.
+indexes up to N Gutendex pages through the authenticated source-sync route;
+N is capped at 10 per invocation to bound D1 writes. Use `books sync-catalog`
+for a broader rights-checked import.
 One job runs at a time. A claimed job names an exact Gutenberg ID and EPUB URL;
 the consumer validates its host and EPUB archive, rejects ZIP files above
 2 MiB central-directory metadata, 256 MiB expanded size, or 5,000 entries,
@@ -105,6 +107,24 @@ Behavior:
 
 `books process` is the human-facing happy path. `dag run` remains the explicit
 EPUB conversion path, and individual `dag` stages remain the repair path.
+Manual `--upload` accepts local EPUBs without the job consumer's automatic
+Gutenberg rights check. The operator verifies rights before publishing.
+
+## `books sync-catalog`
+
+The operator downloads Gutenberg's weekly CSV.gz and RDF tar.bz2 feeds into
+`download/`, then runs `books sync-catalog --catalog <csv.gz> --rights-archive
+<rdf.tar.bz2> --api-base <Worker /api/v1 URL>`. A dedicated `OPENSHELF_PC_TOKEN`
+authorizes batches of at most 50. The command considers at most 500 English
+`Text` candidates by default, or up to 1,000 with `--max-books`; `--after-id`
+continues from a numeric Gutenberg ID. The CSV provides display metadata, while
+the exact RDF record must explicitly say `Public domain in the USA.` and list a
+matching EPUB URL. Unknown rights and missing EPUBs are skipped. Archive parsing
+is bounded and never extracts files. The command never claims a generation job
+or invokes a model; `--dry-run` performs the local rights join without API writes.
+The current bulk archive takes roughly 30 seconds to scan for a 500-candidate
+batch on the owner's PC. Before another batch, check the account's D1 daily
+row-write usage.
 
 ## `ops doctor`
 

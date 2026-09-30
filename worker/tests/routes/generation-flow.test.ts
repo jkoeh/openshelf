@@ -98,6 +98,38 @@ describe("source search and generation API", () => {
 		expect(plan.results.some((row) => row.detail.includes("COVERING INDEX"))).toBe(true);
 	});
 
+	it("finds a full-prefix title beyond eighty earlier two-letter candidates", async () => {
+		for (let page = 0; page < 2; page++) {
+			const batch = Array.from({ length: 50 }, (_, n) =>
+				source(page * 50 + n + 1, `Alabaster ${page * 50 + n}`),
+			);
+			expect((await sync(batch)).status).toBe(200);
+		}
+		await sync([source(111, "Alice in Wonderland")]);
+		const found = await request("/source-books?q=alice");
+		expect((await found.json<{ books: { source_id: string }[] }>()).books[0].source_id).toBe(
+			"gutenberg:111",
+		);
+		const typo = await request("/source-books?q=alcie");
+		expect((await typo.json<{ books: { source_id: string }[] }>()).books[0].source_id).toBe(
+			"gutenberg:111",
+		);
+	});
+
+	it("uses a distinctive word in multiword title search", async () => {
+		for (let page = 0; page < 2; page++) {
+			const batch = Array.from({ length: 50 }, (_, n) =>
+				source(page * 50 + n + 1, `The Abacus ${page * 50 + n}`),
+			);
+			expect((await sync(batch)).status).toBe(200);
+		}
+		await sync([source(111, "The Great Gatsby")]);
+		const found = await request("/source-books?q=the%20great%20gatsby");
+		expect((await found.json<{ books: { source_id: string }[] }>()).books[0].source_id).toBe(
+			"gutenberg:111",
+		);
+	});
+
 	it("rejects invalid credentials, arbitrary sources, and untrusted URLs", async () => {
 		expect(
 			(await sync([{ ...source(11, "Alice"), epub_url: "https://evil.example/11.epub" }])).status,

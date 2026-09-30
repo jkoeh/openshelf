@@ -346,6 +346,10 @@ openshelf-pipeline dag run \
   --upload
 ```
 
+Direct `dag run --upload` accepts an explicit EPUB without the PC job
+consumer's automatic Gutenberg rights check. The operator verifies rights
+before publishing.
+
 By default, `run` reuses local per-section direction when possible. For each
 selected source prose section, before calling the direction LLM, it searches
 sibling local build directories for a `section-NN.voice_direction.json` from the same

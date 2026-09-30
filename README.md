@@ -148,9 +148,37 @@ field. For production, use `worker/.secrets/prod-owner-token` in the client,
 `worker/.secrets/prod-pc-token` as `OPENSHELF_PC_TOKEN` on the PC, the
 `https://openshelf-api.johnkoeh.workers.dev/api/v1` API base, and
 `R2_BUCKET=openshelf`. Keep these environment credentials separate.
-Source sync can cover more Gutendex pages with `--sync-pages N` (up to
-3000); the already indexed 64 popular editions include Gutenberg #11. The PC
+Source sync can cover a few more Gutendex pages with `--sync-pages N` (up to
+10 per run); use the bounded, rights-checked official catalog import below for
+broader coverage. The initial production seed has 64 popular editions,
+including Gutenberg #11. The PC
 must have its pipeline dependencies, GPU, ffmpeg, and R2 upload credentials.
+For a broader, operator-controlled index, download Gutenberg's weekly
+[compressed CSV catalog](https://www.gutenberg.org/ebooks/offline_catalogs.html)
+into the ignored `download/` directory, then run:
+
+```powershell
+New-Item -ItemType Directory -Force download | Out-Null
+curl.exe -fL https://dev.gutenberg.org/cache/epub/feeds/pg_catalog.csv.gz -o download/pg_catalog.csv.gz
+curl.exe -fL https://dev.gutenberg.org/cache/epub/feeds/rdf-files.tar.bz2 -o download/rdf-files.tar.bz2
+$env:OPENSHELF_PC_TOKEN = (Get-Content worker/.secrets/prod-pc-token -Raw).Trim()
+.\.venv\Scripts\python.exe pipeline/scripts/openshelf-pipeline.py books sync-catalog --catalog download/pg_catalog.csv.gz --rights-archive download/rdf-files.tar.bz2 --api-base https://openshelf-api.johnkoeh.workers.dev/api/v1 --max-books 500
+```
+
+This imports English text metadata in batches of 50;
+it does not claim a job or invoke the GPU. Import checks the official RDF
+archive for an explicit US public-domain marker and a matching EPUB URL;
+the PC checks official RDF and the downloaded EPUB's own rights notice before
+synthesis. Unknown or copyrighted records fail
+closed. Gutenberg's marker establishes U.S. public-domain status, not rights in
+every country. OpenShelf does not geographically restrict public reading; the
+operator remains responsible for distribution rights outside the U.S. Manual
+`books process --upload` and `dag run --upload` accept local EPUBs without this
+automatic rights check, so verify those editions before publishing.
+The 1,000-candidate per-run ceiling
+and 500-record default keep each import small. Repeat with `--after-id <last imported Gutenberg ID>`
+to cover later ranges only after checking D1's daily row-write usage and the
+account plan; the cap applies per run, not per day.
 Use `--once` to claim at most one job. The Worker caps generation at two starts
 per UTC day, three queued jobs, and three attempts per job; a search request is
 limited to 60 per minute per client IP. Worker rate limits reduce D1 work, but

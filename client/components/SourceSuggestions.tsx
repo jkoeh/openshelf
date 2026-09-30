@@ -50,10 +50,17 @@ export default function SourceSuggestions({ query }: { query: string }) {
     if (!token.trim()) { setTokenOpen(true); return; }
     setBusy(true);
     try {
-      const next = book.state === "failed" && book.job_id
-        ? await retryGenerationJob(book.job_id, token.trim())
-        : book.job_id && (book.state === "queued" || book.state === "running")
-          ? await fetchGenerationJob(book.job_id, token.trim())
+      const currentJob = job?.source_id === book.source_id ? job : null;
+      const failedJobId = currentJob
+        ? currentJob.state === "failed" ? currentJob.id : null
+        : book.state === "failed" ? book.job_id : null;
+      const activeJobId = currentJob
+        ? currentJob.state === "queued" || currentJob.state === "running" ? currentJob.id : null
+        : book.state === "queued" || book.state === "running" ? book.job_id : null;
+      const next = failedJobId
+        ? await retryGenerationJob(failedJobId, token.trim())
+        : activeJobId
+          ? await fetchGenerationJob(activeJobId, token.trim())
           : await createGenerationJob(book.source_id, token.trim());
       setJob(next);
       setTokenOpen(false);
@@ -70,15 +77,20 @@ export default function SourceSuggestions({ query }: { query: string }) {
     {loading && <ActivityIndicator accessibilityLabel="Searching source books" color={colors.primary} />}
     {error ? <Text accessibilityRole="alert" style={{ color: colors.textSecondary, marginVertical: 8 }}>{error}</Text> : null}
     {!loading && !error && books.length === 0 && <Text style={{ color: colors.textSecondary, marginVertical: 8 }}>No indexed edition found. Try another title or author.</Text>}
-    {books.map((book) => <View key={book.source_id} style={{ paddingVertical: 9, borderBottomWidth: 0.5, borderColor: colors.separator }}>
+    {books.map((book) => {
+      const currentJob = job?.source_id === book.source_id ? job : null;
+      const state = currentJob?.state ?? book.state;
+      const authorSlug = currentJob?.state === "completed" ? currentJob.author_slug : book.author_slug;
+      const titleSlug = currentJob?.state === "completed" ? currentJob.title_slug : book.title_slug;
+      return <View key={book.source_id} style={{ paddingVertical: 9, borderBottomWidth: 0.5, borderColor: colors.separator }}>
       <Text style={{ color: colors.text, fontWeight: "600" }}>{book.title}</Text>
       <Text style={{ color: colors.textSecondary }}>{book.author} · Project Gutenberg #{book.source_id.split(":")[1]}</Text>
-      {book.state === "available" && book.author_slug && book.title_slug
-        ? <Link href={`/book/${book.author_slug}/${book.title_slug}`} asChild><Pressable accessibilityRole="button"><Text style={{ color: colors.primary }}>Open audiobook</Text></Pressable></Link>
+      {(state === "available" || state === "completed") && authorSlug && titleSlug
+        ? <Link href={`/book/${authorSlug}/${titleSlug}`} asChild><Pressable accessibilityRole="button"><Text style={{ color: colors.primary }}>Open audiobook</Text></Pressable></Link>
         : <Pressable accessibilityRole="button" disabled={busy} onPress={() => act(book)}>
-          <Text style={{ color: colors.primary }}>{book.state === "failed" ? "Retry generation" : book.state === "queued" || book.state === "running" ? "View generation" : "Generate audio"}</Text>
+          <Text style={{ color: colors.primary }}>{state === "failed" ? "Retry generation" : state === "queued" || state === "running" ? "View generation" : "Generate audio"}</Text>
         </Pressable>}
-    </View>)}
+    </View>; })}
     {tokenOpen && selected && <View style={{ marginTop: 12 }}>
       <Text style={{ color: colors.text }}>OpenShelf owner key for {selected.title}</Text>
       <Text style={{ color: colors.textSecondary }}>Use the dedicated OpenShelf key, not a Cloudflare API token. It is kept only for this session.</Text>
@@ -90,7 +102,9 @@ export default function SourceSuggestions({ query }: { query: string }) {
     {job && <View style={{ marginTop: 12 }}>
       <Text style={{ color: colors.text }}>Generation {job.state}{job.state === "running" ? ` · ${job.stage}` : ""}</Text>
       {job.state === "failed" && <Text style={{ color: colors.textSecondary }}>
-        {job.error_code === "BookTooLong"
+        {job.error_code === "RightsNotVerified"
+          ? "Rights could not be verified for this edition. Retry is allowed, but the PC will check again before synthesis."
+          : job.error_code === "BookTooLong"
           ? "This edition exceeds the PC's word budget. The owner can raise --max-words before retrying."
           : `Failed: ${job.error_code ?? "Unknown error"}. Search again to retry.`}
       </Text>}

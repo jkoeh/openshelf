@@ -56,8 +56,23 @@ under `pipeline/src/openshelf/pipeline/engines/`.
   default 100,000 source spoken-word budget (body plus spoken headings). The
   owner may explicitly raise that budget with `--max-words`. It never opens a
   listener or stores the owner credential.
+- Before launching TTS, the PC consumer reads official per-book Gutenberg RDF
+  for the exact source ID and requires `Public domain in the USA.`. Missing or
+  ambiguous rights fail closed, including for already indexed jobs. It also
+  requires the downloaded EPUB's OPF `dc:rights` to say the same and rejects
+  the explicit copyrighted Project Gutenberg notice in readable front matter.
+- `openshelf-pipeline books sync-catalog` imports locally downloaded official
+  Gutenberg CSV or CSV.gz and RDF archive through the PC-authenticated source-sync API.
+  It considers English `Text` records and validates RDF rights and EPUB URL against the numeric
+  Gutenberg ID, sends at most 50 records per request, and caps each run at
+  1,000 candidates (500 by default). It only syncs candidates whose exact RDF
+  record says `Public domain in the USA.` and names a valid EPUB.
+  `--after-id` resumes a later numeric range. Import never
+  claims or starts an audio job.
 - `openshelf-pipeline books ...` owns user-facing book workflows: search,
-  download, process local EPUBs, upload, and catalog refresh.
+  download, process local EPUBs, upload, and catalog refresh. Manual uploads
+  do not run the PC job consumer's Gutenberg rights check; the operator checks
+  distribution rights for local EPUBs.
 - `openshelf-pipeline dag ...` owns repairable artifact stages and full DAG
   runs for explicit EPUB/build paths.
 - `openshelf-pipeline ops ...`, `voices ...`, `qa ...`, and `profile ...` own
