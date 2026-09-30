@@ -2,12 +2,13 @@
 
 import io
 import json
+import sys
 import tempfile
 import unittest
 import urllib.error
 import zipfile
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
 from openshelf.pipeline import job_consumer as consumer
@@ -119,11 +120,10 @@ class ConsumerTests(unittest.TestCase):
             self.assertEqual(api.posts[-1][1]["error_code"], "BookTooLong")
 
     def test_word_budget_counts_parsed_spoken_words(self):
-        from openshelf.pipeline import epub_parser
-
-        with patch.object(epub_parser, "parse_epub",
-                          return_value=[SimpleNamespace(word_count=99_999,
-                                                        heading=SimpleNamespace(spoken_text="Chapter One"))]):
+        parser = ModuleType("openshelf.pipeline.epub_parser")
+        parser.parse_epub = lambda _path: [SimpleNamespace(
+            word_count=99_999, heading=SimpleNamespace(spoken_text="Chapter One"))]
+        with patch.dict(sys.modules, {"openshelf.pipeline.epub_parser": parser}):
             with self.assertRaises(consumer.BookTooLong):
                 consumer.check_word_budget(Path("unused.epub"), 100_000)
 
