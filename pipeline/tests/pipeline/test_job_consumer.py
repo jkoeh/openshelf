@@ -119,9 +119,11 @@ class ConsumerTests(unittest.TestCase):
             self.assertEqual(api.posts[-1][1]["error_code"], "BookTooLong")
 
     def test_word_budget_counts_parsed_spoken_words(self):
-        with patch("openshelf.pipeline.epub_parser.parse_epub",
-                   return_value=[SimpleNamespace(word_count=99_999,
-                                                 heading=SimpleNamespace(spoken_text="Chapter One"))]):
+        from openshelf.pipeline import epub_parser
+
+        with patch.object(epub_parser, "parse_epub",
+                          return_value=[SimpleNamespace(word_count=99_999,
+                                                        heading=SimpleNamespace(spoken_text="Chapter One"))]):
             with self.assertRaises(consumer.BookTooLong):
                 consumer.check_word_budget(Path("unused.epub"), 100_000)
 
