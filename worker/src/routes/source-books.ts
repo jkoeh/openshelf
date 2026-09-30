@@ -113,10 +113,11 @@ app.openapi(searchRoute, async (c) => {
 	const select = `SELECT DISTINCT b.source_id,b.title,b.author,b.author_slug,b.title_slug,
 		j.state,j.id job_id,j.updated_at job_updated_at
 		FROM source_tokens t JOIN source_books b ON b.source_id=t.source_id
-		LEFT JOIN generation_jobs j ON j.id=(SELECT id FROM generation_jobs
-			WHERE source_id=b.source_id
-			ORDER BY CASE WHEN state IN ('queued','running') THEN 0 ELSE 1 END,created_at DESC,rowid DESC
-			LIMIT 1)`;
+		LEFT JOIN generation_jobs j ON j.id=COALESCE(
+			(SELECT id FROM generation_jobs WHERE source_id=b.source_id
+				AND state IN ('queued','running') LIMIT 1),
+			(SELECT id FROM generation_jobs WHERE source_id=b.source_id
+				ORDER BY created_at DESC LIMIT 1))`;
 	const candidates = async (prefix: string) =>
 		c.env.JOB_DB!.prepare(`${select} WHERE t.token >= ? AND t.token < ? LIMIT 80`)
 			.bind(prefix, `${prefix}\uffff`)

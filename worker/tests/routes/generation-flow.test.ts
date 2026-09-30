@@ -84,10 +84,16 @@ describe("source search and generation API", () => {
 		const active = await (await request("/source-books?q=alice"))
 			.json<{ books: { job_id: string; job_state: string }[] }>();
 		expect(active.books[0]).toMatchObject({ job_id: first.id, job_state: "queued" });
-		const plan = await env.JOB_DB.prepare(
-			"EXPLAIN QUERY PLAN SELECT id FROM generation_jobs WHERE source_id=? ORDER BY CASE WHEN state IN ('queued','running') THEN 0 ELSE 1 END,created_at DESC,rowid DESC LIMIT 1",
+		const activePlan = await env.JOB_DB.prepare(
+			"EXPLAIN QUERY PLAN SELECT id FROM generation_jobs WHERE source_id=? AND state IN ('queued','running') LIMIT 1",
 		).bind("gutenberg:11").all<{ detail: string }>();
-		expect(plan.results.some((row) => row.detail.includes("latest_source_job"))).toBe(true);
+		expect(activePlan.results.some((row) => row.detail.includes("one_active_generation"))).toBe(true);
+		const latestPlan = await env.JOB_DB.prepare(
+			"EXPLAIN QUERY PLAN SELECT id FROM generation_jobs WHERE source_id=? ORDER BY created_at DESC LIMIT 1",
+		).bind("gutenberg:11").all<{ detail: string }>();
+		expect(latestPlan.results.some((row) => row.detail.includes("latest_source_job"))).toBe(true);
+		expect([...activePlan.results, ...latestPlan.results]
+			.some((row) => row.detail.includes("USE TEMP B-TREE"))).toBe(false);
 	});
 	it("keeps browser admin identity closed when Google is unconfigured or invalid", async () => {
 		expect((await request("/admin/me", "GET", undefined, ownerToken)).status).toBe(503);
