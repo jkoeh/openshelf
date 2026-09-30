@@ -12,6 +12,7 @@ const BookSchema = z
 		state: z.enum(["ready_to_generate", "queued", "running", "failed", "available"]),
 		job_state: z.enum(["queued", "running", "completed", "failed", "canceled"]).nullable(),
 		job_id: z.string().nullable(),
+		job_updated_at: z.string().nullable(),
 		author_slug: z.string().nullable(),
 		title_slug: z.string().nullable(),
 	})
@@ -91,6 +92,7 @@ interface Row {
 	title_slug: string | null;
 	state: string | null;
 	job_id: string | null;
+	job_updated_at: string | null;
 }
 app.openapi(searchRoute, async (c) => {
 	if (!c.env.JOB_DB || !c.env.SEARCH_RATE_LIMITER)
@@ -109,9 +111,12 @@ app.openapi(searchRoute, async (c) => {
 	if (cached && cached.expires > Date.now()) return c.json(cached.result, 200, noStore);
 	if (cached) suggestionCache.delete(cacheKey);
 	const select = `SELECT DISTINCT b.source_id,b.title,b.author,b.author_slug,b.title_slug,
-		(SELECT state FROM generation_jobs j WHERE j.source_id=b.source_id ORDER BY created_at DESC LIMIT 1) state,
-		(SELECT id FROM generation_jobs j WHERE j.source_id=b.source_id ORDER BY created_at DESC LIMIT 1) job_id
-		FROM source_tokens t JOIN source_books b ON b.source_id=t.source_id`;
+		j.state,j.id job_id,j.updated_at job_updated_at
+		FROM source_tokens t JOIN source_books b ON b.source_id=t.source_id
+		LEFT JOIN generation_jobs j ON j.id=(SELECT id FROM generation_jobs
+			WHERE source_id=b.source_id
+			ORDER BY CASE WHEN state IN ('queued','running') THEN 0 ELSE 1 END,created_at DESC,rowid DESC
+			LIMIT 1)`;
 	const candidates = async (prefix: string) =>
 		c.env.JOB_DB!.prepare(`${select} WHERE t.token >= ? AND t.token < ? LIMIT 80`)
 			.bind(prefix, `${prefix}\uffff`)
@@ -160,6 +165,7 @@ app.openapi(searchRoute, async (c) => {
 						? row.state
 						: "ready_to_generate") as z.infer<typeof BookSchema>["state"],
 				job_id: row.job_id,
+				job_updated_at: row.job_updated_at,
 				job_state: row.state as z.infer<typeof BookSchema>["job_state"],
 				author_slug: row.author_slug,
 				title_slug: row.title_slug,

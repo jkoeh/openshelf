@@ -113,8 +113,11 @@ characters, then tries indexed adjacent-transposition candidates, then a
 two-character indexed sample; each lookup is limited to 80 candidates. The
 visitor can request a fixed Kokoro `af_heart` job with an exact `gutenberg:<id>`
 source ID under a dedicated create rate limit. Source suggestions report
-publication availability and latest job state separately, so regeneration
-progress or failure never hides the playable book. Owner authentication is
+publication availability and the relevant job state, ID, and update time
+separately, so regeneration progress or failure never hides the playable book.
+The job lookup prefers an active job (including a retried older job), then the
+latest created job. Its `(source_id, created_at)` index bounds the history scan
+after the indexed token candidate lookup. Owner authentication is
 required for retry, regeneration, and cancellation. Browser administration
 also accepts a Google Identity Services ID token after the Worker verifies its Google
 signature, issuer, configured OAuth client audience, expiry, verified email,

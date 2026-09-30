@@ -102,7 +102,8 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
   retry.
   The PC rechecks rights before synthesis on every attempt, so retry cannot
   override the gate. For the matching edition, the action follows the latest
-  local job state and ID even if its search suggestion has not refreshed yet.
+  relevant job update time: a locally returned job wins over a stale cached suggestion,
+  while a fresher suggestion replaces an older local job ID or state.
   Active public job status may be polled while the catalog remains open; show
   the job ID so the owner can cancel it with the local CLI. Public visitors do
   not see retry or credential entry.

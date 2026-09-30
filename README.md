@@ -140,6 +140,8 @@ set its client ID as the Worker's `GOOGLE_CLIENT_ID` in staging and production,
 and set `EXPO_PUBLIC_GOOGLE_CLIENT_ID` for the client build. The client ID is
 public; no Google client secret or owner token belongs in the web bundle.
 If either ID is absent, browser admin actions stay unavailable.
+Apply all Worker D1 migrations before deploying the matching Worker; the latest
+job lookup index keeps autocomplete bounded as job history grows.
 
 On this PC, the two locally generated tokens are in the ignored
 `worker/.secrets/` directory. The **owner token** stays on this PC for local

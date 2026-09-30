@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, Text, useWindowDimensions, View } from "r
 import { discoveryColors } from "../constants/discovery";
 import { useTheme } from "../hooks/useTheme";
 import { ApiError, cancelGenerationJob, createGenerationJob, fetchGenerationJob, fetchSourceBooks, regenerateGenerationJob, retryGenerationJob } from "../lib/api";
+import { latestJob } from "../lib/generation-jobs";
 import type { GenerationJob, SourceBook } from "../types";
 
 function failureText(code: GenerationJob["error_code"] | undefined) {
@@ -51,7 +52,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
   }, [query]);
 
   const activeIds = books.flatMap((book) => {
-    const current = jobs[book.source_id];
+    const current = latestJob(book, jobs[book.source_id]);
     const state = current?.state ?? book.job_state ?? book.state;
     const id = current?.id ?? book.job_id;
     return id && (state === "queued" || state === "running") ? [id] : [];
@@ -78,7 +79,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
     setBusySource(book.source_id);
     setError("");
     try {
-      const current = jobs[book.source_id];
+      const current = latestJob(book, jobs[book.source_id]);
       const state = current?.state ?? book.job_state ?? book.state;
       const id = current?.id ?? book.job_id;
       const next = id && (state === "queued" || state === "running")
@@ -94,7 +95,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
 
   const adminAct = async (book: SourceBook, action: "cancel" | "retry" | "regenerate") => {
     if (!adminToken) return;
-    const id = jobs[book.source_id]?.id ?? book.job_id;
+    const id = latestJob(book, jobs[book.source_id])?.id ?? book.job_id;
     setBusySource(book.source_id);
     setError("");
     try {
@@ -128,7 +129,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
     )}
     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 16 }}>
       {books.map((book) => {
-        const job = jobs[book.source_id];
+        const job = latestJob(book, jobs[book.source_id]);
         const state = job?.state ?? book.job_state ?? book.state;
         const authorSlug = job?.author_slug ?? book.author_slug;
         const titleSlug = job?.title_slug ?? book.title_slug;

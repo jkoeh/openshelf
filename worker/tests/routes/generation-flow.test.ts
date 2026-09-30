@@ -61,8 +61,33 @@ describe("source search and generation API", () => {
 		await env.JOB_DB.prepare("UPDATE generation_jobs SET state='failed',stage='failed' WHERE id=?")
 			.bind(made.id).run();
 		const result = await request("/source-books?q=alice");
-		const body = await result.json<{ books: { state: string; job_state: string; job_id: string }[] }>();
+		const body = await result.json<{ books: { state: string; job_state: string; job_id: string; job_updated_at: string }[] }>();
 		expect(body.books[0]).toMatchObject({ state: "available", job_state: "failed", job_id: made.id });
+		expect(body.books[0].job_updated_at).toBeTruthy();
+	});
+
+	it("returns the newest job ID and state after another request for the same edition", async () => {
+		await sync([source(11, "Alice")]);
+		const first = await (await create(11)).json<{ id: string }>();
+		await env.JOB_DB.prepare("UPDATE generation_jobs SET state='failed',stage='failed' WHERE id=?")
+			.bind(first.id).run();
+		const second = await (await create(11)).json<{ id: string }>();
+		expect(second.id).not.toBe(first.id);
+		const result = await request("/source-books?q=alice");
+		const body = await result.json<{ books: { job_id: string; job_state: string }[] }>();
+		expect(body.books[0]).toMatchObject({ job_id: second.id, job_state: "queued" });
+		await env.JOB_DB.prepare("UPDATE generation_jobs SET state='failed',stage='failed' WHERE id=?")
+			.bind(second.id).run();
+		await env.JOB_DB.prepare("UPDATE generation_jobs SET state='queued',stage='queued' WHERE id=?")
+			.bind(first.id).run();
+		origin = `https://${crypto.randomUUID()}.example`;
+		const active = await (await request("/source-books?q=alice"))
+			.json<{ books: { job_id: string; job_state: string }[] }>();
+		expect(active.books[0]).toMatchObject({ job_id: first.id, job_state: "queued" });
+		const plan = await env.JOB_DB.prepare(
+			"EXPLAIN QUERY PLAN SELECT id FROM generation_jobs WHERE source_id=? ORDER BY CASE WHEN state IN ('queued','running') THEN 0 ELSE 1 END,created_at DESC,rowid DESC LIMIT 1",
+		).bind("gutenberg:11").all<{ detail: string }>();
+		expect(plan.results.some((row) => row.detail.includes("latest_source_job"))).toBe(true);
 	});
 	it("keeps browser admin identity closed when Google is unconfigured or invalid", async () => {
 		expect((await request("/admin/me", "GET", undefined, ownerToken)).status).toBe(503);
