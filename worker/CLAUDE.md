@@ -225,6 +225,9 @@ The client treats rendition as a setting and build as transparent by default: it
 - **production**: `openshelf-api` worker, `openshelf` R2 bucket,
   `openshelf-jobs` D1, separate owner/PC secrets, and search/failed-auth limits.
   Apply D1 migrations and seed the source index before exposing generation.
+  The top-level Wrangler bindings also name production resources because
+  Cloudflare Workers Builds runs `wrangler versions upload` without `--env` for
+  PR previews; local `wrangler dev` still uses local D1 storage by default.
 
 Production deploys are automated by Cloudflare Workers Builds / Git integration:
 

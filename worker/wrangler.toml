@@ -8,23 +8,23 @@ binding = "R2_BUCKET"
 bucket_name = "openshelf"
 preview_bucket_name = "openshelf"
 
-# Local development database. Provision separate real D1 databases and copy
-# their IDs into each deploy environment before enabling job routes there.
+# Workers Builds uploads previews from the top-level configuration. Wrangler
+# dev uses local D1 storage by default even with this production database ID.
 [[d1_databases]]
 binding = "JOB_DB"
-database_name = "openshelf-jobs-local"
-database_id = "00000000-0000-0000-0000-000000000001"
+database_name = "openshelf-jobs"
+database_id = "8677632f-8be9-4cf9-bfa1-5b5b2ad8b915"
 
 [[ratelimits]]
 name = "SEARCH_RATE_LIMITER"
-namespace_id = "1001"
+namespace_id = "3001"
 [ratelimits.simple]
 limit = 60
 period = 60
 
 [[ratelimits]]
 name = "AUTH_RATE_LIMITER"
-namespace_id = "1002"
+namespace_id = "3002"
 [ratelimits.simple]
 limit = 20
 period = 60
