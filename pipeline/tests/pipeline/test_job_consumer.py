@@ -51,6 +51,14 @@ class FakeChild:
 
 
 class ConsumerTests(unittest.TestCase):
+    def setUp(self):
+        patcher = patch.object(consumer, "verify_public_domain")
+        self.rights = patcher.start()
+        self.addCleanup(patcher.stop)
+        epub_patcher = patch.object(consumer, "check_epub_rights")
+        self.epub_rights = epub_patcher.start()
+        self.addCleanup(epub_patcher.stop)
+
     def test_only_exact_gutenberg_https_url_is_accepted(self):
         good = "https://www.gutenberg.org/ebooks/11.epub3.images"
         self.assertEqual(consumer.validate_epub_url(good, "gutenberg:11"), good)
@@ -117,6 +125,8 @@ class ConsumerTests(unittest.TestCase):
                     consumer.process_job(api, job, download_root=root / "download", audio_root=root / "audio",
                                          device="cuda")
             popen.assert_not_called()
+            self.rights.assert_called_once_with("gutenberg:11")
+            self.epub_rights.assert_called_once_with(epub)
             self.assertEqual(api.posts[-1][1]["error_code"], "BookTooLong")
 
     def test_word_budget_counts_parsed_spoken_words(self):
@@ -194,6 +204,67 @@ class ConsumerTests(unittest.TestCase):
                                          "--once", "--device", "cuda"]), 7)
         run.assert_called_once_with(["--api-base", "https://example.com/api/v1", "--sync-pages", "0",
                                      "--device", "cuda", "--max-words", "100000", "--once"])
+
+
+class RightsTests(unittest.TestCase):
+    def test_embedded_epub_rights_and_copyright_banner(self):
+        package = ('<package xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                   '<dc:rights>{}</dc:rights></package>')
+        with tempfile.TemporaryDirectory() as folder:
+            epub = Path(folder) / "book.epub"
+            def write(rights, body):
+                with zipfile.ZipFile(epub, "w") as archive:
+                    archive.writestr("OEBPS/content.opf", package.format(rights))
+                    archive.writestr("OEBPS/chapter.xhtml", body)
+            write("Public domain in the USA.", "<p>Alice went down the rabbit hole.</p>")
+            consumer.check_epub_rights(epub)
+            write("Copyrighted. Read the copyright notice inside this book for details.", "<p>Text</p>")
+            with self.assertRaises(consumer.RightsNotVerified):
+                consumer.check_epub_rights(epub)
+            write("Public domain in the USA.",
+                  "<p>*** This is a COPYRIGHTED Project Gutenberg eBook. Details Below. ***</p>")
+            with self.assertRaises(consumer.RightsNotVerified):
+                consumer.check_epub_rights(epub)
+
+    def test_official_rdf_must_explicitly_say_public_domain(self):
+        def rdf(rights):
+            return (f'<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" '
+                    f'xmlns:dcterms="http://purl.org/dc/terms/" '
+                    f'xmlns:pgterms="http://www.gutenberg.org/2009/pgterms/">'
+                    f'<pgterms:ebook rdf:about="ebooks/11"><dcterms:rights>{rights}</dcterms:rights>'
+                    f'</pgterms:ebook><pgterms:file '
+                    f'rdf:about="https://www.gutenberg.org/ebooks/11.epub.images">'
+                    f'<rdf:value>application/epub+zip</rdf:value></pgterms:file></rdf:RDF>').encode()
+        for rights, allowed in [("Public domain in the USA.", True), ("Copyrighted.", False),
+                                ("Rights unknown", False)]:
+            with self.subTest(rights=rights), patch.object(consumer.urllib.request, "build_opener") as opener:
+                opener.return_value.open.return_value = FakeResponse(rdf(rights))
+                if allowed:
+                    consumer.verify_public_domain("gutenberg:11")
+                else:
+                    with self.assertRaises(consumer.RightsNotVerified):
+                        consumer.verify_public_domain("gutenberg:11")
+                self.assertIn("/cache/epub/11/pg11.rdf", opener.return_value.open.call_args.args[0].full_url)
+
+    def test_malformed_or_oversized_rights_fail_closed(self):
+        for payload in (b"<invalid", b"<!DOCTYPE x><rights>Public domain in the USA.</rights>",
+                        b"x" * (consumer.MAX_RIGHTS_BYTES + 1)):
+            with self.subTest(size=len(payload)), patch.object(consumer.urllib.request, "build_opener") as opener:
+                opener.return_value.open.return_value = FakeResponse(payload)
+                with self.assertRaises(consumer.RightsNotVerified):
+                    consumer.verify_public_domain("gutenberg:11")
+
+    def test_gutendex_sync_skips_copyrighted_or_unknown_books(self):
+        def record(number, copyright):
+            return {"id": number, "copyright": copyright, "media_type": "Text",
+                    "languages": ["en"], "title": f"Book {number}", "authors": [{"name": "Writer"}],
+                    "formats": {"application/epub+zip":
+                                f"https://www.gutenberg.org/ebooks/{number}.epub.images"}}
+        page = {"results": [record(11, False), record(12, True), record(13, None)], "next": None}
+        with patch.object(consumer.urllib.request, "urlopen", return_value=FakeResponse(json.dumps(page).encode())):
+            api = FakeAPI()
+            self.assertEqual(consumer.sync_gutenberg(api, 1), 1)
+        self.assertEqual([item["source_id"] for item in api.posts[0][1]["books"]], ["gutenberg:11"])
 
 
 if __name__ == "__main__":

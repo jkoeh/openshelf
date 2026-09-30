@@ -106,6 +106,22 @@ Behavior:
 `books process` is the human-facing happy path. `dag run` remains the explicit
 EPUB conversion path, and individual `dag` stages remain the repair path.
 
+## `books sync-catalog`
+
+The operator downloads Gutenberg's weekly CSV.gz and RDF tar.bz2 feeds into
+`download/`, then runs `books sync-catalog --catalog <csv.gz> --rights-archive
+<rdf.tar.bz2> --api-base <Worker /api/v1 URL>`. A dedicated `OPENSHELF_PC_TOKEN`
+authorizes batches of at most 50. The command considers at most 500 English
+`Text` candidates by default, or up to 1,000 with `--max-books`; `--after-id`
+continues from a numeric Gutenberg ID. The CSV provides display metadata, while
+the exact RDF record must explicitly say `Public domain in the USA.` and list a
+matching EPUB URL. Unknown rights and missing EPUBs are skipped. Archive parsing
+is bounded and never extracts files. The command never claims a generation job
+or invokes a model; `--dry-run` performs the local rights join without API writes.
+The current bulk archive takes roughly 30 seconds to scan for a 500-candidate
+batch on the owner's PC. Before another batch, check the account's D1 daily
+row-write usage.
+
 ## `ops doctor`
 
 ```bash

@@ -110,7 +110,8 @@ flowchart LR
 
     subgraph PC[Owner PC — outbound consumer]
         J1[Poll + lease job] --> J2[Exact Gutenberg EPUB]
-        J2 --> J3[Existing Kokoro/WhisperX pipeline]
+        J2 --> J2R[Verify RDF + EPUB public-domain rights]
+        J2R --> J3[Existing Kokoro/WhisperX pipeline]
     end
     J1 <--> W_JOBS
     J3 --> R_M4A

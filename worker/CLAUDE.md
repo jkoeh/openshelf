@@ -104,6 +104,12 @@ npm run seed
 ## Search and generation v1
 
 Gutenberg-only source suggestions come from a bounded, indexed D1 table. The
+PC can fill that table from Gutenberg's weekly CSV feed in capped batches.
+The PC checks catalog candidates against Gutenberg's rights-bearing RDF
+archive before syncing; the Worker still validates source IDs and URL hosts.
+Search uses the longest typed query token as the indexed prefix at three or more
+characters, then tries indexed adjacent-transposition candidates, then a
+two-character indexed sample; each lookup is limited to 80 candidates. The
 owner can create or retry a Kokoro `af_heart` job with an exact `gutenberg:<id>`
 source ID. A separate PC credential synchronizes source metadata and claims a
 job with a renewable lease. The PC downloads only allowlisted Gutenberg EPUB

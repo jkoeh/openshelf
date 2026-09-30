@@ -45,10 +45,28 @@ flowchart LR
   the source of truth for completed audiobook artifacts. D1's FTS5 support is
   documented at <https://developers.cloudflare.com/d1/sql-api/sql-statements/>.
   Use one database per environment, with migrations checked into `worker/`.
+- An operator can import Gutenberg's weekly compressed CSV and rights-bearing
+  RDF archive through the authenticated PC source-sync route. Import is capped to a
+  chosen number of English `Text` records per run, in batches of at most 50,
+  with a numeric-ID cursor for resuming. The importer takes the EPUB URL from
+  the matching RDF record and validates its host and Gutenberg ID; catalog
+  cells never supply URLs.
+  It does not run during public requests or automatically start audio jobs.
+  CSV rows are candidates, not proof of public-domain status. The PC streams
+  the official RDF archive and syncs only candidates whose exact record says
+  `Public domain in the USA.` and names a valid EPUB. Unknown or copyrighted
+  records are omitted. No per-book network call is made during import.
+  Check D1 daily row-write usage before repeating batches.
 - Gutenberg IDs and Standard Ebooks edition paths are stable **source IDs**.
   The client submits an ID, never a URL, local path, shell argument, or arbitrary
   model setting. The consumer resolves a stored, allowlisted EPUB URL and
   verifies it is an EPUB before processing.
+- Before synthesis, the PC rechecks the exact Gutenberg ID against Gutenberg's
+  own per-book RDF and requires `Public domain in the USA.`. Missing, changed,
+  or copyrighted rights fail closed. After downloading the EPUB, it separately
+  requires the embedded OPF `dc:rights` to say the same and rejects an explicit
+  copyrighted Project Gutenberg notice in readable front matter. This protects
+  jobs already in D1 from the earlier index sync that did not screen copyright.
 - v1 generation is owner-only. The web client prompts the owner for a token
   held in session storage; native uses secure device storage. A Worker secret
   validates that token. A separate Worker secret authorizes PC claim, progress,
@@ -155,6 +173,16 @@ title, authors, language, EPUB availability, `updated_at`, and optional publishe
 `author_slug`/`title_slug`. Ingestion upserts metadata from Gutendex and Standard
 Ebooks. Only entries with a known downloadable EPUB appear in search. Record the
 last successful source refresh so an operator can see when the index is stale.
+
+For the first Gutenberg rollout, the PC may sync Gutendex pages or import the
+official weekly CSV. The CSV path is deliberately operator-run and capped at
+1,000 records per invocation, with a 500-record default to keep a first run
+well below D1 Free's daily write limit even with token-index maintenance. Runs
+resume with `--after-id`; they upsert records and can be repeated. The Worker
+first looks up the longest typed token's full prefix when the user typed at least three
+characters, then tries indexed adjacent-transposition candidates for common
+typos, then uses a bounded two-character sample as a final fallback. Each
+lookup uses the token index and scans at most 80 candidates.
 
 `GET /api/v1/source-books?q=&limit=` returns ranked suggestions with source ID,
 title, author, source, and one of `ready_to_generate`, `queued`, `running`,

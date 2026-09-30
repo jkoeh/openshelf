@@ -596,6 +596,14 @@ def _build_parser() -> argparse.ArgumentParser:
     consume.add_argument("--device", choices=["auto", "cuda", "mps", "cpu"], default="auto")
     consume.add_argument("--max-words", type=int, default=100_000)
 
+    catalog = subparsers.add_parser("sync-catalog", help="Index official Gutenberg CSV metadata")
+    catalog.add_argument("--catalog", required=True)
+    catalog.add_argument("--rights-archive", required=True)
+    catalog.add_argument("--api-base", required=True)
+    catalog.add_argument("--after-id", type=int, default=0)
+    catalog.add_argument("--max-books", type=int, default=500)
+    catalog.add_argument("--dry-run", action="store_true")
+
     return parser
 
 
@@ -616,6 +624,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.once:
                 passed.append("--once")
             return job_consumer.main(passed)
+        if args.command == "sync-catalog":
+            from openshelf.pipeline import source_catalog
+            passed = ["--catalog", args.catalog, "--rights-archive", args.rights_archive,
+                      "--api-base", args.api_base,
+                      "--after-id", str(args.after_id), "--max-books", str(args.max_books)]
+            if args.dry_run:
+                passed.append("--dry-run")
+            return source_catalog.main(passed)
     except ValueError as exc:
         parser.error(str(exc))
     return 2

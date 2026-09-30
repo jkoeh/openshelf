@@ -75,6 +75,8 @@ export default function SourceSuggestions({ query }: { query: string }) {
       <Text style={{ color: colors.textSecondary }}>{book.author} · Project Gutenberg #{book.source_id.split(":")[1]}</Text>
       {book.state === "available" && book.author_slug && book.title_slug
         ? <Link href={`/book/${book.author_slug}/${book.title_slug}`} asChild><Pressable accessibilityRole="button"><Text style={{ color: colors.primary }}>Open audiobook</Text></Pressable></Link>
+        : book.state === "failed" && job?.source_id === book.source_id && job.error_code === "RightsNotVerified"
+          ? <Text style={{ color: colors.textSecondary }}>Generation unavailable: public-domain rights could not be verified.</Text>
         : <Pressable accessibilityRole="button" disabled={busy} onPress={() => act(book)}>
           <Text style={{ color: colors.primary }}>{book.state === "failed" ? "Retry generation" : book.state === "queued" || book.state === "running" ? "View generation" : "Generate audio"}</Text>
         </Pressable>}
@@ -90,7 +92,9 @@ export default function SourceSuggestions({ query }: { query: string }) {
     {job && <View style={{ marginTop: 12 }}>
       <Text style={{ color: colors.text }}>Generation {job.state}{job.state === "running" ? ` · ${job.stage}` : ""}</Text>
       {job.state === "failed" && <Text style={{ color: colors.textSecondary }}>
-        {job.error_code === "BookTooLong"
+        {job.error_code === "RightsNotVerified"
+          ? "This edition is not verified public domain in the USA. Generation is unavailable."
+          : job.error_code === "BookTooLong"
           ? "This edition exceeds the PC's word budget. The owner can raise --max-words before retrying."
           : `Failed: ${job.error_code ?? "Unknown error"}. Search again to retry.`}
       </Text>}

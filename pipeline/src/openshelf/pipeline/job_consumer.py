@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import re
@@ -15,6 +16,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
+from xml.etree import ElementTree
 
 from openshelf.config import PROJECT_ROOT
 from openshelf.scrapers.http import sanitize
@@ -24,11 +26,16 @@ MAX_CENTRAL_DIRECTORY_BYTES = 2 * 1024 * 1024
 MAX_EXPANDED_BYTES = 256 * 1024 * 1024
 MAX_EPUB_ENTRIES = 5_000
 DEFAULT_MAX_WORDS = 100_000
-GUTENBERG_HOSTS = {"www.gutenberg.org", "gutenberg.org"}
+MAX_RIGHTS_BYTES = 128 * 1024
+GUTENBERG_HOSTS = {"www.gutenberg.org", "dev.gutenberg.org", "gutenberg.org"}
 
 
 class BookTooLong(ValueError):
     """The selected edition exceeds the owner's generation budget."""
+
+
+class RightsNotVerified(ValueError):
+    """The exact edition is not verified public domain in the USA."""
 
 
 def validate_epub_url(url: str, source_id: str) -> str:
@@ -99,6 +106,87 @@ def validate_local_epub(path: Path) -> None:
             raise ValueError("cached EPUB is invalid")
 
 
+def check_epub_rights(path: Path) -> None:
+    """Confirm embedded rights and reject Gutenberg's explicit copyright banner."""
+    with zipfile.ZipFile(path) as archive:
+        opfs = [item for item in archive.infolist() if item.filename.lower().endswith(".opf")]
+        if len(opfs) != 1 or opfs[0].file_size > 1024 * 1024:
+            raise RightsNotVerified("EPUB package rights are missing or ambiguous")
+        try:
+            package = ElementTree.fromstring(archive.read(opfs[0]))
+        except ElementTree.ParseError as exc:
+            raise RightsNotVerified("invalid EPUB package rights") from exc
+        rights = [node.text.strip() for node in package.iter("{http://purl.org/dc/elements/1.1/}rights")
+                  if node.text]
+        if rights != ["Public domain in the USA."]:
+            raise RightsNotVerified("EPUB is not verified public domain in the USA")
+        banner = re.compile(r"this\s+is\s+a\s+copyrighted\s+project\s+gutenberg\s+ebook", re.I)
+        for item in archive.infolist():
+            if not item.filename.lower().endswith((".htm", ".html", ".xhtml", ".txt")):
+                continue
+            with archive.open(item) as source:
+                front = source.read(64 * 1024)
+            readable = html.unescape(re.sub(r"<[^>]*>", " ", front.decode("utf-8", "ignore")))
+            if banner.search(readable):
+                raise RightsNotVerified("EPUB contains an explicit copyright notice")
+
+
+def public_domain_epub_url(data: bytes, source_id: str) -> str:
+    """Read one official RDF record; reject ambiguous rights or EPUB formats."""
+    match = re.fullmatch(r"gutenberg:([1-9][0-9]*)", source_id)
+    if not match or len(data) > MAX_RIGHTS_BYTES or b"<!DOCTYPE" in data.upper() or b"<!ENTITY" in data.upper():
+        raise RightsNotVerified("invalid or oversized rights metadata")
+    number = match.group(1)
+    try:
+        root = ElementTree.fromstring(data)
+    except ElementTree.ParseError as exc:
+        raise RightsNotVerified("invalid rights metadata") from exc
+    ns = {"pg": "http://www.gutenberg.org/2009/pgterms/",
+          "dc": "http://purl.org/dc/terms/",
+          "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#"}
+    ebook = root.find("pg:ebook", ns)
+    if ebook is None or ebook.get(f"{{{ns['rdf']}}}about") != f"ebooks/{number}":
+        raise RightsNotVerified("rights record does not match Gutenberg ID")
+    rights = [node.text.strip() for node in ebook.findall("dc:rights", ns) if node.text]
+    if rights != ["Public domain in the USA."]:
+        raise RightsNotVerified("edition is not verified public domain in the USA")
+    urls = []
+    for item in root.findall(".//pg:file", ns):
+        if not any((value.text or "").strip() == "application/epub+zip"
+                   for value in item.findall(".//rdf:value", ns)):
+            continue
+        url = item.get(f"{{{ns['rdf']}}}about")
+        if not url:
+            continue
+        try:
+            urls.append(validate_epub_url(url, source_id))
+        except ValueError:
+            continue
+    if not urls:
+        raise RightsNotVerified("verified edition has no trusted EPUB")
+    return next((url for url in urls if url.endswith(".epub.images")), urls[0])
+
+
+def verify_public_domain(source_id: str) -> None:
+    """Require the official RDF rights marker before any expensive work."""
+    match = re.fullmatch(r"gutenberg:([1-9][0-9]*)", source_id)
+    if not match:
+        raise RightsNotVerified("invalid Gutenberg ID")
+    number = match.group(1)
+    opener = urllib.request.build_opener(GutenbergRedirects(source_id))
+    for host in ("dev.gutenberg.org", "www.gutenberg.org"):
+        url = f"https://{host}/cache/epub/{number}/pg{number}.rdf"
+        request = urllib.request.Request(url, headers={"User-Agent": "OpenShelf/1.0"})
+        try:
+            with opener.open(request, timeout=15) as response:
+                data = response.read(MAX_RIGHTS_BYTES + 1)
+            public_domain_epub_url(data, source_id)
+            return
+        except OSError:
+            continue
+    raise RightsNotVerified("could not verify Gutenberg rights")
+
+
 def check_word_budget(path: Path, max_words: int) -> int:
     from openshelf.pipeline.epub_parser import parse_epub
 
@@ -146,6 +234,9 @@ def sync_gutenberg(api: JobAPI, pages: int) -> int:
             page = json.load(response)
         books = []
         for book in page.get("results", []):
+            if (book.get("copyright") is not False or book.get("media_type") != "Text"
+                    or "en" not in book.get("languages", [])):
+                continue
             epub_url = book.get("formats", {}).get("application/epub+zip")
             source_id = f"gutenberg:{book.get('id')}"
             try:
@@ -172,9 +263,11 @@ def process_job(api: JobAPI, job: dict, *, download_root: Path, audio_root: Path
     lease = job["lease_token"]
     route = f"/internal/generation-jobs/{job['id']}"
     try:
+        verify_public_domain(source_id)
         if not epub.exists():
             fetch_epub(job["epub_url"], source_id, epub)
         validate_local_epub(epub)
+        check_epub_rights(epub)
         check_word_budget(epub, max_words)
         build_dir = audio_root / author_slug / title_slug / "audio" / "kokoro-af-heart" / "builds" / job["build_id"]
         command = [sys.executable, "-m", "openshelf.pipeline.cli", "books", "process", "--epub", str(epub),
