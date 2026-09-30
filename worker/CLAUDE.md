@@ -109,8 +109,13 @@ source ID. A separate PC credential synchronizes source metadata and claims a
 job with a renewable lease. The PC downloads only allowlisted Gutenberg EPUB
 URLs and runs the existing exact-EPUB pipeline. Completion checks the R2 book
 pointer, rendition manifest and every listed section audio object. Public
-search is rate-limited; D1 enforces active-job deduplication, three pending
-jobs, two successful start reservations per UTC day and three attempts per job.
+search is rate-limited before a bounded, 15-second in-isolate cache for
+identical origin, normalized query, and limit triples. Only successful public suggestion
+responses enter the cache. Isolates do not share memory, so cold instances
+still query D1; clients receive `no-store`, and job state can lag by at most
+15 seconds. D1 enforces active-job
+deduplication, three pending jobs, two successful start reservations per UTC
+day and three attempts per job.
 Only invalid owner or PC credentials count against the separate authentication
 rate limit; valid consumer requests remain usable. Rejected queue-full or
 duplicate submissions consume no daily reservation. All job responses are
