@@ -65,9 +65,11 @@ export default function SourceSuggestions({ query }: { query: string }) {
 
   if (query.trim().length < 2) return null;
   return <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
-    <Text style={{ color: colors.text, fontSize: 18, fontWeight: "600", marginBottom: 5 }}>Find an edition to narrate</Text>
+    <Text style={{ color: colors.text, fontSize: 18, fontWeight: "600", marginBottom: 5 }}>Find a Gutenberg edition</Text>
+    <Text style={{ color: colors.textSecondary, marginBottom: 5 }}>This early source index is limited. Only the owner can schedule audio generation.</Text>
     {loading && <ActivityIndicator accessibilityLabel="Searching source books" color={colors.primary} />}
     {error ? <Text accessibilityRole="alert" style={{ color: colors.textSecondary, marginVertical: 8 }}>{error}</Text> : null}
+    {!loading && !error && books.length === 0 && <Text style={{ color: colors.textSecondary, marginVertical: 8 }}>No indexed edition found. Try another title or author.</Text>}
     {books.map((book) => <View key={book.source_id} style={{ paddingVertical: 9, borderBottomWidth: 0.5, borderColor: colors.separator }}>
       <Text style={{ color: colors.text, fontWeight: "600" }}>{book.title}</Text>
       <Text style={{ color: colors.textSecondary }}>{book.author} · Project Gutenberg #{book.source_id.split(":")[1]}</Text>
@@ -78,7 +80,8 @@ export default function SourceSuggestions({ query }: { query: string }) {
         </Pressable>}
     </View>)}
     {tokenOpen && selected && <View style={{ marginTop: 12 }}>
-      <Text style={{ color: colors.text }}>Owner token for {selected.title}</Text>
+      <Text style={{ color: colors.text }}>OpenShelf owner key for {selected.title}</Text>
+      <Text style={{ color: colors.textSecondary }}>Use the dedicated OpenShelf key, not a Cloudflare API token. It is kept only for this session.</Text>
       <TextInput accessibilityLabel="Owner token" secureTextEntry value={token} onChangeText={setToken}
         placeholder="Enter owner token" placeholderTextColor={colors.textSecondary}
         style={{ color: colors.text, borderColor: colors.separator, borderWidth: 1, padding: 8, marginVertical: 6 }} />
@@ -86,7 +89,11 @@ export default function SourceSuggestions({ query }: { query: string }) {
     </View>}
     {job && <View style={{ marginTop: 12 }}>
       <Text style={{ color: colors.text }}>Generation {job.state}{job.state === "running" ? ` · ${job.stage}` : ""}</Text>
-      {job.state === "failed" && <Text style={{ color: colors.textSecondary }}>Failed: {job.error_code ?? "Unknown error"}. Search again to retry.</Text>}
+      {job.state === "failed" && <Text style={{ color: colors.textSecondary }}>
+        {job.error_code === "BookTooLong"
+          ? "This edition exceeds the PC's word budget. The owner can raise --max-words before retrying."
+          : `Failed: ${job.error_code ?? "Unknown error"}. Search again to retry.`}
+      </Text>}
       {job.state === "completed" && job.author_slug && job.title_slug &&
         <Link href={`/book/${job.author_slug}/${job.title_slug}`} asChild><Pressable accessibilityRole="button"><Text style={{ color: colors.primary }}>Open finished audiobook</Text></Pressable></Link>}
     </View>}

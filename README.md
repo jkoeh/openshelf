@@ -121,6 +121,9 @@ Production uses `openshelf-jobs` D1 and the `openshelf` R2 bucket. Staging uses
 isolated `openshelf-jobs-staging` D1 and `openshelf-staging` R2 resources. Both
 Workers have distinct owner and PC credentials, and the production source index
 has its first 64 Gutenberg editions.
+The client identifies this as a limited source index; an empty suggestion list
+does not mean Gutenberg lacks the book. Only the owner can submit generation
+jobs, using a dedicated OpenShelf key rather than a Cloudflare credential.
 
 On this PC, the two locally generated tokens are in the ignored
 `worker/.secrets/` directory. The **owner token** is entered in the client only
@@ -150,6 +153,10 @@ limited to 60 per minute per client IP. Worker rate limits reduce D1 work, but
 a large bot flood can still invoke the Worker on `workers.dev`. A custom-domain
 WAF rule can reject such traffic before invocation if this becomes public at
 larger scale.
+The PC consumer rejects EPUB archives above 2 MiB ZIP metadata, 256 MiB
+expanded size, or 5,000 entries, and books over 100,000 source spoken words
+(body plus spoken headings) before starting any LLM or synthesis work.
+Use `--max-words N` to deliberately raise or lower that per-job ceiling.
 
 Offline API, PC, and headless browser checks run in `.github/workflows/verify.yml`.
 The staging acceptance run covered index sync, autocomplete, protected creation,

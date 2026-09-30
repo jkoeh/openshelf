@@ -77,6 +77,13 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
 - The catalog page keeps published-book browsing and adds debounced source
   suggestions. Generation requires a session-only owner token entered at the
   point of action; a missing token never blocks public search or playback.
+  The source-search UI explains that the index is limited and generation is
+  owner-only; a missing match is never presented as proof Gutenberg lacks the
+  book. Its token prompt explicitly asks for the dedicated OpenShelf owner
+  key, not a Cloudflare credential, and says it lasts only for the session.
+  If the PC rejects an edition above its spoken-word budget, the generation
+  status explains that the owner must deliberately raise `--max-words` before
+  retrying.
 
 ## Do NOT
 

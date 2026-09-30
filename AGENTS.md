@@ -136,6 +136,10 @@ Notes:
 - When section audio finishes, the reader advances to the next section in the
   same selected rendition/build and starts playback only after the next
   section's audio source has loaded.
+- The owner PC consumer checks Gutenberg EPUB ZIP metadata, expanded size,
+  entry count, and parsed source spoken words before starting LLM or synthesis.
+  The default source-word budget is 100,000 words, including spoken headings;
+  `--max-words` is an explicit owner override for larger books.
 
 ### Rendition vs build invariant
 

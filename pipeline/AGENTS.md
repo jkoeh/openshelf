@@ -50,8 +50,12 @@ under `pipeline/src/openshelf/pipeline/engines/`.
 - `openshelf-pipeline` is the canonical command surface.
 - `openshelf-pipeline books consume-jobs` polls outward to the Worker, downloads
   an exact Gutenberg EPUB after host and EPUB validation, renews its lease, and
-  invokes the existing exact-EPUB DAG runner with a fixed build ID. It never
-  opens a listener or stores the owner credential.
+  invokes the existing exact-EPUB DAG runner with a fixed build ID. Before any
+  LLM or synthesis work, it rejects archives above 2 MiB central-directory
+  metadata, 256 MiB expanded size, or 5,000 entries, and books above the
+  default 100,000 source spoken-word budget (body plus spoken headings). The
+  owner may explicitly raise that budget with `--max-words`. It never opens a
+  listener or stores the owner credential.
 - `openshelf-pipeline books ...` owns user-facing book workflows: search,
   download, process local EPUBs, upload, and catalog refresh.
 - `openshelf-pipeline dag ...` owns repairable artifact stages and full DAG
