@@ -121,3 +121,36 @@ test("mobile search presents two matching editions without overflow", async ({ p
   await page.screenshot({ path: testInfo.outputPath("design-mobile.png"), fullPage: true });
   expect(consoleErrors).toEqual([]);
 });
+
+test("mobile owner sign-in unlocks cancellation without exposing a local key", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const queued = { id: "job-1", source_id: "gutenberg:11", state: "queued", stage: "queued",
+    author_slug: null, title_slug: null, error_code: null, created_at: "2026-09-29", updated_at: "2026-09-29" };
+  await mockCatalog(page, [{ ...edition, state: "queued", job_id: "job-1" }]);
+  await page.route("https://accounts.google.com/gsi/client", async (route) => route.fulfill({
+    contentType: "application/javascript",
+    body: `window.google={accounts:{id:{initialize:({callback})=>{window.adminCallback=callback},renderButton:(element)=>{const button=document.createElement('button');button.textContent='Sign in with Google';button.onclick=()=>window.adminCallback({credential:'mock-google-token'});element.appendChild(button)},disableAutoSelect:()=>{}}}};`,
+  }));
+  await page.route("**/api/v1/admin/me", async (route) => {
+    expect(route.request().headers().authorization).toBe("Bearer mock-google-token");
+    await route.fulfill({ json: { email: "johnkoeh@gmail.com" } });
+  });
+  await page.route("**/api/v1/generation-jobs/job-1", async (route) => route.fulfill({ json: queued }));
+  let canceled = false;
+  await page.route("**/api/v1/generation-jobs/job-1/cancel", async (route) => {
+    expect(route.request().headers().authorization).toBe("Bearer mock-google-token");
+    canceled = true;
+    await route.fulfill({ json: { ...queued, state: "canceled", stage: "canceled" } });
+  });
+  await page.goto("/");
+  await page.getByRole("textbox", { name: "Search books" }).fill("alice");
+  await expect(page.getByText(edition.title)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Cancel generation" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Owner controls" }).click();
+  await page.getByRole("button", { name: "Sign in with Google" }).click();
+  await expect(page.getByRole("button", { name: "Cancel generation" })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel generation" }).click();
+  await expect(page.getByText("Request canceled.")).toBeVisible();
+  expect(canceled).toBe(true);
+  await expect(page.getByLabel("Owner token")).toHaveCount(0);
+});

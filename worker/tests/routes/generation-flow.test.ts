@@ -54,6 +54,15 @@ beforeEach(async () => {
 });
 
 describe("source search and generation API", () => {
+	it("keeps browser admin identity closed when Google is unconfigured or invalid", async () => {
+		expect((await request("/admin/me", "GET", undefined, ownerToken)).status).toBe(503);
+		const configured = { ...bindings, GOOGLE_CLIENT_ID: "openshelf-test.apps.googleusercontent.com" };
+		const invalid = await app.request(`${origin}/api/v1/admin/me`, {
+			headers: { Authorization: "Bearer forged.google.token" },
+		}, configured);
+		expect(invalid.status).toBe(401);
+		expect(invalid.headers.get("Cache-Control")).toBe("no-store");
+	});
 	it("ranks prefix and typo suggestions and blocks a search before D1 work", async () => {
 		expect((await sync([source(11, "Alice's Adventures in Wonderland")])).status).toBe(200);
 		const prefix = await request("/source-books?q=ali");

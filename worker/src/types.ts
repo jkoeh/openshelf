@@ -6,4 +6,5 @@ export type Env = {
 	AUTH_RATE_LIMITER?: RateLimit;
 	OWNER_TOKEN?: string;
 	PC_TOKEN?: string;
+	GOOGLE_CLIENT_ID?: string;
 };

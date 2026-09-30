@@ -79,8 +79,9 @@ flowchart LR
   credential. Worker rate limiting runs before D1 for creation and status reads,
   and atomic D1 daily-start,
   queue, and active-source caps remain authoritative. Owner operations such as
-  canceling, retrying, and regeneration require the owner token. Paid model
-  direction is reserved for a future browser admin sign-in; a separate PC secret authorizes claim, progress,
+  canceling, retrying, and regeneration require the local owner token or a
+  Google-signed ID token for verified `johnkoeh@gmail.com`. Paid model
+  direction is a separate owner-only job mode; a separate PC secret authorizes claim, progress,
   completion, and source-index writes. Neither PC nor owner secrets are bundled
   in the app. Listening and searching remain public.
 - One active job per `(source_id, rendition)` is enforced in D1. Duplicate

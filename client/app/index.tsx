@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, Text, useWindowDimensions, View } from "react-native";
 import BookCard from "../components/BookCard";
+import AdminSignIn from "../components/AdminSignIn";
 import SearchBar from "../components/SearchBar";
 import SourceSuggestions from "../components/SourceSuggestions";
 import { discoveryColors } from "../constants/discovery";
@@ -20,6 +21,7 @@ export default function CatalogPage() {
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [adminToken, setAdminToken] = useState<string | null>(null);
   const requestVersion = useRef(0);
 
   const loadBooks = useCallback(
@@ -73,7 +75,10 @@ export default function CatalogPage() {
           renderItem={({ item }) => <BookCard book={item} />}
           contentContainerStyle={{ width: contentWidth, alignSelf: "center", paddingBottom: 64 }}
           ListHeaderComponent={<View style={{ paddingTop: width < 600 ? 32 : 54 }}>
-            <Text style={{ color: palette.text, fontSize: 24, fontWeight: "700", letterSpacing: -1 }}>OpenShelf</Text>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+              <Text style={{ color: palette.text, fontSize: 24, fontWeight: "700", letterSpacing: -1 }}>OpenShelf</Text>
+              <AdminSignIn token={adminToken} onToken={setAdminToken} />
+            </View>
             <Text accessibilityRole="header" style={{
               color: palette.text, fontFamily: "Georgia", fontWeight: "700",
               fontSize: width < 600 ? 34 : 58, lineHeight: width < 600 ? 42 : 66,
@@ -83,7 +88,7 @@ export default function CatalogPage() {
               Discover public-domain books and request audio.
             </Text>
             <SearchBar value={query} onChangeText={setQuery} />
-            <SourceSuggestions query={query} />
+            <SourceSuggestions query={query} adminToken={adminToken} onAdminExpired={() => setAdminToken(null)} />
             {books.length > 0 && <Text accessibilityRole="header" style={{
               color: palette.text, fontFamily: "Georgia", fontSize: 27,
               fontWeight: "700", marginTop: 36, marginBottom: 8,

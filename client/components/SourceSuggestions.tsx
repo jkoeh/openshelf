@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, Text, useWindowDimensions, View } from "react-native";
 import { discoveryColors } from "../constants/discovery";
 import { useTheme } from "../hooks/useTheme";
-import { createGenerationJob, fetchGenerationJob, fetchSourceBooks } from "../lib/api";
+import { ApiError, cancelGenerationJob, createGenerationJob, fetchGenerationJob, fetchSourceBooks, regenerateGenerationJob, retryGenerationJob } from "../lib/api";
 import type { GenerationJob, SourceBook } from "../types";
 
 function failureText(code: GenerationJob["error_code"] | undefined) {
@@ -12,7 +12,11 @@ function failureText(code: GenerationJob["error_code"] | undefined) {
   return "Generation stopped. The owner can review the job.";
 }
 
-export default function SourceSuggestions({ query }: { query: string }) {
+export default function SourceSuggestions({ query, adminToken, onAdminExpired }: {
+  query: string;
+  adminToken: string | null;
+  onAdminExpired: () => void;
+}) {
   const { theme, colors } = useTheme();
   const palette = discoveryColors(theme, colors);
   const { width } = useWindowDimensions();
@@ -88,6 +92,26 @@ export default function SourceSuggestions({ query }: { query: string }) {
     }
   };
 
+  const adminAct = async (book: SourceBook, action: "cancel" | "retry" | "regenerate") => {
+    if (!adminToken) return;
+    const id = jobs[book.source_id]?.id ?? book.job_id;
+    setBusySource(book.source_id);
+    setError("");
+    try {
+      const next = action === "regenerate"
+        ? await regenerateGenerationJob(book.source_id, adminToken)
+        : action === "cancel" && id
+          ? await cancelGenerationJob(id, adminToken)
+          : id ? await retryGenerationJob(id, adminToken) : null;
+      if (next) setJobs((previous) => ({ ...previous, [book.source_id]: next }));
+    } catch (reason) {
+      if (reason instanceof ApiError && reason.status === 401) onAdminExpired();
+      setError(reason instanceof Error ? reason.message : "Owner action failed.");
+    } finally {
+      setBusySource(null);
+    }
+  };
+
   if (query.trim().length < 2) return null;
 
   return <View style={{ marginTop: 34 }}>
@@ -150,6 +174,16 @@ export default function SourceSuggestions({ query }: { query: string }) {
               {busySource === book.source_id ? "Requesting…" : active ? "Refresh status" : "Request audiobook"}
             </Text></Pressable>
           ) : null}
+          {adminToken && ((active && (job?.id ?? book.job_id)) || (failed && (job?.id ?? book.job_id)) || ready) && (
+            <Pressable accessibilityRole="button" disabled={!!busySource}
+              onPress={() => adminAct(book, active ? "cancel" : failed ? "retry" : "regenerate")}
+              style={{ minHeight: 44, justifyContent: "center", alignItems: "center", marginTop: 10,
+                borderWidth: 1, borderColor: palette.border, borderRadius: 9, opacity: busySource ? 0.6 : 1 }}>
+              <Text style={{ color: palette.primary, fontWeight: "600" }}>
+                {active ? "Cancel generation" : failed ? "Retry generation" : "Regenerate audio"}
+              </Text>
+            </Pressable>
+          )}
         </View>;
       })}
     </View>

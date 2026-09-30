@@ -68,6 +68,7 @@ flowchart LR
         W_EPUB[GET /books/:a/:t/epub]
         W_SPEC[GET /openapi.json + /docs<br/>auto-generated from Zod schemas]
         W_SEARCH[GET /source-books<br/>bounded autocomplete]
+        W_ADMIN[GET /admin/me<br/>verify Google owner]
         W_JOBS[Public default job requests/status<br/>Owner cancel/retry/direction<br/>PC claim/heartbeat/finish]
     end
 
@@ -89,6 +90,7 @@ flowchart LR
         direction TB
         C1[Catalog page<br/>fetchCatalog]
         C_SEARCH[Source search + generation status]
+        C_ADMIN[Google owner sign-in<br/>cancel/retry/regenerate]
         C2[Book detail<br/>fetchBook → manifest with renditions]
         C2B[Collapsed rendition picker<br/>engine -> voice -> upload time]
         C3[Reader page<br/>pin build at section load<br/>fetchSection rendition build → heading + body + words]
@@ -102,6 +104,8 @@ flowchart LR
     W_CAT  --> C1
     W_SEARCH --> C_SEARCH
     C_SEARCH --> W_JOBS
+    C_ADMIN --> W_ADMIN
+    C_ADMIN --> W_JOBS
     W_BOOK --> C2
     W_BUILDS --> C2B
     C2B --> C3
@@ -142,8 +146,13 @@ Notes:
   The default source-word budget is 100,000 words, including spoken headings;
   `--max-words` is an explicit owner override for larger books.
 - Generation requests for the fixed local Kokoro voice may be public, subject to
-  the atomic daily-start and queue caps. Only the owner can cancel or retry;
-  paid model direction is reserved for a future authenticated admin flow.
+  the atomic daily-start and queue caps. Browser admin actions accept a Google
+  Identity Services ID token only after the Worker verifies its signature,
+  issuer, audience, expiry, verified email, and exact `johnkoeh@gmail.com`
+  address. The existing local owner token remains valid for CLI administration.
+  Browser tokens remain in memory and are never logged or persisted. Only the
+  owner can cancel, retry, or regenerate; paid model direction remains a
+  separate owner-only job mode.
   Cancellation is a terminal job state: queued
   work cannot be claimed, and a running consumer loses its lease on the next
   heartbeat and stops its child process. A canceled start is not refunded.

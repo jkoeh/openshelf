@@ -55,7 +55,9 @@ export default app;
 ## Shared schemas
 
 For generation routes, each request/response stays in `createRoute` Zod schemas.
-Owner and PC bearer tokens are distinct Worker secrets. No job route is cached.
+Owner and PC bearer tokens are distinct Worker secrets. Browser admin actions
+may instead use a Google-signed ID token validated against the configured
+OAuth client ID and exact verified owner email. No job route is cached.
 The PC may finish only while its lease token matches; completion validates the
 published R2 build and catalog before returning success. The database can be
 absent in an environment, in which case discovery and job routes return 503.

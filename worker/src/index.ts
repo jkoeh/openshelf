@@ -1,5 +1,6 @@
 import { swaggerUI } from "@hono/swagger-ui";
 import { cors } from "./middleware/cors";
+import admin from "./routes/admin";
 import audio from "./routes/audio";
 import book from "./routes/book";
 import builds from "./routes/builds";
@@ -19,6 +20,7 @@ const app = createOpenAPIApp<{ Bindings: Env }>();
 app.use("*", cors);
 
 app.route("/api/v1/health", health);
+app.route("/api/v1/admin", admin);
 app.route("/api/v1/catalog", catalog);
 app.route("/api/v1/source-books", sourceBooks);
 app.route("/api/v1/internal/source-books", internalSourceBooks);

@@ -63,9 +63,11 @@ Rate-limit bindings protect public search and authentication attempts. A bounded
 suggestions after rate limiting; it is best effort because instances do not
 share memory. Clients receive `no-store` and may see job availability lag by up
 to 15 seconds. D1 caps queued jobs, daily starts, and job attempts. Generation
-is public for the fixed Kokoro voice; authenticated owner token routes handle
-cancel, retry, and regeneration. Browser admin sign-in and paid direction are
-planned separately.
+is public for the fixed Kokoro voice; once configured, Google sign-in for
+`johnkoeh@gmail.com` allows browser cancel, retry, and regeneration. The local owner token remains
+available for CLI administration. Paid direction is a separate owner-only mode.
+The browser verifies sign-in through `GET /api/v1/admin/me` before showing
+admin controls; it keeps the Google ID token in memory only.
 
 ## Development
 
@@ -130,8 +132,14 @@ held 519 Gutenberg editions when checked on September 30, 2026.
 The client identifies this as a limited source index; an empty suggestion list
 does not mean Gutenberg lacks the book. Visitors can request the fixed Kokoro
 voice within the Worker daily and queue caps. Owner retry, regeneration, and
-cancellation currently use the local owner token. Browser admin sign-in and
-paid direction are planned separately.
+cancellation can use configured browser Google sign-in for `johnkoeh@gmail.com` or the
+local owner token. Paid direction is a separate owner-only mode. To enable
+browser sign-in, create a Google OAuth Web client with the production Pages
+origin `https://openshelf.pages.dev` (and your local web origin for testing),
+set its client ID as the Worker's `GOOGLE_CLIENT_ID` in staging and production,
+and set `EXPO_PUBLIC_GOOGLE_CLIENT_ID` for the client build. The client ID is
+public; no Google client secret or owner token belongs in the web bundle.
+If either ID is absent, browser admin actions stay unavailable.
 
 On this PC, the two locally generated tokens are in the ignored
 `worker/.secrets/` directory. The **owner token** stays on this PC for local

@@ -86,9 +86,12 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
   suggestions. A visitor can request the fixed local Kokoro narration without
   entering a token. The source-search UI explains that the index is limited;
   a missing match is never presented as proof Gutenberg lacks the book. The
-  current owner token remains local for cancellation via the PC script and
-  authenticated retry/regeneration API calls. Browser admin sign-in and paid
-  direction are future controls, not a public token prompt.
+  current owner token remains local for cancellation via the PC script. On web,
+  the owner signs in with Google for cancel, retry, and regeneration controls.
+  The Google ID token lives only in React memory and is sent to the Worker;
+  the client never persists it or bundles the local owner key. If the OAuth
+  client ID is unconfigured, the admin control explains setup is needed. Paid
+  narration direction remains a separate owner-only job mode.
   If the PC rejects an edition above its spoken-word budget, the generation
   status explains that the owner must deliberately raise `--max-words` before
   an admin retry. If official Gutenberg rights cannot be verified as public
