@@ -6,7 +6,13 @@
 from the PC environment and polls the Worker over HTTPS. `--sync-pages N` first
 indexes up to N Gutenberg pages through the authenticated source-sync route.
 One job runs at a time. A claimed job names an exact Gutenberg ID and EPUB URL;
-the consumer validates its host and EPUB archive, then calls `books process
+the consumer validates its host and EPUB archive, rejects ZIP files above
+2 MiB central-directory metadata, 256 MiB expanded size, or 5,000 entries,
+parses the EPUB locally and rejects more than 100,000 source spoken words
+(body plus spoken headings) by default before any LLM or TTS call. Generated
+opening and closing credits are outside this source-word budget. `--max-words N`
+explicitly changes that per-job limit. A rejected book is reported as failed without
+starting the expensive pipeline. Accepted jobs call `books process
 --epub ... --engine kokoro --voice af_heart --rendition kokoro-af-heart
 --build-id ... --upload`. It renews the lease while processing and uses
 `--resume` only when the same build has a local `run.json`. A rejected lease

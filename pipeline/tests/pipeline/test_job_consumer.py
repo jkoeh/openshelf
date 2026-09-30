@@ -7,6 +7,7 @@ import unittest
 import urllib.error
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from openshelf.pipeline import job_consumer as consumer
@@ -77,6 +78,53 @@ class ConsumerTests(unittest.TestCase):
                     consumer.fetch_epub("https://www.gutenberg.org/ebooks/11.epub", "gutenberg:11", target)
             self.assertTrue(target.exists())
 
+    def test_epub_expanded_size_is_checked_before_decompression(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "book.epub"
+            with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("META-INF/container.xml", "<container/>")
+                archive.writestr("large.txt", "x" * 1024)
+            with patch.object(consumer, "MAX_EXPANDED_BYTES", 512):
+                with self.assertRaisesRegex(ValueError, "expands beyond limits"):
+                    consumer.validate_local_epub(target)
+
+    def test_zip_directory_limit_precedes_zipfile_allocation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "book.epub"
+            with zipfile.ZipFile(target, "w") as archive:
+                archive.writestr("META-INF/container.xml", "<container/>")
+                archive.writestr("chapter.xhtml", "<p>words</p>")
+            with patch.object(consumer, "MAX_EPUB_ENTRIES", 1), \
+                    patch.object(consumer.zipfile, "ZipFile") as parser:
+                with self.assertRaisesRegex(ValueError, "directory exceeds limits"):
+                    consumer.validate_local_epub(target)
+                parser.assert_not_called()
+
+    def test_word_budget_rejects_long_book_before_pipeline(self):
+        job = {"id": "job-1", "source_id": "gutenberg:11", "title": "Alice", "author": "Lewis Carroll",
+               "epub_url": "https://www.gutenberg.org/ebooks/11.epub", "build_id": "1234567890abcdef", "lease_token": "lease"}
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            epub = root / "download" / "gutenberg" / "lewis-carroll" / "alice-g11.epub"
+            epub.parent.mkdir(parents=True)
+            with zipfile.ZipFile(epub, "w") as archive:
+                archive.writestr("META-INF/container.xml", "<container/>")
+            api = FakeAPI()
+            with patch.object(consumer, "check_word_budget", side_effect=consumer.BookTooLong("over budget")), \
+                    patch.object(consumer.subprocess, "Popen") as popen:
+                with self.assertRaises(consumer.BookTooLong):
+                    consumer.process_job(api, job, download_root=root / "download", audio_root=root / "audio",
+                                         device="cuda")
+            popen.assert_not_called()
+            self.assertEqual(api.posts[-1][1]["error_code"], "BookTooLong")
+
+    def test_word_budget_counts_parsed_spoken_words(self):
+        with patch("openshelf.pipeline.epub_parser.parse_epub",
+                   return_value=[SimpleNamespace(word_count=99_999,
+                                                 heading=SimpleNamespace(spoken_text="Chapter One"))]):
+            with self.assertRaises(consumer.BookTooLong):
+                consumer.check_word_budget(Path("unused.epub"), 100_000)
+
     def test_exact_book_command_keeps_build_and_resumes_only_existing_run(self):
         job = {"id": "job-1", "source_id": "gutenberg:11", "title": "Alice", "author": "Lewis Carroll",
                "epub_url": "https://www.gutenberg.org/ebooks/11.epub", "build_id": "1234567890abcdef", "lease_token": "lease"}
@@ -88,7 +136,8 @@ class ConsumerTests(unittest.TestCase):
                 archive.writestr("META-INF/container.xml", "<container/>")
             api = FakeAPI()
             child = FakeChild()
-            with patch.object(consumer.subprocess, "Popen", return_value=child) as popen, patch.object(consumer.time, "sleep"):
+            with patch.object(consumer.subprocess, "Popen", return_value=child) as popen, \
+                    patch.object(consumer, "check_word_budget", return_value=1000), patch.object(consumer.time, "sleep"):
                 consumer.process_job(api, job, download_root=root / "download", audio_root=root / "audio", device="cuda")
             command = popen.call_args.args[0]
             self.assertIn("--epub", command)
@@ -99,7 +148,8 @@ class ConsumerTests(unittest.TestCase):
             run = root / "audio" / "lewis-carroll" / "alice-g11" / "audio" / "kokoro-af-heart" / "builds" / "1234567890abcdef" / "run.json"
             run.parent.mkdir(parents=True)
             run.write_text("{}")
-            with patch.object(consumer.subprocess, "Popen", return_value=FakeChild()) as popen, patch.object(consumer.time, "sleep"):
+            with patch.object(consumer.subprocess, "Popen", return_value=FakeChild()) as popen, \
+                    patch.object(consumer, "check_word_budget", return_value=1000), patch.object(consumer.time, "sleep"):
                 consumer.process_job(api, job, download_root=root / "download", audio_root=root / "audio", device="cuda")
             self.assertIn("--resume", popen.call_args.args[0])
 
@@ -127,6 +177,7 @@ class ConsumerTests(unittest.TestCase):
                 archive.writestr("META-INF/container.xml", "<container/>")
             child = RunningChild()
             with patch.object(consumer.subprocess, "Popen", return_value=child), \
+                    patch.object(consumer, "check_word_budget", return_value=1000), \
                     patch.object(consumer.time, "sleep"), \
                     patch.object(consumer.time, "monotonic", side_effect=[0, 0, 31, 31, 31]):
                 with self.assertRaisesRegex(RuntimeError, "lease rejected"):
@@ -140,7 +191,7 @@ class ConsumerTests(unittest.TestCase):
             self.assertEqual(books.main(["consume-jobs", "--api-base", "https://example.com/api/v1",
                                          "--once", "--device", "cuda"]), 7)
         run.assert_called_once_with(["--api-base", "https://example.com/api/v1", "--sync-pages", "0",
-                                     "--device", "cuda", "--once"])
+                                     "--device", "cuda", "--max-words", "100000", "--once"])
 
 
 if __name__ == "__main__":
