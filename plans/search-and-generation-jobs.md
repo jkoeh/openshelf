@@ -57,6 +57,9 @@ flowchart LR
   `Public domain in the USA.` and names a valid EPUB. Unknown or copyrighted
   records are omitted. No per-book network call is made during import.
   Check D1 daily row-write usage before repeating batches.
+  If completed/failed job history grows enough to slow autocomplete, add an
+  index on `(source_id, created_at DESC)` for the latest-job lookup; the
+  two-starts-per-day cap keeps this a later scaling concern.
 - Gutenberg IDs and Standard Ebooks edition paths are stable **source IDs**.
   The client submits an ID, never a URL, local path, shell argument, or arbitrary
   model setting. The consumer resolves a stored, allowlisted EPUB URL and
@@ -67,6 +70,11 @@ flowchart LR
   requires the embedded OPF `dc:rights` to say the same and rejects an explicit
   copyrighted Project Gutenberg notice in readable front matter. This protects
   jobs already in D1 from the earlier index sync that did not screen copyright.
+- The rights gate applies to the automatic Gutenberg import and PC job path.
+  Manual CLI uploads remain operator-controlled. Public reading is not
+  geographically restricted; the operator is responsible for distribution
+  rights beyond the U.S. marker used by the automatic path. A rights-failed
+  job may be retried by the owner, but every attempt repeats the PC preflight.
 - v1 generation is owner-only. The web client prompts the owner for a token
   held in session storage; native uses secure device storage. A Worker secret
   validates that token. A separate Worker secret authorizes PC claim, progress,

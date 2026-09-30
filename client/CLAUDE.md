@@ -84,8 +84,10 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
   If the PC rejects an edition above its spoken-word budget, the generation
   status explains that the owner must deliberately raise `--max-words` before
   retrying. If official Gutenberg rights cannot be verified as public domain
-  in the USA, the status explains that generation is unavailable for that
-  edition; a blind retry does not override this safety gate.
+  in the USA, the status explains the failure and still offers an owner retry.
+  The PC rechecks rights before synthesis on every attempt, so retry cannot
+  override the gate. For the matching edition, the action follows the latest
+  local job state and ID even if its search suggestion has not refreshed yet.
 
 ## Do NOT
 

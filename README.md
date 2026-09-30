@@ -150,7 +150,8 @@ field. For production, use `worker/.secrets/prod-owner-token` in the client,
 `R2_BUCKET=openshelf`. Keep these environment credentials separate.
 Source sync can cover a few more Gutendex pages with `--sync-pages N` (up to
 10 per run); use the bounded, rights-checked official catalog import below for
-broader coverage. The already indexed 64 popular editions include Gutenberg #11. The PC
+broader coverage. The initial production seed has 64 popular editions,
+including Gutenberg #11. The PC
 must have its pipeline dependencies, GPU, ffmpeg, and R2 upload credentials.
 For a broader, operator-controlled index, download Gutenberg's weekly
 [compressed CSV catalog](https://www.gutenberg.org/ebooks/offline_catalogs.html)
@@ -170,7 +171,10 @@ archive for an explicit US public-domain marker and a matching EPUB URL;
 the PC checks official RDF and the downloaded EPUB's own rights notice before
 synthesis. Unknown or copyrighted records fail
 closed. Gutenberg's marker establishes U.S. public-domain status, not rights in
-every country; distribution outside the U.S. requires a separate rights policy.
+every country. OpenShelf does not geographically restrict public reading; the
+operator remains responsible for distribution rights outside the U.S. Manual
+`books process --upload` and `dag run --upload` accept local EPUBs without this
+automatic rights check, so verify those editions before publishing.
 The 1,000-candidate per-run ceiling
 and 500-record default keep each import small. Repeat with `--after-id <last imported Gutenberg ID>`
 to cover later ranges only after checking D1's daily row-write usage and the

@@ -70,7 +70,9 @@ under `pipeline/src/openshelf/pipeline/engines/`.
   `--after-id` resumes a later numeric range. Import never
   claims or starts an audio job.
 - `openshelf-pipeline books ...` owns user-facing book workflows: search,
-  download, process local EPUBs, upload, and catalog refresh.
+  download, process local EPUBs, upload, and catalog refresh. Manual uploads
+  do not run the PC job consumer's Gutenberg rights check; the operator checks
+  distribution rights for local EPUBs.
 - `openshelf-pipeline dag ...` owns repairable artifact stages and full DAG
   runs for explicit EPUB/build paths.
 - `openshelf-pipeline ops ...`, `voices ...`, `qa ...`, and `profile ...` own

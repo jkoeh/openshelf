@@ -107,6 +107,8 @@ Behavior:
 
 `books process` is the human-facing happy path. `dag run` remains the explicit
 EPUB conversion path, and individual `dag` stages remain the repair path.
+Manual `--upload` accepts local EPUBs without the job consumer's automatic
+Gutenberg rights check. The operator verifies rights before publishing.
 
 ## `books sync-catalog`
 
