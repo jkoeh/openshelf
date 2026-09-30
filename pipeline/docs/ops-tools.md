@@ -4,7 +4,9 @@
 
 `openshelf-pipeline books consume-jobs --api-base URL` uses `OPENSHELF_PC_TOKEN`
 from the PC environment and polls the Worker over HTTPS. `--sync-pages N` first
-indexes up to N Gutenberg pages through the authenticated source-sync route.
+indexes up to N Gutendex pages through the authenticated source-sync route;
+N is capped at 10 per invocation to bound D1 writes. Use `books sync-catalog`
+for a broader rights-checked import.
 One job runs at a time. A claimed job names an exact Gutenberg ID and EPUB URL;
 the consumer validates its host and EPUB archive, rejects ZIP files above
 2 MiB central-directory metadata, 256 MiB expanded size, or 5,000 entries,

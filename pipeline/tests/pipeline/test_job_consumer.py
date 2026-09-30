@@ -205,6 +205,13 @@ class ConsumerTests(unittest.TestCase):
         run.assert_called_once_with(["--api-base", "https://example.com/api/v1", "--sync-pages", "0",
                                      "--device", "cuda", "--max-words", "100000", "--once"])
 
+    def test_legacy_sync_page_limit_prevents_large_d1_import(self):
+        with patch("sys.stderr", new_callable=io.StringIO) as errors:
+            with self.assertRaises(SystemExit) as exit_status:
+                consumer.main(["--api-base", "https://example.com/api/v1", "--sync-pages", "11"])
+        self.assertEqual(exit_status.exception.code, 2)
+        self.assertIn("--sync-pages must be 0..10", errors.getvalue())
+
 
 class RightsTests(unittest.TestCase):
     def test_embedded_epub_rights_and_copyright_banner(self):

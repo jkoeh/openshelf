@@ -148,8 +148,9 @@ field. For production, use `worker/.secrets/prod-owner-token` in the client,
 `worker/.secrets/prod-pc-token` as `OPENSHELF_PC_TOKEN` on the PC, the
 `https://openshelf-api.johnkoeh.workers.dev/api/v1` API base, and
 `R2_BUCKET=openshelf`. Keep these environment credentials separate.
-Source sync can cover more Gutendex pages with `--sync-pages N` (up to
-3000); the already indexed 64 popular editions include Gutenberg #11. The PC
+Source sync can cover a few more Gutendex pages with `--sync-pages N` (up to
+10 per run); use the bounded, rights-checked official catalog import below for
+broader coverage. The already indexed 64 popular editions include Gutenberg #11. The PC
 must have its pipeline dependencies, GPU, ffmpeg, and R2 upload credentials.
 For a broader, operator-controlled index, download Gutenberg's weekly
 [compressed CSV catalog](https://www.gutenberg.org/ebooks/offline_catalogs.html)
@@ -168,7 +169,9 @@ it does not claim a job or invoke the GPU. Import checks the official RDF
 archive for an explicit US public-domain marker and a matching EPUB URL;
 the PC checks official RDF and the downloaded EPUB's own rights notice before
 synthesis. Unknown or copyrighted records fail
-closed. The 1,000-candidate per-run ceiling
+closed. Gutenberg's marker establishes U.S. public-domain status, not rights in
+every country; distribution outside the U.S. requires a separate rights policy.
+The 1,000-candidate per-run ceiling
 and 500-record default keep each import small. Repeat with `--after-id <last imported Gutenberg ID>`
 to cover later ranges only after checking D1's daily row-write usage and the
 account plan; the cap applies per run, not per day.

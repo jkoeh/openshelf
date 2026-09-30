@@ -325,8 +325,8 @@ def main(argv=None) -> int:
     parser.add_argument("--max-words", type=int, default=DEFAULT_MAX_WORDS,
                         help="Maximum source spoken words per queued book (default: 100000)")
     args = parser.parse_args(argv)
-    if args.sync_pages < 0 or args.sync_pages > 3000:
-        parser.error("--sync-pages must be 0..3000")
+    if args.sync_pages < 0 or args.sync_pages > 10:
+        parser.error("--sync-pages must be 0..10")
     if args.max_words < 1:
         parser.error("--max-words must be positive")
     api = JobAPI(args.api_base, os.environ.get("OPENSHELF_PC_TOKEN", ""))
