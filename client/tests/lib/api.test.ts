@@ -12,6 +12,9 @@ import {
 	createGenerationJob,
 	fetchGenerationJob,
 	retryGenerationJob,
+	cancelGenerationJob,
+	regenerateGenerationJob,
+	verifyAdminIdentity,
 } from "../../lib/api";
 
 const mockFetch = vi.fn();
@@ -51,6 +54,20 @@ describe("source discovery and owner jobs", () => {
 		await fetchGenerationJob("job-1");
 		const statusInit = mockFetch.mock.calls[1][1] as RequestInit;
 		expect(statusInit.headers).toBeUndefined();
+	});
+
+	it("sends browser owner credentials only to admin actions", async () => {
+		mockFetch.mockImplementation(async () => jsonResponse({ id: "job-1" }));
+		await verifyAdminIdentity("google-id-token");
+		await cancelGenerationJob("job-1", "google-id-token");
+		await regenerateGenerationJob("gutenberg:11", "google-id-token");
+		expect(mockFetch.mock.calls[0][0]).toContain("/admin/me");
+		expect(mockFetch.mock.calls[1][0]).toContain("/generation-jobs/job-1/cancel");
+		expect(JSON.parse(mockFetch.mock.calls[2][1].body)).toEqual({ source_id: "gutenberg:11", regenerate: true });
+		for (const [, init] of mockFetch.mock.calls) {
+			expect(init.headers.Authorization).toBe("Bearer google-id-token");
+			expect(init.cache).toBe("no-store");
+		}
 	});
 });
 

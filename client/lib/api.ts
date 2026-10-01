@@ -90,6 +90,18 @@ export function retryGenerationJob(id: string, token: string): Promise<Generatio
 	return ownerRequest(`/generation-jobs/${encodeURIComponent(id)}/retry`, token, {});
 }
 
+export function cancelGenerationJob(id: string, token: string): Promise<GenerationJob> {
+	return ownerRequest(`/generation-jobs/${encodeURIComponent(id)}/cancel`, token, {});
+}
+
+export function regenerateGenerationJob(sourceId: string, token: string): Promise<GenerationJob> {
+	return ownerRequest("/generation-jobs", token, { source_id: sourceId, regenerate: true });
+}
+
+export function verifyAdminIdentity(token: string): Promise<{ email: string }> {
+	return ownerRequest("/admin/me", token);
+}
+
 export function fetchBook(author: string, title: string): Promise<Manifest> {
 	return fetchJson<Manifest>(`${API_BASE}/books/${author}/${title}`);
 }

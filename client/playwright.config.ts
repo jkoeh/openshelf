@@ -15,6 +15,10 @@ export default defineConfig({
     url: "http://127.0.0.1:19006",
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
-    env: { EXPO_PUBLIC_API_BASE: "http://127.0.0.1:8787/api/v1", CI: "1" },
+    env: {
+      EXPO_PUBLIC_API_BASE: "http://127.0.0.1:8787/api/v1",
+      EXPO_PUBLIC_GOOGLE_CLIENT_ID: "openshelf-test.apps.googleusercontent.com",
+      CI: "1",
+    },
   },
 });

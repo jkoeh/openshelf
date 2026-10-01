@@ -2,6 +2,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { ErrorSchema } from "../schemas/error";
 import type { Env } from "../types";
 import { credentialStatus, noStore } from "../utils/job-auth";
+import { adminCredentialStatus } from "../utils/google-admin";
 import { createOpenAPIApp } from "../utils/openapi-app";
 import { r2Key } from "../utils/r2-keys";
 
@@ -213,7 +214,7 @@ async function get(db: D1Database, id: string) {
 	return db.prepare(`SELECT ${fields} FROM generation_jobs WHERE id=?`).bind(id).first<Row>();
 }
 async function auth(req: Request, env: Env, pc = false) {
-	return credentialStatus(req, env, pc ? env.PC_TOKEN : env.OWNER_TOKEN);
+	return pc ? credentialStatus(req, env, env.PC_TOKEN) : adminCredentialStatus(req, env);
 }
 function ready(env: Env) {
 	return (

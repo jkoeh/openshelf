@@ -34,6 +34,7 @@ src/
     audio.ts            # GET /api/v1/books/:author/:title/sections/:sequence/audio — m4a Range stream
     source-books.ts     # GET /api/v1/source-books and internal source sync
     generation-jobs.ts  # Owner job control and PC lease protocol
+    admin.ts            # Google owner identity check for browser controls
     cover.ts            # GET /api/v1/books/:author/:title/cover
     epub.ts             # GET /api/v1/books/:author/:title/epub
   utils/
@@ -111,9 +112,21 @@ Search uses the longest typed query token as the indexed prefix at three or more
 characters, then tries indexed adjacent-transposition candidates, then a
 two-character indexed sample; each lookup is limited to 80 candidates. The
 visitor can request a fixed Kokoro `af_heart` job with an exact `gutenberg:<id>`
-source ID under a dedicated create rate limit. Owner authentication is required
-for retry, regeneration, and cancellation. Paid model direction is reserved
-for a future authenticated admin flow. A separate PC
+source ID under a dedicated create rate limit. Source suggestions report
+publication availability and the relevant job state, ID, and update time
+separately, so regeneration progress or failure never hides the playable book.
+The job lookup prefers an active job (including a retried older job) through
+the partial `one_active_generation` index, then uses `latest_source_job` to
+find the newest created job without sorting job history. Both lookups run only
+for indexed, bounded token candidates. Owner authentication is
+required for retry, regeneration, and cancellation. Browser administration
+also accepts a Google Identity Services ID token after the Worker verifies its Google
+signature, issuer, configured OAuth client audience, expiry, verified email,
+and exact `johnkoeh@gmail.com` address. An unconfigured Google client ID fails
+closed; the existing owner token remains valid for local CLI administration.
+`GET /api/v1/admin/me` verifies Google identity before the browser exposes
+controls; local owner tokens do not authenticate this browser identity route.
+Paid model direction is reserved for a separate owner-only job mode. A separate PC
 credential synchronizes source metadata and claims a
 job with a renewable lease. The PC downloads only allowlisted Gutenberg EPUB
 URLs and runs the existing exact-EPUB pipeline. Completion checks the R2 book
@@ -127,8 +140,10 @@ deduplication, three pending jobs, two successful start reservations per UTC
 day and three attempts per job. Canceling a queued/running job moves it to a
 terminal `canceled` state and revokes its lease without refunding the start;
 the PC stops at its next rejected heartbeat.
-Only invalid owner or PC credentials count against the separate authentication
-rate limit; valid consumer requests remain usable. Rejected queue-full or
+Google-token verification is rate-limited before signature verification to bound
+remote key fetches; valid local owner and PC credentials stay usable. Invalid
+local owner and PC credentials also count against the authentication limit.
+Rejected queue-full or
 duplicate submissions consume no daily reservation. Public job status uses
 the search rate limiter before D1. Public job responses omit internal build
 IDs, attempt counts, and arbitrary PC error codes. All job responses are
