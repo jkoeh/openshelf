@@ -160,6 +160,80 @@ test("mobile owner sign-in unlocks cancellation without exposing a local key", a
   await expect(page.getByLabel("Owner token")).toHaveCount(0);
 });
 
+test("mobile owner confirms an OpenAI-directed job before it is created", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockCatalog(page);
+  await mockGoogleSignIn(page);
+  let created = 0;
+  const expressive = { id: "expressive-job", source_id: "gutenberg:11", mode: "expressive",
+    state: "queued", stage: "queued", author_slug: null, title_slug: null,
+    error_code: null, created_at: "2026-09-29", updated_at: "2026-09-29" };
+  await page.route("**/api/v1/generation-jobs", async (route) => {
+    expect(route.request().headers().authorization).toBe("Bearer mock-google-token");
+    expect(route.request().postDataJSON()).toEqual({
+      source_id: "gutenberg:11", mode: "expressive", regenerate: false,
+    });
+    created++;
+    await route.fulfill({ json: expressive });
+  });
+  await page.route("**/api/v1/generation-jobs/expressive-job", async (route) =>
+    route.fulfill({ json: expressive }));
+  await page.goto("/");
+  await page.getByRole("textbox", { name: "Search books" }).fill("alice");
+  await expect(page.getByRole("button", { name: "Generate expressive audio" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Owner controls" }).click();
+  await page.getByRole("button", { name: "Sign in with Google" }).click();
+  await page.getByRole("button", { name: "Generate expressive audio" }).click();
+  await expect(page.getByText(/uses OpenAI emotion direction/)).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("expressive-confirm-mobile.png"), fullPage: true });
+  expect(created).toBe(0);
+  await page.getByRole("button", { name: "Start expressive job" }).click();
+  await expect(page.getByText("Expressive generation queued")).toBeVisible();
+  expect(created).toBe(1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+});
+
+test("owner can start expressive regeneration after standard completion reaches polling before search", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockCatalog(page, [{ ...edition, job_state: "queued", job_id: "standard-job" }]);
+  await mockGoogleSignIn(page);
+  await page.route("**/api/v1/generation-jobs/standard-job", async (route) =>
+    route.fulfill({ json: {
+      id: "standard-job", source_id: "gutenberg:11", mode: "standard", state: "completed",
+      stage: "completed", author_slug: "lewis-carroll", title_slug: "alice-g11",
+      error_code: null, created_at: "2026-09-29", updated_at: "2026-09-29",
+    } }));
+  let created = 0;
+  await page.route("**/api/v1/generation-jobs", async (route) => {
+    expect(route.request().headers().authorization).toBe("Bearer mock-google-token");
+    expect(route.request().postDataJSON()).toEqual({
+      source_id: "gutenberg:11", mode: "expressive", regenerate: true,
+    });
+    created++;
+    await route.fulfill({ json: {
+      id: "expressive-job", source_id: "gutenberg:11", mode: "expressive",
+      state: "queued", stage: "queued", author_slug: "lewis-carroll", title_slug: "alice-g11",
+      error_code: null, created_at: "2026-09-29", updated_at: "2026-09-29",
+    } });
+  });
+  await page.route("**/api/v1/generation-jobs/expressive-job", async (route) =>
+    route.fulfill({ json: {
+      id: "expressive-job", source_id: "gutenberg:11", mode: "expressive",
+      state: "queued", stage: "queued", author_slug: "lewis-carroll", title_slug: "alice-g11",
+      error_code: null, created_at: "2026-09-29", updated_at: "2026-09-29",
+    } }));
+
+  await page.goto("/");
+  await page.getByRole("textbox", { name: "Search books" }).fill("alice");
+  await expect(page.getByRole("link", { name: "Open audiobook" })).toBeVisible();
+  await page.getByRole("button", { name: "Owner controls" }).click();
+  await page.getByRole("button", { name: "Sign in with Google" }).click();
+  await page.getByRole("button", { name: "Generate expressive audio" }).click();
+  await page.getByRole("button", { name: "Start expressive job" }).click();
+  await expect(page.getByText("Expressive generation queued")).toBeVisible();
+  expect(created).toBe(1);
+});
+
 test("published audiobook remains playable while owner retries failed regeneration", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockCatalog(page, [{ ...edition, state: "available", job_state: "failed", job_id: "job-2",
@@ -182,6 +256,6 @@ test("published audiobook remains playable while owner retries failed regenerati
   await page.getByRole("button", { name: "Owner controls" }).click();
   await page.getByRole("button", { name: "Sign in with Google" }).click();
   await page.getByRole("button", { name: "Retry generation" }).click();
-  await expect(page.getByText("Generation queued")).toBeVisible();
+  await expect(page.getByText("Standard generation queued")).toBeVisible();
   await expect(page.getByRole("link", { name: "Open audiobook" })).toBeVisible();
 });

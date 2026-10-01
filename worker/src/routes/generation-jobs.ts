@@ -16,6 +16,7 @@ const Job = z
 	.object({
 		id: z.string(),
 		source_id: z.string(),
+		mode: z.enum(["standard", "expressive"]),
 		state: z.enum(["queued", "running", "completed", "failed", "canceled"]),
 		stage: z.string(),
 		author_slug: z.string().nullable(),
@@ -27,8 +28,10 @@ const Job = z
 	.openapi("GenerationJob");
 const Create = z.object({
 	source_id: z.string().regex(/^gutenberg:[1-9][0-9]*$/),
+	mode: z.enum(["standard", "expressive"]).default("standard"),
 	regenerate: z.boolean().default(false),
 });
+const Claim = z.object({ expressive: z.boolean().default(false) });
 const Lease = z.object({ lease_token: z.string().uuid() });
 const Progress = Lease.extend({
 	stage: z.enum(["download", "parse", "direction", "synthesis", "alignment", "encode", "upload"]),
@@ -119,6 +122,7 @@ const claim = createRoute({
 	path: "/claim",
 	tags: ["generation-internal"],
 	summary: "PC claims one job",
+	request: { body: { content: { "application/json": { schema: Claim } } } },
 	responses: {
 		200: {
 			description: "Leased job or no work",
@@ -171,6 +175,7 @@ const finish = createRoute({
 interface Row {
 	id: string;
 	source_id: string;
+	mode: "standard" | "expressive";
 	build_id: string;
 	state: "queued" | "running" | "completed" | "failed" | "canceled";
 	stage: string;
@@ -192,6 +197,7 @@ function publicJob(row: Row): z.infer<typeof Job> {
 	return {
 		id: row.id,
 		source_id: row.source_id,
+		mode: row.mode,
 		state: row.state,
 		stage: row.stage,
 		author_slug: row.author_slug,
@@ -202,7 +208,7 @@ function publicJob(row: Row): z.infer<typeof Job> {
 	};
 }
 const fields =
-	"id,source_id,build_id,state,stage,attempts,author_slug,title_slug,error_code,created_at,updated_at";
+	"id,source_id,mode,build_id,state,stage,attempts,author_slug,title_slug,error_code,created_at,updated_at";
 const now = () => new Date().toISOString();
 const slug = (value: string) =>
 	value
@@ -244,6 +250,7 @@ async function verifyPublished(
 	author: string,
 	title: string,
 ): Promise<boolean> {
+	const selectedRendition = row.mode === "expressive" ? "chatterbox-af-heart" : "kokoro-af-heart";
 	const manifest = await env.R2_BUCKET.get(r2Key.bookManifest(author, title));
 	if (!manifest) return false;
 	const book = (await manifest.json()) as {
@@ -251,9 +258,9 @@ async function verifyPublished(
 		renditions?: Record<string, { current_build?: string }>;
 	};
 	if (book.source !== "gutenberg") return false;
-	if (book.renditions?.["kokoro-af-heart"]?.current_build !== row.build_id) return false;
+	if (book.renditions?.[selectedRendition]?.current_build !== row.build_id) return false;
 	const rendition = await env.R2_BUCKET.get(
-		r2Key.renditionManifest(author, title, "kokoro-af-heart", row.build_id),
+		r2Key.renditionManifest(author, title, selectedRendition, row.build_id),
 	);
 	if (!rendition) return false;
 	const data = (await rendition.json()) as {
@@ -269,7 +276,7 @@ async function verifyPublished(
 	)
 		return false;
 	if (
-		!(await env.R2_BUCKET.head(r2Key.sectionData(author, title, "kokoro-af-heart", row.build_id)))
+		!(await env.R2_BUCKET.head(r2Key.sectionData(author, title, selectedRendition, row.build_id)))
 	)
 		return false;
 	for (const section of data.sections)
@@ -277,7 +284,7 @@ async function verifyPublished(
 			!Number.isInteger(section.sequence) ||
 			section.sequence < 1 ||
 			!(await env.R2_BUCKET.head(
-				r2Key.audio(author, title, "kokoro-af-heart", row.build_id, section.sequence),
+				r2Key.audio(author, title, selectedRendition, row.build_id, section.sequence),
 			))
 		)
 			return false;
@@ -287,7 +294,8 @@ async function verifyPublished(
 		books?: { author_slug: string; title_slug: string; current_build: string }[];
 	};
 	return !!listing.books?.some(
-		(b) => b.author_slug === author && b.title_slug === title && b.current_build === row.build_id,
+		(b) => b.author_slug === author && b.title_slug === title &&
+			(row.mode === "expressive" || b.current_build === row.build_id),
 	);
 }
 
@@ -298,8 +306,8 @@ owner.openapi(create, async (c) => {
 	const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
 	if (!(await c.env.CREATE_RATE_LIMITER!.limit({ key: `create:${ip}` })).success)
 		return c.json({ error: { code: "RATE_LIMITED", message: "Try again later" } }, 429);
-	const { source_id, regenerate } = c.req.valid("json");
-	const authStatus = regenerate || c.req.header("Authorization")
+	const { source_id, regenerate, mode } = c.req.valid("json");
+	const authStatus = mode === "expressive" || regenerate || c.req.header("Authorization")
 		? await auth(c.req.raw, c.env)
 		: 0;
 	if (authStatus)
@@ -325,7 +333,9 @@ owner.openapi(create, async (c) => {
 		)
 		.bind(source_id)
 		.first<Row>();
-	if (existing) return c.json(publicJob(existing), 200, noStore);
+	if (existing) return existing.mode === mode
+		? c.json(publicJob(existing), 200, noStore)
+		: c.json({ error: { code: "ACTIVE_JOB", message: "This edition already has an active job" } }, 409);
 	if (source.author_slug && !regenerate)
 		return c.json(
 			{ error: { code: "ALREADY_AVAILABLE", message: "This edition is already available" } },
@@ -345,10 +355,10 @@ owner.openapi(create, async (c) => {
 				[source_id],
 			),
 			db
-				.prepare(`INSERT INTO generation_jobs(id,source_id,build_id,start_id,state,stage,created_at,updated_at)
-			SELECT ?,?,?,?,'queued','queued',?,? WHERE EXISTS(SELECT 1 FROM generation_starts WHERE id=?)
+				.prepare(`INSERT INTO generation_jobs(id,source_id,mode,build_id,start_id,state,stage,created_at,updated_at)
+			SELECT ?,?,?,?,?,'queued','queued',?,? WHERE EXISTS(SELECT 1 FROM generation_starts WHERE id=?)
 			AND (SELECT COUNT(*) FROM generation_jobs WHERE state='queued') < 3`)
-				.bind(id, source_id, build, start, timestamp, timestamp, start),
+				.bind(id, source_id, mode, build, start, timestamp, timestamp, start),
 		]);
 	} catch {
 		const duplicate = await db
@@ -357,7 +367,9 @@ owner.openapi(create, async (c) => {
 			)
 			.bind(source_id)
 			.first<Row>();
-		if (duplicate) return c.json(publicJob(duplicate), 200, noStore);
+		if (duplicate) return duplicate.mode === mode
+			? c.json(publicJob(duplicate), 200, noStore)
+			: c.json({ error: { code: "ACTIVE_JOB", message: "This edition already has an active job" } }, 409);
 		return c.json({ error: { code: "LIMIT_REACHED", message: "Generation quota reached" } }, 429);
 	}
 	const job = await get(db, id);
@@ -368,7 +380,9 @@ owner.openapi(create, async (c) => {
 			)
 			.bind(source_id)
 			.first<Row>();
-		if (duplicate) return c.json(publicJob(duplicate), 200, noStore);
+		if (duplicate) return duplicate.mode === mode
+			? c.json(publicJob(duplicate), 200, noStore)
+			: c.json({ error: { code: "ACTIVE_JOB", message: "This edition already has an active job" } }, 409);
 		return c.json({ error: { code: "LIMIT_REACHED", message: "Generation quota reached" } }, 429);
 	}
 	return c.json(publicJob(job), 200, noStore);
@@ -465,15 +479,17 @@ internal.openapi(claim, async (c) => {
 		);
 	const db = c.env.JOB_DB!,
 		timestamp = now();
+	const { expressive } = c.req.valid("json");
 	await db
 		.prepare(`UPDATE generation_jobs SET state='failed',stage='failed',error_code='LEASE_EXHAUSTED',lease_token=NULL,lease_until=NULL,updated_at=?
 		WHERE state='running' AND lease_until<? AND attempts>=3`)
 		.bind(timestamp, timestamp)
 		.run();
 	const candidate = await db
-		.prepare(`SELECT id,state FROM generation_jobs WHERE state='queued' OR (state='running' AND lease_until<? AND attempts<3)
+		.prepare(`SELECT id,state FROM generation_jobs WHERE (state='queued' OR (state='running' AND lease_until<? AND attempts<3))
+		AND (mode='standard' OR ?=1)
 		ORDER BY CASE WHEN state='queued' THEN 0 ELSE 1 END,created_at LIMIT 1`)
-		.bind(timestamp)
+		.bind(timestamp, expressive ? 1 : 0)
 		.first<{ id: string; state: string }>();
 	if (!candidate) return c.json({ job: null }, 200, noStore);
 	const lease = crypto.randomUUID(),

@@ -18,7 +18,7 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
 
-from openshelf.config import PROJECT_ROOT
+from openshelf.config import OPENAI_API_KEY, PROJECT_ROOT
 from openshelf.scrapers.http import sanitize
 
 MAX_EPUB_BYTES = 50 * 1024 * 1024
@@ -269,15 +269,28 @@ def process_job(api: JobAPI, job: dict, *, download_root: Path, audio_root: Path
         validate_local_epub(epub)
         check_epub_rights(epub)
         check_word_budget(epub, max_words)
-        build_dir = audio_root / author_slug / title_slug / "audio" / "kokoro-af-heart" / "builds" / job["build_id"]
+        mode = job.get("mode", "standard")
+        if mode == "standard":
+            engine, voice, rendition = "kokoro", "af_heart", "kokoro-af-heart"
+        elif mode == "expressive":
+            if not OPENAI_API_KEY:
+                raise ValueError("OpenAI direction is not configured on this PC")
+            engine, voice, rendition = "chatterbox", "chatterbox-af_heart", "chatterbox-af-heart"
+        else:
+            raise ValueError("unsupported generation mode")
+        build_dir = audio_root / author_slug / title_slug / "audio" / rendition / "builds" / job["build_id"]
         command = [sys.executable, "-m", "openshelf.pipeline.cli", "books", "process", "--epub", str(epub),
-                   "--output", str(audio_root), "--engine", "kokoro", "--voice", "af_heart",
-                   "--rendition", "kokoro-af-heart", "--build-id", job["build_id"], "--device", device, "--upload"]
+                   "--output", str(audio_root), "--engine", engine, "--voice", voice,
+                   "--rendition", rendition, "--build-id", job["build_id"], "--device", device, "--upload"]
+        if mode == "expressive":
+            command += ["--performance-direction", "batched"]
         if (build_dir / "run.json").exists():
             command.append("--resume")
         api.post(route + "/progress", {"lease_token": lease, "stage": "synthesis"})
         env = os.environ.copy()
         env["PYTHONPATH"] = str(PROJECT_ROOT / "pipeline" / "src") + os.pathsep + env.get("PYTHONPATH", "")
+        if mode == "expressive":
+            env["LLM_PROVIDER"] = "openai"
         child = subprocess.Popen(command, env=env, cwd=PROJECT_ROOT)
         last_renewal = time.monotonic()
         last_attempt = last_renewal
@@ -334,7 +347,7 @@ def main(argv=None) -> int:
         print(f"Indexed {sync_gutenberg(api, args.sync_pages)} Gutenberg editions")
     while True:
         try:
-            job = api.post("/internal/generation-jobs/claim")["job"]
+            job = api.post("/internal/generation-jobs/claim", {"expressive": bool(OPENAI_API_KEY)})["job"]
             if job:
                 print(f"Processing {job['source_id']} ({job['id']})")
                 process_job(api, job, download_root=PROJECT_ROOT / "download" / "books",

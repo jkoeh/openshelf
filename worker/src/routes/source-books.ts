@@ -11,6 +11,7 @@ const BookSchema = z
 		author: z.string(),
 		state: z.enum(["ready_to_generate", "queued", "running", "failed", "available"]),
 		job_state: z.enum(["queued", "running", "completed", "failed", "canceled"]).nullable(),
+		job_mode: z.enum(["standard", "expressive"]).nullable(),
 		job_id: z.string().nullable(),
 		job_updated_at: z.string().nullable(),
 		author_slug: z.string().nullable(),
@@ -91,6 +92,7 @@ interface Row {
 	author_slug: string | null;
 	title_slug: string | null;
 	state: string | null;
+	mode: string | null;
 	job_id: string | null;
 	job_updated_at: string | null;
 }
@@ -111,7 +113,7 @@ app.openapi(searchRoute, async (c) => {
 	if (cached && cached.expires > Date.now()) return c.json(cached.result, 200, noStore);
 	if (cached) suggestionCache.delete(cacheKey);
 	const select = `SELECT DISTINCT b.source_id,b.title,b.author,b.author_slug,b.title_slug,
-		j.state,j.id job_id,j.updated_at job_updated_at
+		j.state,j.mode,j.id job_id,j.updated_at job_updated_at
 		FROM source_tokens t JOIN source_books b ON b.source_id=t.source_id
 		LEFT JOIN generation_jobs j ON j.id=COALESCE(
 			(SELECT id FROM generation_jobs WHERE source_id=b.source_id
@@ -168,6 +170,7 @@ app.openapi(searchRoute, async (c) => {
 				job_id: row.job_id,
 				job_updated_at: row.job_updated_at,
 				job_state: row.state as z.infer<typeof BookSchema>["job_state"],
+				job_mode: row.mode as z.infer<typeof BookSchema>["job_mode"],
 				author_slug: row.author_slug,
 				title_slug: row.title_slug,
 			})),

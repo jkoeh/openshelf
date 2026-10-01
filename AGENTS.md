@@ -69,7 +69,7 @@ flowchart LR
         W_SPEC[GET /openapi.json + /docs<br/>auto-generated from Zod schemas]
         W_SEARCH[GET /source-books<br/>bounded autocomplete]
         W_ADMIN[GET /admin/me<br/>verify Google owner]
-        W_JOBS[Public default job requests/status<br/>Owner cancel/retry/regenerate<br/>PC claim/heartbeat/finish<br/>Paid direction: planned owner mode]
+        W_JOBS[Public Kokoro requests/status<br/>Owner cancel/retry/regenerate<br/>Owner OpenAI-directed Chatterbox requests<br/>PC claim/heartbeat/finish]
     end
 
     R_CAT --> W_CAT
@@ -90,7 +90,7 @@ flowchart LR
         direction TB
         C1[Catalog page<br/>fetchCatalog]
         C_SEARCH[Source search + generation status]
-        C_ADMIN[Google owner sign-in<br/>cancel/retry/regenerate]
+        C_ADMIN[Google owner sign-in<br/>cancel/retry/regenerate<br/>request expressive audio]
         C2[Book detail<br/>fetchBook → manifest with renditions]
         C2B[Collapsed rendition picker<br/>engine -> voice -> upload time]
         C3[Reader page<br/>pin build at section load<br/>fetchSection rendition build → heading + body + words]
@@ -115,7 +115,7 @@ flowchart LR
     subgraph PC[Owner PC — outbound consumer]
         J1[Poll + lease job] --> J2[Exact Gutenberg EPUB]
         J2 --> J2R[Verify RDF + EPUB public-domain rights]
-        J2R --> J3[Existing Kokoro/WhisperX pipeline]
+        J2R --> J3[Standard: Kokoro<br/>Expressive: OpenAI direction + Chatterbox<br/>both: WhisperX + R2]
     end
     J1 <--> W_JOBS
     J3 --> R_M4A
@@ -146,13 +146,16 @@ Notes:
   The default source-word budget is 100,000 words, including spoken headings;
   `--max-words` is an explicit owner override for larger books.
 - Generation requests for the fixed local Kokoro voice may be public, subject to
-  the atomic daily-start and queue caps. Browser admin actions accept a Google
+  the atomic daily-start and queue caps. An expressive request is owner-only and
+  selects a fixed Chatterbox `af_heart` rendition with batched OpenAI emotion
+  direction. The OpenAI key remains on the PC; the browser cannot select an
+  arbitrary model, engine, voice, or prompt. Browser admin actions accept a Google
   Identity Services ID token only after the Worker verifies its signature,
   issuer, audience, expiry, verified email, and exact `johnkoeh@gmail.com`
   address. The existing local owner token remains valid for CLI administration.
   Browser tokens remain in memory and are never logged or persisted. Only the
-  owner can cancel, retry, or regenerate; paid model direction remains a
-  separate owner-only job mode.
+  owner can cancel, retry, regenerate, or request the expressive mode. The
+  two-start daily cap and three-job queue cap cover both modes.
   Cancellation is a terminal job state: queued
   work cannot be claimed, and a running consumer loses its lease on the next
   heartbeat and stops its child process. A canceled start is not refunded.

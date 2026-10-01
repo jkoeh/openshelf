@@ -84,7 +84,7 @@ flowchart LR
   direction is a separate owner-only job mode; a separate PC secret authorizes claim, progress,
   completion, and source-index writes. Neither PC nor owner secrets are bundled
   in the app. Listening and searching remain public.
-- One active job per `(source_id, rendition)` is enforced in D1. Duplicate
+- One active job per `source_id` is enforced in D1 across modes. Duplicate
   requests return the existing job. An already published edition opens its
   audiobook unless the owner explicitly requests regeneration. Retrying a
   failed job retains its build ID and resumes; explicit regeneration after
@@ -121,7 +121,7 @@ metrics after seeding. Run the initial import in bounded batches. See
 
 An idle PC polls every 30–60 seconds with increasing backoff on errors. Thirty
 seconds costs 2,880 Worker requests/day. Heartbeats happen only for a running
-job. Owner authorization, one active job per edition/rendition, one local
+job. Owner authorization, one active job per edition, one local
 generation at a time, and a retry cap bound accidental GPU/API work.
 
 Use R2 **Standard** for audio. It includes 10 GB-month of storage and free
@@ -136,6 +136,10 @@ LLM calls; this path can avoid per-book model API fees. Automatic narrator
 selection and other engines may call the configured paid provider. Log model
 token usage and the PC's measured generation time before estimating their
 per-book cost. Electricity is `average PC kW × runtime hours × local $/kWh`.
+Expressive jobs fix the Chatterbox narrator, run batched OpenAI performance
+direction on the PC, and share the same daily start cap; neither public traffic
+nor a job payload can choose an arbitrary model or prompt. A consumer without
+the local OpenAI key leaves those jobs queued.
 
 ## Bot and abuse controls
 
@@ -160,7 +164,7 @@ are the current baseline and near-term hardening rules:
    credentials before a job write. Store owner credentials as Worker secrets,
    never in the public client bundle or logs. Apply a separate rate limit to
    authentication failures. Enforce, with atomic
-   D1 writes, one active job per source/rendition, at most three queued jobs,
+   D1 writes, one active job per source, at most three queued jobs,
    an initial owner budget of two generation starts per day including retries,
    and at most three attempts per job. Return the existing job for duplicate
    requests. Only accept known source IDs and allowed engine/voice choices.
@@ -222,8 +226,13 @@ stale responses; do not invoke a model for each keystroke. Preserve
 `generation_jobs` stores a random job ID, source ID, fresh 16-hex build ID,
 state, stage, timestamps, attempt count, lease token and expiry, concise error
 code, and eventual book slugs. The first path fixes engine/voice/rendition to
-Kokoro `af_heart` on the PC. Keep a database constraint for at most one active
-job per source.
+Kokoro `af_heart` on the PC. The owner-only `expressive` mode fixes Chatterbox
+`af_heart`, batched OpenAI emotion direction, and its own rendition. Store the
+mode immutably with each job so retry and lease recovery cannot switch costs or
+outputs. The PC advertises expressive claim capability only with a local
+OpenAI key; the Worker and client never receive that key. Keep the database
+constraint for at most one active job per source across both modes. Both share
+the two-start UTC daily cap, three queued jobs, and three attempts per job.
 
 All new HTTP shapes must be defined in Zod route schemas so
 `/api/v1/openapi.json` is the contract:
@@ -231,11 +240,11 @@ All new HTTP shapes must be defined in Zod route schemas so
 | Method and route | Caller | Behavior |
 | --- | --- | --- |
 | `GET /api/v1/source-books` | Public | Ranked downloadable-book suggestions and current availability. |
-| `POST /api/v1/generation-jobs` | Public fixed voice; owner for regeneration/direction | Create or return the active job for a source ID and allowed rendition; require an explicit `regenerate` flag for an available book. |
+| `POST /api/v1/generation-jobs` | Public standard; owner for regeneration/expressive | Create or return the active job for a source ID and fixed `standard` or `expressive` mode; require an explicit `regenerate` flag for an available book. |
 | `GET /api/v1/generation-jobs/:id` | Public | Current state, stage, safe error category, and completed book link; no internal build ID or lease details. |
 | `POST /api/v1/generation-jobs/:id/retry` | Owner | Requeue a failed job with the same build ID. |
 | `POST /api/v1/generation-jobs/:id/cancel` | Owner | Set queued/running job to canceled, revoke its lease, and retain its daily start reservation. |
-| `POST /api/v1/internal/generation-jobs/claim` | PC | Atomically lease one eligible queued/expired job, or return no work. |
+| `POST /api/v1/internal/generation-jobs/claim` | PC | Advertise local expressive capability; atomically lease one eligible queued/expired job, or return no work. |
 | `POST /api/v1/internal/generation-jobs/:id/heartbeat` | PC | Renew a matching lease. |
 | `POST /api/v1/internal/generation-jobs/:id/progress` | PC | Update stage/counts under a matching lease. |
 | `POST /api/v1/internal/generation-jobs/:id/finish` | PC | Mark success or failure under a matching lease; verify R2 before success. |
@@ -296,7 +305,7 @@ Keep route shapes in Zod; do not hand-maintain an OpenAPI copy.
    suggests it for title, author, prefix, and a common typo. Already published
    books offer Open, and a queued/running book shows its job. Repeated public
    search requests receive 429 before an expensive D1 query.
-2. Two simultaneous requests for the same source/rendition create one active
+2. Two simultaneous requests for the same source, even in different modes, create one active
    job. A client cannot submit an arbitrary EPUB URL, engine, or voice. Requests
    without owner credentials can start a fixed-voice job but cannot retry,
    cancel, regenerate, or select paid direction. A flood of create and retry

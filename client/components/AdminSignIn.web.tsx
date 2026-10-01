@@ -71,7 +71,10 @@ export default function AdminSignIn({
 						setError("");
 						try {
 							await verifyAdminIdentity(credential);
-							if (current) onToken(credential);
+							if (current) {
+								onToken(credential);
+								setOpen(false);
+							}
 						} catch {
 							if (current) setError("This Google account is not authorized for owner controls.");
 						} finally {
@@ -144,7 +147,7 @@ export default function AdminSignIn({
 					) : clientId ? (
 						<>
 							<Text style={{ color: palette.muted, lineHeight: 20, marginBottom: 12 }}>
-								Sign in with the owner Google account to cancel, retry, or regenerate.
+								Sign in with the owner Google account to manage jobs and request expressive audio.
 							</Text>
 							<View ref={buttonRef} accessibilityLabel="Google sign-in button" />
 							{busy && (

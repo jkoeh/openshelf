@@ -17,6 +17,7 @@ export interface SourceBook {
   author: string;
   state: "ready_to_generate" | "queued" | "running" | "failed" | "available";
   job_state?: "queued" | "running" | "completed" | "failed" | "canceled" | null;
+  job_mode?: "standard" | "expressive" | null;
   job_id: string | null;
   job_updated_at?: string | null;
   author_slug: string | null;
@@ -26,6 +27,7 @@ export interface SourceBook {
 export interface GenerationJob {
   id: string;
   source_id: string;
+	mode: "standard" | "expressive";
 	state: "queued" | "running" | "completed" | "failed" | "canceled";
   stage: string;
   author_slug: string | null;

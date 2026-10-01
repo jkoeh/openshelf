@@ -56,6 +56,13 @@ under `pipeline/src/openshelf/pipeline/engines/`.
   default 100,000 source spoken-word budget (body plus spoken headings). The
   owner may explicitly raise that budget with `--max-words`. It never opens a
   listener or stores the owner credential.
+- The PC consumer accepts only Worker-issued `standard` and `expressive` job
+  modes. Standard runs fixed Kokoro `af_heart` without an OpenAI call. Expressive
+  runs fixed Chatterbox `af_heart` with `--performance-direction batched` and
+  `LLM_PROVIDER=openai` for that child process only. It advertises expressive
+  claim capability only when a local `OPENAI_API_KEY` is configured. The key is
+  never sent to the Worker, logged, or stored in a job. Both modes use the same
+  Gutenberg rights, EPUB, word-budget, lease, and publication checks.
 - Before launching TTS, the PC consumer reads official per-book Gutenberg RDF
   for the exact source ID and requires `Public domain in the USA.`. Missing or
   ambiguous rights fail closed, including for already indexed jobs. It also

@@ -42,7 +42,8 @@ const sync = async (books: ReturnType<typeof source>[]) =>
 	request("/internal/source-books/sync", "POST", { books }, pcToken);
 const create = async (id: number, token = ownerToken) =>
 	request("/generation-jobs", "POST", { source_id: `gutenberg:${id}` }, token);
-const claim = async () => request("/internal/generation-jobs/claim", "POST", undefined, pcToken);
+const claim = async (expressive = false) =>
+	request("/internal/generation-jobs/claim", "POST", { expressive }, pcToken);
 
 beforeEach(async () => {
 	searchAllowed = true;
@@ -245,6 +246,29 @@ describe("source search and generation API", () => {
 		expect((await request("/generation-jobs", "POST", { source_id: "gutenberg:11", regenerate: true })).status).toBe(401);
 	});
 
+	it("requires owner auth for expressive jobs and leases them only to a capable PC", async () => {
+		await sync([source(11, "Alice")]);
+		const requested = { source_id: "gutenberg:11", mode: "expressive" };
+		expect((await request("/generation-jobs", "POST", requested)).status).toBe(401);
+		expect((await request("/generation-jobs", "POST", requested, "wrong-token")).status).toBe(401);
+		expect((await request("/generation-jobs", "POST", { ...requested, mode: "custom" }, ownerToken)).status).toBe(400);
+		const made = await request("/generation-jobs", "POST", requested, ownerToken);
+		expect(made.status).toBe(200);
+		const job = await made.json<{ id: string; mode: string }>();
+		expect(job.mode).toBe("expressive");
+		expect((await (await claim()).json<{ job: unknown }>()).job).toBeNull();
+		const current = await (await request("/source-books?q=alice"))
+			.json<{ books: { job_mode: string; job_id: string }[] }>();
+		expect(current.books[0]).toMatchObject({ job_mode: "expressive", job_id: job.id });
+		expect((await request("/generation-jobs", "POST", { source_id: "gutenberg:11" })).status).toBe(409);
+		const claimed = await (await claim(true))
+			.json<{ job: { id: string; mode: string; build_id: string } | null }>();
+		expect(claimed.job).toMatchObject({ id: job.id, mode: "expressive" });
+		const starts = await env.JOB_DB.prepare("SELECT COUNT(*) n FROM generation_starts WHERE day=?")
+			.bind(new Date().toISOString().slice(0, 10)).first<{ n: number }>();
+		expect(starts?.n).toBe(1);
+	});
+
 	it("cancels queued work without refund, and prevents a claim", async () => {
 		await sync([source(11, "Alice")]);
 		const job = await (await request("/generation-jobs", "POST", { source_id: "gutenberg:11" })).json<{ id: string }>();
@@ -404,6 +428,38 @@ describe("source search and generation API", () => {
 		expect(
 			(await request(`/internal/generation-jobs/${job.id}/finish`, "POST", done, pcToken)).status,
 		).toBe(409);
+	});
+
+	it("verifies an expressive rendition while the catalog still defaults to standard audio", async () => {
+		await sync([source(11, "Alice")]);
+		const made = await (await request("/generation-jobs", "POST",
+			{ source_id: "gutenberg:11", mode: "expressive" }, ownerToken))
+			.json<{ id: string }>();
+		const job = (await (await claim(true))
+			.json<{ job: { build_id: string; lease_token: string } | null }>()).job!;
+		const prefix = `books/lewis-carroll/alice-g11/audio/chatterbox-af-heart/builds/${job.build_id}`;
+		await env.R2_BUCKET.put("books/lewis-carroll/alice-g11/manifest.json", JSON.stringify({
+			source: "gutenberg",
+			renditions: {
+				"kokoro-af-heart": { current_build: "previous-standard-build" },
+				"chatterbox-af-heart": { current_build: job.build_id },
+			},
+		}));
+		await env.R2_BUCKET.put(`${prefix}/rendition-manifest.json`,
+			JSON.stringify({ version: 2, build: job.build_id, sections: [{ sequence: 1 }] }));
+		await env.R2_BUCKET.put(`${prefix}/section_data.json`, "{}");
+		await env.R2_BUCKET.put(`${prefix}/section-01.m4a`, "audio");
+		await env.R2_BUCKET.put("catalog.json", JSON.stringify({ books: [{
+			author_slug: "lewis-carroll", title_slug: "alice-g11", current_build: "previous-standard-build",
+		}] }));
+		const finished = await request(`/internal/generation-jobs/${made.id}/finish`, "POST", {
+			lease_token: job.lease_token, success: true,
+			author_slug: "lewis-carroll", title_slug: "alice-g11",
+		}, pcToken);
+		expect(finished.status).toBe(200);
+		expect((await finished.json<{ mode: string; state: string }>())).toMatchObject({
+			mode: "expressive", state: "completed",
+		});
 	});
 
 	it("exposes nonsensitive job status without owner auth and keeps responses uncached", async () => {

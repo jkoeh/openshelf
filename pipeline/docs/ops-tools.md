@@ -14,9 +14,14 @@ parses the EPUB locally and rejects more than 100,000 source spoken words
 (body plus spoken headings) by default before any LLM or TTS call. Generated
 opening and closing credits are outside this source-word budget. `--max-words N`
 explicitly changes that per-job limit. A rejected book is reported as failed without
-starting the expensive pipeline. Accepted jobs call `books process
---epub ... --engine kokoro --voice af_heart --rendition kokoro-af-heart
---build-id ... --upload`. It renews the lease while processing and uses
+starting the expensive pipeline. Standard jobs call `books process --epub ...
+--engine kokoro --voice af_heart --rendition kokoro-af-heart --build-id ...
+--upload` without a model call. Expressive jobs call the same exact-EPUB path
+with `--engine chatterbox --voice chatterbox-af_heart --rendition
+chatterbox-af-heart --performance-direction batched`, and set
+`LLM_PROVIDER=openai` only in the child environment. The consumer includes
+expressive jobs in its claim request only when a local `OPENAI_API_KEY` exists;
+the key never crosses the Worker API. It renews the lease while processing and uses
 `--resume` only when the same build has a local `run.json`. A rejected lease
 immediately terminates the child; only network failures get a bounded grace
 period. On success it reports the resulting slugs; the Worker
