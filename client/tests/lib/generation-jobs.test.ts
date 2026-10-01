@@ -16,6 +16,7 @@ const book: SourceBook = {
 const cached: GenerationJob = {
 	id: "old-job",
 	source_id: book.source_id,
+	mode: "standard",
 	state: "failed",
 	stage: "failed",
 	author_slug: null,

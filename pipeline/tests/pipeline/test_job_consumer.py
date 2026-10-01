@@ -165,10 +165,56 @@ class ConsumerTests(unittest.TestCase):
                 consumer.process_job(api, job, download_root=root / "download", audio_root=root / "audio", device="cuda")
             self.assertIn("--resume", popen.call_args.args[0])
 
+    def test_expressive_job_uses_chatterbox_and_local_openai_direction(self):
+        job = {"id": "job-2", "source_id": "gutenberg:11", "title": "Alice", "author": "Lewis Carroll",
+               "epub_url": "https://www.gutenberg.org/ebooks/11.epub", "build_id": "1234567890abcdef",
+               "lease_token": "lease", "mode": "expressive"}
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            epub = root / "download" / "gutenberg" / "lewis-carroll" / "alice-g11.epub"
+            epub.parent.mkdir(parents=True)
+            with zipfile.ZipFile(epub, "w") as archive:
+                archive.writestr("META-INF/container.xml", "<container/>")
+            api = FakeAPI()
+            with patch.object(consumer, "OPENAI_API_KEY", "test-local-key"), \
+                    patch.object(consumer.subprocess, "Popen", return_value=FakeChild()) as popen, \
+                    patch.object(consumer, "check_word_budget", return_value=1000), \
+                    patch.object(consumer.time, "sleep"):
+                consumer.process_job(api, job, download_root=root / "download", audio_root=root / "audio",
+                                     device="cuda")
+            command = popen.call_args.args[0]
+            self.assertEqual(command[command.index("--engine") + 1], "chatterbox")
+            self.assertEqual(command[command.index("--voice") + 1], "chatterbox-af_heart")
+            self.assertEqual(command[command.index("--rendition") + 1], "chatterbox-af-heart")
+            self.assertEqual(command[command.index("--performance-direction") + 1], "batched")
+            self.assertEqual(popen.call_args.kwargs["env"]["LLM_PROVIDER"], "openai")
+            self.assertNotIn("test-local-key", str(api.posts))
+
+            with patch.object(consumer, "OPENAI_API_KEY", ""), \
+                    patch.object(consumer, "check_word_budget", return_value=1000), \
+                    patch.object(consumer.subprocess, "Popen") as rejected:
+                with self.assertRaisesRegex(ValueError, "OpenAI direction is not configured"):
+                    consumer.process_job(api, job, download_root=root / "download", audio_root=root / "audio",
+                                         device="cuda")
+            rejected.assert_not_called()
+
     def test_api_rejects_non_tls_remote_endpoint(self):
         with self.assertRaises(ValueError):
             consumer.JobAPI("http://example.com/api/v1", "a" * 32)
         consumer.JobAPI("http://localhost:8787/api/v1", "a" * 32)
+
+    def test_claim_only_advertises_expressive_with_a_local_key(self):
+        class EmptyQueue(FakeAPI):
+            def post(self, path, payload=None):
+                super().post(path, payload)
+                return {"job": None}
+        for key, expected in [("", False), ("test-local-key", True)]:
+            with self.subTest(configured=expected), patch.object(consumer, "OPENAI_API_KEY", key), \
+                    patch.object(consumer, "JobAPI", return_value=EmptyQueue()) as connect:
+                self.assertEqual(consumer.main(["--api-base", "https://example.com/api/v1", "--once"]), 0)
+                request = connect.return_value.posts[0]
+                self.assertEqual(request, ("/internal/generation-jobs/claim", {"expressive": expected}))
+                self.assertNotIn(key or "unconfigured", str(request))
 
     def test_rejected_heartbeat_stops_pipeline_immediately(self):
         job = {"id": "job-1", "source_id": "gutenberg:11", "title": "Alice", "author": "Lewis Carroll",

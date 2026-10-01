@@ -89,9 +89,18 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
   current owner token remains local for cancellation via the PC script. On web,
   the owner signs in with Google for cancel, retry, and regeneration controls.
   The Google ID token lives only in React memory and is sent to the Worker;
+  the sign-in panel closes after successful verification so it does not cover
+  the discovery page on narrow screens;
   the client never persists it or bundles the local owner key. If the OAuth
   client ID is unconfigured, the admin control explains setup is needed. Paid
-  narration direction remains a separate owner-only job mode.
+  owner may request expressive narration as a separate, fixed Chatterbox
+  `af_heart` job with batched OpenAI emotion direction on the PC. This action
+  is visible only after owner sign-in and clearly identifies the paid OpenAI
+  step; it sends no API key, arbitrary prompt, model, engine, or voice. Public
+  requests continue to use fixed Kokoro. Job status identifies the selected
+  mode so progress remains understandable on mobile, tablet, and desktop. A
+  newly completed polled job counts as published when the owner starts an
+  expressive regeneration, even if the cached suggestion still says unbuilt.
   A published edition stays playable while its latest regeneration job is
   queued, running, or failed; latest job state drives progress and admin controls
   independently of publication availability.

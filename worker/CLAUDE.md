@@ -112,8 +112,13 @@ Search uses the longest typed query token as the indexed prefix at three or more
 characters, then tries indexed adjacent-transposition candidates, then a
 two-character indexed sample; each lookup is limited to 80 candidates. The
 visitor can request a fixed Kokoro `af_heart` job with an exact `gutenberg:<id>`
-source ID under a dedicated create rate limit. Source suggestions report
-publication availability and the relevant job state, ID, and update time
+source ID under a dedicated create rate limit. The owner may instead request
+`expressive`, a fixed Chatterbox `af_heart` rendition whose PC pipeline uses
+batched OpenAI emotion direction; public callers cannot select that mode. The
+request accepts no model, key, prompt, or arbitrary engine setting. The mode is
+stored with the job and returned by status and PC claim so retries preserve it.
+Both modes share the existing daily-start and queue caps. Source suggestions report
+publication availability and the relevant job mode, state, ID, and update time
 separately, so regeneration progress or failure never hides the playable book.
 The job lookup prefers an active job (including a retried older job) through
 the partial `one_active_generation` index, then uses `latest_source_job` to
@@ -126,11 +131,13 @@ and exact `johnkoeh@gmail.com` address. An unconfigured Google client ID fails
 closed; the existing owner token remains valid for local CLI administration.
 `GET /api/v1/admin/me` verifies Google identity before the browser exposes
 controls; local owner tokens do not authenticate this browser identity route.
-Paid model direction is reserved for a separate owner-only job mode. A separate PC
+The OpenAI key stays on the PC and never enters a Worker binding. A separate PC
 credential synchronizes source metadata and claims a
 job with a renewable lease. The PC downloads only allowlisted Gutenberg EPUB
-URLs and runs the existing exact-EPUB pipeline. Completion checks the R2 book
-pointer, rendition manifest and every listed section audio object. Public
+URLs and runs the exact-EPUB pipeline for the job's fixed rendition. The
+consumer runs OpenAI direction only for expressive jobs and will not claim them
+without a locally configured OpenAI key. Completion checks the R2 book
+pointer, selected rendition manifest and every listed section audio object. Public
 search is rate-limited before a bounded, 15-second in-isolate cache for
 identical origin, normalized query, and limit triples. Only successful public suggestion
 responses enter the cache. Isolates do not share memory, so cold instances

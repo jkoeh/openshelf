@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, Text, useWindowDimensions, View } from "react-native";
 import { discoveryColors } from "../constants/discovery";
 import { useTheme } from "../hooks/useTheme";
-import { ApiError, cancelGenerationJob, createGenerationJob, fetchGenerationJob, fetchSourceBooks, regenerateGenerationJob, retryGenerationJob } from "../lib/api";
+import { ApiError, cancelGenerationJob, createGenerationJob, fetchGenerationJob, fetchSourceBooks, regenerateGenerationJob, requestExpressiveGenerationJob, retryGenerationJob } from "../lib/api";
 import { latestJob } from "../lib/generation-jobs";
 import type { GenerationJob, SourceBook } from "../types";
 
@@ -26,6 +26,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [busySource, setBusySource] = useState<string | null>(null);
+  const [pendingExpressiveSource, setPendingExpressiveSource] = useState<string | null>(null);
   const version = useRef(0);
 
   useEffect(() => {
@@ -113,6 +114,26 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
     }
   };
 
+  const expressiveAct = async (book: SourceBook) => {
+    if (!adminToken) return;
+    setBusySource(book.source_id);
+    setError("");
+    try {
+      const current = latestJob(book, jobs[book.source_id]);
+      const published = book.state === "available" || current?.state === "completed";
+      const next = await requestExpressiveGenerationJob(
+        book.source_id, adminToken, published,
+      );
+      setJobs((previous) => ({ ...previous, [book.source_id]: next }));
+      setPendingExpressiveSource(null);
+    } catch (reason) {
+      if (reason instanceof ApiError && reason.status === 401) onAdminExpired();
+      setError(reason instanceof Error ? reason.message : "Could not request expressive audio.");
+    } finally {
+      setBusySource(null);
+    }
+  };
+
   if (query.trim().length < 2) return null;
 
   return <View style={{ marginTop: 34 }}>
@@ -134,6 +155,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
         const authorSlug = job?.author_slug ?? book.author_slug;
         const titleSlug = job?.title_slug ?? book.title_slug;
         const active = state === "queued" || state === "running";
+        const mode = job?.mode ?? book.job_mode ?? "standard";
         const ready = book.state === "available" || state === "completed";
         const failed = state === "failed";
         return <View key={book.source_id} style={{
@@ -151,7 +173,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
           </Text>
           {active && <View style={{ marginBottom: 16 }}>
             <Text style={{ color: palette.text, fontWeight: "600" }}>
-              Generation {state}{state === "running" && job?.stage ? ` · ${job.stage}` : ""}
+              {mode === "expressive" ? "Expressive" : "Standard"} generation {state}{state === "running" && job?.stage ? ` · ${job.stage}` : ""}
             </Text>
             <Text selectable style={{ color: palette.muted, fontSize: 12, marginTop: 4 }}>Job ID: {job?.id ?? book.job_id}</Text>
           </View>}
@@ -183,6 +205,32 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
               <Text style={{ color: palette.primary, fontWeight: "600" }}>
                 {active ? "Cancel generation" : failed ? "Retry generation" : "Regenerate audio"}
               </Text>
+            </Pressable>
+          )}
+          {adminToken && !active && !(failed && mode === "expressive") && (
+            pendingExpressiveSource === book.source_id ? <View style={{ marginTop: 12, padding: 14,
+              borderWidth: 1, borderColor: palette.border, borderRadius: 9 }}>
+              <Text style={{ color: palette.text, lineHeight: 21 }}>
+                Expressive audio uses OpenAI emotion direction and Chatterbox on your PC.
+                This spends one of the two daily generation starts.
+              </Text>
+              <View style={{ flexDirection: "row", gap: 12, marginTop: 12 }}>
+                <Pressable accessibilityRole="button" disabled={!!busySource}
+                  onPress={() => expressiveAct(book)} style={{ flex: 1, minHeight: 44,
+                    backgroundColor: palette.primary, borderRadius: 9,
+                    alignItems: "center", justifyContent: "center", paddingHorizontal: 8 }}>
+                  <Text style={{ color: palette.primaryText, fontWeight: "600", textAlign: "center" }}>Start expressive job</Text>
+                </Pressable>
+                <Pressable accessibilityRole="button" onPress={() => setPendingExpressiveSource(null)}
+                  style={{ minHeight: 44, paddingHorizontal: 10, justifyContent: "center" }}>
+                  <Text style={{ color: palette.primary }}>Cancel</Text>
+                </Pressable>
+              </View>
+            </View> : <Pressable accessibilityRole="button" disabled={!!busySource}
+              onPress={() => setPendingExpressiveSource(book.source_id)}
+              style={{ minHeight: 44, justifyContent: "center", alignItems: "center", marginTop: 10,
+                borderWidth: 1, borderColor: palette.border, borderRadius: 9, opacity: busySource ? 0.6 : 1 }}>
+              <Text style={{ color: palette.primary, fontWeight: "600" }}>Generate expressive audio</Text>
             </Pressable>
           )}
         </View>;

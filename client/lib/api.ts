@@ -98,6 +98,15 @@ export function regenerateGenerationJob(sourceId: string, token: string): Promis
 	return ownerRequest("/generation-jobs", token, { source_id: sourceId, regenerate: true });
 }
 
+export function requestExpressiveGenerationJob(
+	sourceId: string,
+	token: string,
+	regenerate: boolean,
+): Promise<GenerationJob> {
+	return ownerRequest("/generation-jobs", token,
+		{ source_id: sourceId, mode: "expressive", regenerate });
+}
+
 export function verifyAdminIdentity(token: string): Promise<{ email: string }> {
 	return ownerRequest("/admin/me", token);
 }

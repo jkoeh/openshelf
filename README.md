@@ -6,7 +6,7 @@ OpenShelf is an open source public domain audiobook platform. Its Python pipelin
 
 - The client searches the **published audiobook catalog** by title or author, browses books and retained rendition builds, streams audio, highlights the current word, and seeks when a word is tapped.
 - The Python CLI searches and downloads source EPUBs, generates audiobooks locally, resumes a specified build, and uploads completed builds to R2.
-- A first Gutenberg-only generation slice is live in production: bounded typo-tolerant source suggestions, D1 job leases, and an outbound PC consumer using Kokoro `af_heart`. The showcase flow supports capped public requests with owner cancellation.
+- The Gutenberg generation flow has bounded typo-tolerant source suggestions, D1 job leases, and an outbound PC consumer. Visitors can request fixed Kokoro `af_heart`; the owner can request fixed Chatterbox `af_heart` with OpenAI emotion direction.
 
 The [book discovery and generation job plan](plans/search-and-generation-jobs.md) tracks the wider rollout, including Standard Ebooks and more voices.
 
@@ -55,7 +55,8 @@ Build files use immutable cache headers. The book manifest and catalog use a sho
 Under `/api/v1`, the Worker serves `GET /catalog`, `/books/:author/:title`, `/books/:author/:title/builds`, `/books/:author/:title/sections/:sequence`, `/books/:author/:title/sections/:sequence/audio`, and book cover and EPUB routes. Section and audio requests identify a rendition and build. The catalog contains already-published audiobooks and its `q` search is a case-insensitive title/author substring filter. The API contract is generated from route schemas at `/api/v1/openapi.json`, with interactive docs at `/api/v1/docs`.
 
 The additive job API has public `GET /source-books` suggestions, capped public
-job creation and status reads, owner-authenticated cancel/retry/regeneration,
+job creation and status reads, owner-authenticated cancel/retry/regeneration
+and expressive requests,
 and PC-only source sync, claim, heartbeat, progress, and finish routes. D1 stores the source index and leases. The Worker
 checks the R2 book pointer, section objects, and catalog before completion.
 Rate-limit bindings protect public search and authentication attempts. A bounded
@@ -64,8 +65,11 @@ suggestions after rate limiting; it is best effort because instances do not
 share memory. Clients receive `no-store` and may see job availability lag by up
 to 15 seconds. D1 caps queued jobs, daily starts, and job attempts. Generation
 is public for the fixed Kokoro voice; once configured, Google sign-in for
-`johnkoeh@gmail.com` allows browser cancel, retry, and regeneration. The local owner token remains
-available for CLI administration. Paid direction is a separate owner-only mode.
+`johnkoeh@gmail.com` allows browser cancel, retry, regeneration, and expressive
+requests. The expressive job uses Chatterbox `af_heart` and batched OpenAI
+emotion direction on the PC. It has no public API option for arbitrary prompts,
+models, or voices, and both modes share the same daily and queue caps. The local
+owner token remains available for CLI administration.
 The browser verifies sign-in through `GET /api/v1/admin/me` before showing
 admin controls; it keeps the Google ID token in memory only.
 
@@ -123,8 +127,9 @@ Voice direction uses the configured LLM provider (`LLM_PROVIDER`, with provider 
 
 ### Generation jobs
 
-The first generation path accepts exact Project Gutenberg IDs and uses Kokoro
-`af_heart`. The PC pulls work over outbound HTTPS; no inbound port is needed.
+Generation accepts exact Project Gutenberg IDs. Public jobs use Kokoro
+`af_heart`; owner-only expressive jobs use Chatterbox `af_heart` and OpenAI
+emotion direction. The PC pulls work over outbound HTTPS; no inbound port is needed.
 Production uses `openshelf-jobs` D1 and the `openshelf` R2 bucket. Staging uses
 isolated `openshelf-jobs-staging` D1 and `openshelf-staging` R2 resources. Both
 Workers have distinct owner and PC credentials, and the production source index
@@ -132,8 +137,10 @@ held 519 Gutenberg editions when checked on September 30, 2026.
 The client identifies this as a limited source index; an empty suggestion list
 does not mean Gutenberg lacks the book. Visitors can request the fixed Kokoro
 voice within the Worker daily and queue caps. Owner retry, regeneration, and
-cancellation can use configured browser Google sign-in for `johnkoeh@gmail.com` or the
-local owner token. Paid direction is a separate owner-only mode. To enable
+cancellation and expressive requests can use configured browser Google sign-in
+for `johnkoeh@gmail.com` or the local owner token. `OPENAI_API_KEY` stays in
+`pipeline/.env` or the PC shell; a consumer without it leaves expressive jobs
+queued for a capable run. Standard jobs never call OpenAI. To enable
 browser sign-in, create a Google OAuth Web client with the production Pages
 origin `https://openshelf.pages.dev` (and your local web origin for testing),
 set its client ID as the Worker's `GOOGLE_CLIENT_ID` in staging and production,
