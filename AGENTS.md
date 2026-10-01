@@ -69,7 +69,7 @@ flowchart LR
         W_SPEC[GET /openapi.json + /docs<br/>auto-generated from Zod schemas]
         W_SEARCH[GET /source-books<br/>bounded autocomplete]
         W_ADMIN[GET /admin/me<br/>verify Google owner]
-        W_JOBS[Public default job requests/status<br/>Owner cancel/retry/direction<br/>PC claim/heartbeat/finish]
+        W_JOBS[Public default job requests/status<br/>Owner cancel/retry/regenerate<br/>PC claim/heartbeat/finish<br/>Paid direction: planned owner mode]
     end
 
     R_CAT --> W_CAT
