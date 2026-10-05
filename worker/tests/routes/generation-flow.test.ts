@@ -55,6 +55,59 @@ beforeEach(async () => {
 });
 
 describe("source search and generation API", () => {
+	it("shows a private bounded queue and claims high-priority queued work first", async () => {
+		await sync([source(11, "Alice"), source(12, "A Second Book")]);
+		const first = await (await create(11)).json<{ id: string }>();
+		const second = await (await create(12)).json<{ id: string }>();
+		const path = "/admin/generation-jobs";
+		expect((await request(path)).status).toBe(401);
+		expect((await request(path, "GET", undefined, pcToken)).status).toBe(401);
+		expect((await request(`${path}/${second.id}/priority`, "POST", { priority: "urgent" }, ownerToken)).status).toBe(400);
+		const prioritized = await request(`${path}/${second.id}/priority`, "POST", { priority: "high" }, ownerToken);
+		expect(prioritized.status).toBe(200);
+		expect((await prioritized.json<{ priority: number }>()).priority).toBe(1);
+		const listed = await request(path, "GET", undefined, ownerToken);
+		expect(listed.status).toBe(200);
+		expect(listed.headers.get("Cache-Control")).toBe("no-store");
+		const body = await listed.json<{ active: { id: string; title: string; priority: number; state: string; lease_until: string | null }[]; recent: unknown[] }>();
+		expect(body.active.map((job) => job.id)).toEqual([second.id, first.id]);
+		expect(body.active[0]).toMatchObject({ title: "A Second Book", priority: 1, state: "queued", lease_until: null });
+		expect(body.recent).toEqual([]);
+		expect(JSON.stringify(body)).not.toContain("lease_token");
+		expect(JSON.stringify(body)).not.toContain("build_id");
+		expect(JSON.stringify(body)).not.toContain("epub_url");
+		const claimed = await (await claim()).json<{ job: { id: string } }>();
+		expect(claimed.job.id).toBe(second.id);
+		expect((await request(`${path}/${second.id}/priority`, "POST", { priority: "normal" }, ownerToken)).status).toBe(409);
+		const running = await (await request(path, "GET", undefined, ownerToken)).json<{ active: { id: string; lease_until: string | null }[] }>();
+		expect(running.active[0].id).toBe(second.id);
+		expect(running.active[0].lease_until).toBeTruthy();
+		expect((await request(`/generation-jobs/${second.id}/cancel`, "POST", undefined, ownerToken)).status).toBe(200);
+		const after = await (await request(path, "GET", undefined, ownerToken)).json<{ recent: { id: string; state: string }[] }>();
+		expect(after.recent[0]).toMatchObject({ id: second.id, state: "canceled" });
+		searchAllowed = false;
+		expect((await request(path, "GET", undefined, ownerToken)).status).toBe(429);
+	});
+	it("bounds owner history to the twenty newest terminal jobs", async () => {
+		await sync([source(11, "Alice")]);
+		await env.JOB_DB.prepare("INSERT INTO generation_starts(id,day,created_at) VALUES('fixture-start','2026-10-05','2026-10-05T00:00:00Z')").run();
+		const ids: string[] = [];
+		for (let index = 0; index < 25; index++) {
+			const id = crypto.randomUUID();
+			ids.push(id);
+			await env.JOB_DB.prepare(`INSERT INTO generation_jobs(id,source_id,build_id,start_id,state,stage,created_at,updated_at)
+				VALUES(?,'gutenberg:11','1234567890abcdef','fixture-start','completed','completed',?,?)`)
+				.bind(id, new Date(Date.UTC(2026, 9, 5, 0, index)).toISOString(),
+					new Date(Date.UTC(2026, 9, 5, 0, index)).toISOString()).run();
+		}
+		const response = await request("/admin/generation-jobs", "GET", undefined, ownerToken);
+		const body = await response.json<{ active: unknown[]; recent: { id: string }[] }>();
+		expect(body.active).toEqual([]);
+		expect(body.recent).toHaveLength(20);
+		expect(body.recent[0].id).toBe(ids[24]);
+		expect(body.recent[19].id).toBe(ids[5]);
+	});
+
 	it("keeps published availability alongside a failed regeneration job", async () => {
 		await sync([source(11, "Alice")]);
 		const made = await (await create(11)).json<{ id: string }>();

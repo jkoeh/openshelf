@@ -11,3 +11,4 @@ whisperx
 jiwer
 anthropic
 openai
+psutil>=5.9

@@ -63,6 +63,14 @@ under `pipeline/src/openshelf/pipeline/engines/`.
   claim capability only when a local `OPENAI_API_KEY` is configured. The key is
   never sent to the Worker, logged, or stored in a job. Both modes use the same
   Gutenberg rights, EPUB, word-budget, lease, and publication checks.
+- `pipeline/scripts/job-monitor.pyw` is a local Tkinter window. It reads the
+  ignored production owner token for owner-only queue/priority/cancel calls and
+  can start the existing outbound consumer with the separate local PC token.
+  It shows the local consumer PID and log without accepting inbound connections.
+  Its owner API client uses a fixed HTTPS origin and rejects redirects. It never
+  embeds or prints credentials, and closing the window does not stop a
+  running consumer. Canceling a selected task uses the Worker lease-revocation
+  route; the consumer terminates its child at its next heartbeat.
 - Before launching TTS, the PC consumer reads official per-book Gutenberg RDF
   for the exact source ID and requires `Public domain in the USA.`. Missing or
   ambiguous rights fail closed, including for already indexed jobs. It also
@@ -91,6 +99,8 @@ under `pipeline/src/openshelf/pipeline/engines/`.
 Pipeline tests are Python `unittest` tests under `pipeline/tests/` and should
 be mocked/offline. Engine tests should not require real model downloads, GPU,
 network, R2, or ffmpeg.
+The Windows monitor's API and process helpers are tested offline without
+opening a Tk window or contacting the production Worker.
 
 Useful focused commands from the repo root:
 

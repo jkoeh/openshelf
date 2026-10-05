@@ -169,6 +169,20 @@ For production, use `worker/.secrets/prod-pc-token` as `OPENSHELF_PC_TOKEN`
 on the PC, the
 `https://openshelf-api.johnkoeh.workers.dev/api/v1` API base, and
 `R2_BUCKET=openshelf`. Keep these environment credentials separate.
+
+### Windows job monitor
+
+Double-click `scripts/open-job-monitor.cmd` after the root `.venv` is set up.
+The native window shows pending, running, expired-lease (stuck), and recent jobs,
+the local consumer state, and its log tail. Select a queued job to set high or
+normal priority; select a queued/running job and choose **Cancel job** to revoke
+its lease. A running PC child stops at its next heartbeat (up to about 30
+seconds). The window can start the existing outbound production consumer if it
+is not running. Closing the window leaves the consumer running. Owner and PC
+tokens are read from ignored files under `worker/.secrets/`, never entered in
+the UI. The queue refreshes every 15 seconds; it uses no inbound server.
+Deploy the matching additive D1 migration before the Worker update.
+CI runs the monitor's offline unit tests alongside the consumer tests.
 Source sync can cover a few more Gutendex pages with `--sync-pages N` (up to
 10 per run); use the bounded, rights-checked official catalog import below for
 broader coverage. The first seed had 64 popular editions, including Gutenberg
