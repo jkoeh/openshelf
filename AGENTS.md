@@ -69,7 +69,7 @@ flowchart LR
         W_SPEC[GET /openapi.json + /docs<br/>auto-generated from Zod schemas]
         W_SEARCH[GET /source-books<br/>bounded autocomplete]
         W_ADMIN[GET /admin/me<br/>verify Google owner]
-        W_JOBS[Public Kokoro requests/status<br/>Owner cancel/retry/regenerate<br/>Owner OpenAI-directed Chatterbox requests<br/>PC claim/heartbeat/finish]
+        W_JOBS[Public Kokoro requests/status<br/>Owner cancel/retry/regenerate/priority<br/>Owner bounded queue and recent history<br/>Owner OpenAI-directed Chatterbox requests<br/>PC claim/heartbeat/finish]
     end
 
     R_CAT --> W_CAT
@@ -113,11 +113,13 @@ flowchart LR
     W_AUDIO --> C4
 
     subgraph PC[Owner PC — outbound consumer]
+        J_MON[Local Windows job monitor<br/>queue + lease health + recent jobs<br/>high priority + cancel + consumer status]
         J1[Poll + lease job] --> J2[Exact Gutenberg EPUB]
         J2 --> J2R[Verify RDF + EPUB public-domain rights]
         J2R --> J3[Standard: Kokoro<br/>Expressive: OpenAI direction + Chatterbox<br/>both: WhisperX + R2]
     end
     J1 <--> W_JOBS
+    J_MON <--> W_JOBS
     J3 --> R_M4A
     J3 --> R_CD
 ```
@@ -159,6 +161,15 @@ Notes:
   Cancellation is a terminal job state: queued
   work cannot be claimed, and a running consumer loses its lease on the next
   heartbeat and stops its child process. A canceled start is not refunded.
+- The local Windows monitor reads a bounded owner-only job list every 15 seconds.
+  It shows queued, running, expired-lease (stuck), and recent terminal jobs,
+  plus the local consumer process and log. Queued jobs have normal or high
+  priority; claim takes high-priority queued jobs first and preserves FIFO within
+  each level. Priority changes do not preempt a running job or bypass start and
+  queue caps. Cancel uses the existing owner endpoint and revokes a running
+  lease; the PC stops its child at the next heartbeat. The monitor loads owner
+  and PC credentials only from ignored local files and never serves a network
+  listener.
 
 ### Rendition vs build invariant
 
@@ -181,7 +192,7 @@ This is the contract that lets every per-build URL set `Cache-Control: immutable
 ```
 pipeline/               # Python — EPUB ingestion, TTS, R2 upload
   src/openshelf/        # Python package
-  scripts/              # CLI entry points
+  scripts/              # CLI entry points + local job monitor window
   tests/                # Python tests (mocked, offline)
   docs/                 # Pipeline step documentation
   requirements.txt
@@ -204,7 +215,8 @@ download/               # (gitignored) downloaded EPUBs
 audio/                  # (gitignored) generated audio files
 plans/                  # design docs and plans
 design-qa.md             # catalog visual comparison and responsive QA record
-.github/workflows/      # offline API, consumer, and headless browser CI gate
+.github/workflows/      # offline API, consumer/monitor, and headless browser CI gate
+scripts/                # PC setup and local monitor launcher
 ```
 
 ## Root Commands

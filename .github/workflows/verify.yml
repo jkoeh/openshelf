@@ -24,7 +24,8 @@ jobs:
         working-directory: worker
       - run: npm run typecheck && npm test
         working-directory: client
-      - run: PYTHONPATH=pipeline/src python -m unittest pipeline.tests.pipeline.test_job_consumer -v
+      - run: python -m pip install "psutil>=5.9"
+      - run: PYTHONPATH=pipeline/src python -m unittest pipeline.tests.pipeline.test_job_consumer pipeline.tests.pipeline.test_job_monitor -v
       - run: npx playwright install --with-deps chromium
         working-directory: client
       - run: npm run test:e2e

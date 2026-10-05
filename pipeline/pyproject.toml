@@ -20,6 +20,7 @@ dependencies = [
     "boto3",
     "anthropic",
     "openai",
+    "psutil>=5.9",
     "python-dotenv",
     "torch",
 ]

@@ -147,6 +147,17 @@ deduplication, three pending jobs, two successful start reservations per UTC
 day and three attempts per job. Canceling a queued/running job moves it to a
 terminal `canceled` state and revokes its lease without refunding the start;
 the PC stops at its next rejected heartbeat.
+The local Windows monitor uses owner authentication for a bounded, no-store
+queue view: all active jobs (the queue cap bounds these) plus the 20 most recent
+terminal jobs, joined to source title/author. It receives priority, attempts,
+timestamps, and lease expiry, but never lease tokens, build IDs, EPUB URLs, or
+credentials. A running job with an expired lease is shown as stuck. Owner-only
+priority changes are allowed only while queued, with normal/high values; claim
+selects high-priority queued jobs before normal queued jobs, FIFO within each
+level. Running jobs are never preempted. The existing owner cancel route is
+the monitor's kill action; it revokes the lease and does not refund a start.
+The list is rate-limited before its D1 reads, and priority updates are bounded
+and authenticated before mutation.
 Google-token verification is rate-limited before signature verification to bound
 remote key fetches; valid local owner and PC credentials stay usable. Invalid
 local owner and PC credentials also count against the authentication limit.

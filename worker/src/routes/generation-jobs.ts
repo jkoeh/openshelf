@@ -26,6 +26,18 @@ const Job = z
 		updated_at: z.string(),
 	})
 	.openapi("GenerationJob");
+const ManagedJob = Job.extend({
+	title: z.string(),
+	author: z.string(),
+	priority: z.number().int().min(0).max(1),
+	attempts: z.number().int(),
+	lease_until: z.string().nullable(),
+}).openapi("ManagedGenerationJob");
+const ManagedList = z.object({
+	active: z.array(ManagedJob),
+	recent: z.array(ManagedJob),
+});
+const Priority = z.object({ priority: z.enum(["normal", "high"]) });
 const Create = z.object({
 	source_id: z.string().regex(/^gutenberg:[1-9][0-9]*$/),
 	mode: z.enum(["standard", "expressive"]).default("standard"),
@@ -117,6 +129,34 @@ const retry = createRoute({
 		503: error,
 	},
 });
+const listManaged = createRoute({
+	method: "get",
+	path: "/",
+	tags: ["generation-owner"],
+	summary: "List active and recent generation jobs for the owner",
+	responses: {
+		200: { description: "Bounded owner queue", content: { "application/json": { schema: ManagedList } } },
+		401: error,
+		429: error,
+		503: error,
+	},
+});
+const setPriority = createRoute({
+	method: "post",
+	path: "/:id/priority",
+	tags: ["generation-owner"],
+	summary: "Set queued job priority",
+	request: { params: Id, body: { content: { "application/json": { schema: Priority } } } },
+	responses: {
+		200: { description: "Updated job", content: { "application/json": { schema: ManagedJob } } },
+		400: error,
+		401: error,
+		404: error,
+		409: error,
+		429: error,
+		503: error,
+	},
+});
 const claim = createRoute({
 	method: "post",
 	path: "/claim",
@@ -186,6 +226,12 @@ interface Row {
 	created_at: string;
 	updated_at: string;
 }
+interface ManagedRow extends Row {
+	title: string;
+	author: string;
+	priority: number;
+	lease_until: string | null;
+}
 function publicJob(row: Row): z.infer<typeof Job> {
 	const error_code = row.error_code === "RightsNotVerified"
 		? "RIGHTS_NOT_VERIFIED" as const
@@ -209,6 +255,17 @@ function publicJob(row: Row): z.infer<typeof Job> {
 }
 const fields =
 	"id,source_id,mode,build_id,state,stage,attempts,author_slug,title_slug,error_code,created_at,updated_at";
+const managedFields = `${fields.split(",").map((field) => `j.${field}`).join(",")},j.priority,j.lease_until,b.title,b.author`;
+function managedJob(row: ManagedRow): z.infer<typeof ManagedJob> {
+	return {
+		...publicJob(row),
+		title: row.title,
+		author: row.author,
+		priority: row.priority,
+		attempts: row.attempts,
+		lease_until: row.lease_until,
+	};
+}
 const now = () => new Date().toISOString();
 const slug = (value: string) =>
 	value
@@ -218,6 +275,10 @@ const slug = (value: string) =>
 		.replace(/^-|-$/g, "");
 async function get(db: D1Database, id: string) {
 	return db.prepare(`SELECT ${fields} FROM generation_jobs WHERE id=?`).bind(id).first<Row>();
+}
+async function getManaged(db: D1Database, id: string) {
+	return db.prepare(`SELECT ${managedFields} FROM generation_jobs j JOIN source_books b ON b.source_id=j.source_id WHERE j.id=?`)
+		.bind(id).first<ManagedRow>();
 }
 async function auth(req: Request, env: Env, pc = false) {
 	return pc ? credentialStatus(req, env, env.PC_TOKEN) : adminCredentialStatus(req, env);
@@ -462,6 +523,47 @@ owner.openapi(retry, async (c) => {
 		: c.json({ error: { code: "LIMIT_REACHED", message: "Generation quota reached" } }, 429);
 });
 
+const management = createOpenAPIApp<{ Bindings: Env }>();
+management.openapi(listManaged, async (c) => {
+	if (!ready(c.env))
+		return c.json({ error: { code: "UNAVAILABLE", message: "Generation is not configured" } }, 503);
+	const authStatus = await auth(c.req.raw, c.env);
+	if (authStatus)
+		return c.json({ error: { code: authStatus === 429 ? "RATE_LIMITED" : "UNAUTHORIZED", message: "Invalid credential or too many attempts" } }, authStatus);
+	const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
+	if (!(await c.env.SEARCH_RATE_LIMITER!.limit({ key: `owner-queue:${ip}` })).success)
+		return c.json({ error: { code: "RATE_LIMITED", message: "Try again later" } }, 429);
+	const db = c.env.JOB_DB!;
+	const [active, recent] = await Promise.all([
+		db.prepare(`SELECT ${managedFields} FROM generation_jobs j JOIN source_books b ON b.source_id=j.source_id
+			WHERE j.state IN ('queued','running')
+			ORDER BY CASE WHEN j.state='running' THEN 0 ELSE 1 END,j.priority DESC,j.created_at LIMIT 20`)
+			.all<ManagedRow>(),
+		db.prepare(`SELECT ${managedFields} FROM generation_jobs j JOIN source_books b ON b.source_id=j.source_id
+			WHERE j.state IN ('completed','failed','canceled') ORDER BY j.updated_at DESC LIMIT 20`)
+			.all<ManagedRow>(),
+	]);
+	return c.json({ active: active.results.map(managedJob), recent: recent.results.map(managedJob) }, 200, noStore);
+});
+management.openapi(setPriority, async (c) => {
+	if (!ready(c.env))
+		return c.json({ error: { code: "UNAVAILABLE", message: "Generation is not configured" } }, 503);
+	const authStatus = await auth(c.req.raw, c.env);
+	if (authStatus)
+		return c.json({ error: { code: authStatus === 429 ? "RATE_LIMITED" : "UNAUTHORIZED", message: "Invalid credential or too many attempts" } }, authStatus);
+	const db = c.env.JOB_DB!, id = c.req.valid("param").id;
+	const existing = await getManaged(db, id);
+	if (!existing) return c.json({ error: { code: "NOT_FOUND", message: "Job not found" } }, 404);
+	if (existing.state !== "queued")
+		return c.json({ error: { code: "NOT_QUEUED", message: "Only queued jobs can be prioritized" } }, 409);
+	const priority = c.req.valid("json").priority === "high" ? 1 : 0;
+	const result = await db.prepare("UPDATE generation_jobs SET priority=?,updated_at=? WHERE id=? AND state='queued'")
+		.bind(priority, now(), id).run();
+	if (!result.meta.changes)
+		return c.json({ error: { code: "NOT_QUEUED", message: "Only queued jobs can be prioritized" } }, 409);
+	return c.json(managedJob((await getManaged(db, id))!), 200, noStore);
+});
+
 const internal = createOpenAPIApp<{ Bindings: Env }>();
 internal.openapi(claim, async (c) => {
 	if (!ready(c.env))
@@ -488,7 +590,7 @@ internal.openapi(claim, async (c) => {
 	const candidate = await db
 		.prepare(`SELECT id,state FROM generation_jobs WHERE (state='queued' OR (state='running' AND lease_until<? AND attempts<3))
 		AND (mode='standard' OR ?=1)
-		ORDER BY CASE WHEN state='queued' THEN 0 ELSE 1 END,created_at LIMIT 1`)
+		ORDER BY CASE WHEN state='queued' THEN 0 ELSE 1 END,priority DESC,created_at LIMIT 1`)
 		.bind(timestamp, expressive ? 1 : 0)
 		.first<{ id: string; state: string }>();
 	if (!candidate) return c.json({ job: null }, 200, noStore);
@@ -661,4 +763,4 @@ internal.openapi(finish, async (c) => {
 			.run();
 	return c.json(publicJob((await get(db, id))!), 200, noStore);
 });
-export { owner, internal };
+export { owner, management, internal };

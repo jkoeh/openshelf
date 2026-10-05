@@ -233,6 +233,9 @@ outputs. The PC advertises expressive claim capability only with a local
 OpenAI key; the Worker and client never receive that key. Keep the database
 constraint for at most one active job per source across both modes. Both share
 the two-start UTC daily cap, three queued jobs, and three attempts per job.
+The owner PC monitor may mark a queued job high or normal priority. Claim orders
+queued jobs by priority then creation time; running jobs are not preempted.
+Priority never changes the daily-start reservation or queue/attempt caps.
 
 All new HTTP shapes must be defined in Zod route schemas so
 `/api/v1/openapi.json` is the contract:
@@ -244,6 +247,8 @@ All new HTTP shapes must be defined in Zod route schemas so
 | `GET /api/v1/generation-jobs/:id` | Public | Current state, stage, safe error category, and completed book link; no internal build ID or lease details. |
 | `POST /api/v1/generation-jobs/:id/retry` | Owner | Requeue a failed job with the same build ID. |
 | `POST /api/v1/generation-jobs/:id/cancel` | Owner | Set queued/running job to canceled, revoke its lease, and retain its daily start reservation. |
+| `GET /api/v1/admin/generation-jobs` | Owner | Bounded active queue and 20 recent terminal jobs with title/author, priority, attempts, stage, and lease expiry; no secrets or internal build ID. |
+| `POST /api/v1/admin/generation-jobs/:id/priority` | Owner | Set a queued job to normal or high priority without preempting running work. |
 | `POST /api/v1/internal/generation-jobs/claim` | PC | Advertise local expressive capability; atomically lease one eligible queued/expired job, or return no work. |
 | `POST /api/v1/internal/generation-jobs/:id/heartbeat` | PC | Renew a matching lease. |
 | `POST /api/v1/internal/generation-jobs/:id/progress` | PC | Update stage/counts under a matching lease. |

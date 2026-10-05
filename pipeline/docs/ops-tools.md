@@ -2,6 +2,22 @@
 
 ## Outbound generation consumer
 
+`scripts/open-job-monitor.cmd` launches the native Windows queue monitor with
+the root `.venv`; `pipeline/scripts/job-monitor.pyw` can also be run with that
+environment's `pythonw.exe`. It requires no inbound port. It reads the
+production owner token from `worker/.secrets/prod-owner-token`, refreshes the
+owner-only queue view every 15 seconds, and shows active/recent jobs, priority,
+attempts, stage, heartbeat/lease expiry, local consumer status, and local log
+tail. An expired running lease is labeled stuck; a long but heartbeating job is
+still working. Only a queued job may be set high/normal priority. Cancel asks
+for confirmation, revokes its Worker lease, and the PC stops a running child at
+its next heartbeat. The window can start the existing outbound consumer using
+`worker/.secrets/prod-pc-token`, but closing the window leaves it running. The
+two tokens and the OpenAI key remain local and are never displayed or logged.
+The owner API client uses only the fixed production HTTPS origin and does not
+follow redirects with its bearer token. It sends the same OpenShelf User-Agent
+as the PC consumer so Cloudflare does not reject Python's default client identity.
+
 `openshelf-pipeline books consume-jobs --api-base URL` uses `OPENSHELF_PC_TOKEN`
 from the PC environment and polls the Worker over HTTPS. `--sync-pages N` first
 indexes up to N Gutendex pages through the authenticated source-sync route;
