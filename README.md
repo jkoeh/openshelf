@@ -127,6 +127,12 @@ Voice direction uses the configured LLM provider (`LLM_PROVIDER`, with provider 
 
 ### Generation jobs
 
+Every indexed search result offers **Download EPUB** independently of audio.
+The download redirects to the exact original Gutenberg EPUB immediately; it
+works with the PC offline or with audio queued, running, failed, or canceled.
+It does not consume a daily generation start. Completed audiobook detail pages
+continue to download the annotated EPUB from R2.
+
 Generation accepts exact Project Gutenberg IDs. Public jobs use Kokoro
 `af_heart`; owner-only expressive jobs use Chatterbox `af_heart` and OpenAI
 emotion direction. The PC pulls work over outbound HTTPS; no inbound port is needed.
@@ -169,6 +175,13 @@ For production, use `worker/.secrets/prod-pc-token` as `OPENSHELF_PC_TOKEN`
 on the PC, the
 `https://openshelf-api.johnkoeh.workers.dev/api/v1` API base, and
 `R2_BUCKET=openshelf`. Keep these environment credentials separate.
+
+Audio preflight defaults to 100,000 source spoken words. A `BOOK_TOO_LONG`
+failure reports the count and limit in the consumer log and remains visible
+when reopening source search. After reviewing a longer book, retry as owner
+and use `books consume-jobs --api-base URL --max-words N --once` when it is the
+only queued job. This deliberate per-invocation override retains the default
+budget and all rights checks.
 
 ### Windows job monitor
 

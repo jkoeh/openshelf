@@ -9,6 +9,7 @@ import {
 	fetchCatalog,
 	fetchSection,
 	fetchSourceBooks,
+	sourceEpubUrl,
 	createGenerationJob,
 	fetchGenerationJob,
 	retryGenerationJob,
@@ -26,6 +27,10 @@ beforeEach(() => {
 });
 
 describe("source discovery and owner jobs", () => {
+	it("builds an independent EPUB URL for the exact source ID", () => {
+		expect(sourceEpubUrl("gutenberg:2554")).toBe("http://localhost:8787/api/v1/source-books/gutenberg%3A2554/epub");
+		expect(mockFetch).not.toHaveBeenCalled();
+	});
 	it("encodes autocomplete text and uses no-store", async () => {
 		mockFetch.mockResolvedValue(jsonResponse({ books: [] }));
 		await fetchSourceBooks("Alice & Bob");

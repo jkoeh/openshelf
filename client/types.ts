@@ -20,6 +20,7 @@ export interface SourceBook {
   job_mode?: "standard" | "expressive" | null;
   job_id: string | null;
   job_updated_at?: string | null;
+  job_error_code?: GenerationJob["error_code"];
   author_slug: string | null;
   title_slug: string | null;
 }

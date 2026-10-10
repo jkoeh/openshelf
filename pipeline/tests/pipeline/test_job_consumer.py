@@ -134,8 +134,10 @@ class ConsumerTests(unittest.TestCase):
         parser.parse_epub = lambda _path: [SimpleNamespace(
             word_count=99_999, heading=SimpleNamespace(spoken_text="Chapter One"))]
         with patch.dict(sys.modules, {"openshelf.pipeline.epub_parser": parser}):
-            with self.assertRaises(consumer.BookTooLong):
+            with patch("sys.stdout", new_callable=io.StringIO) as log, self.assertRaises(consumer.BookTooLong):
                 consumer.check_word_budget(Path("unused.epub"), 100_000)
+            self.assertIn("100001 source spoken words; limit 100000", log.getvalue())
+            self.assertEqual(consumer.check_word_budget(Path("unused.epub"), 210_000), 100_001)
 
     def test_exact_book_command_keeps_build_and_resumes_only_existing_run(self):
         job = {"id": "job-1", "source_id": "gutenberg:11", "title": "Alice", "author": "Lewis Carroll",

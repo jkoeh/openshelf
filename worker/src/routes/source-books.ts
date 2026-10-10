@@ -2,6 +2,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { ErrorSchema } from "../schemas/error";
 import type { Env } from "../types";
 import { credentialStatus, noStore } from "../utils/job-auth";
+import { JobErrorCode, publicJobError } from "../utils/generation-errors";
 import { createOpenAPIApp } from "../utils/openapi-app";
 
 const BookSchema = z
@@ -14,6 +15,7 @@ const BookSchema = z
 		job_mode: z.enum(["standard", "expressive"]).nullable(),
 		job_id: z.string().nullable(),
 		job_updated_at: z.string().nullable(),
+		job_error_code: JobErrorCode.nullable(),
 		author_slug: z.string().nullable(),
 		title_slug: z.string().nullable(),
 	})
@@ -63,6 +65,23 @@ const syncRoute = createRoute({
 		503: error,
 	},
 });
+const downloadRoute = createRoute({
+	method: "get",
+	path: "/{source_id}/epub",
+	tags: ["sources"],
+	summary: "Download the source EPUB independently of audio generation",
+	request: { params: z.object({ source_id: z.string().regex(/^gutenberg:[1-9][0-9]*$/) }) },
+	responses: {
+		302: {
+			description: "Original Gutenberg EPUB download",
+			headers: { Location: { schema: { type: "string", format: "uri" } } },
+		},
+		400: error,
+		404: error,
+		429: error,
+		503: error,
+	},
+});
 
 const app = createOpenAPIApp<{ Bindings: Env }>();
 const internal = createOpenAPIApp<{ Bindings: Env }>();
@@ -95,6 +114,7 @@ interface Row {
 	mode: string | null;
 	job_id: string | null;
 	job_updated_at: string | null;
+	error_code: string | null;
 }
 app.openapi(searchRoute, async (c) => {
 	if (!c.env.JOB_DB || !c.env.SEARCH_RATE_LIMITER)
@@ -113,7 +133,7 @@ app.openapi(searchRoute, async (c) => {
 	if (cached && cached.expires > Date.now()) return c.json(cached.result, 200, noStore);
 	if (cached) suggestionCache.delete(cacheKey);
 	const select = `SELECT DISTINCT b.source_id,b.title,b.author,b.author_slug,b.title_slug,
-		j.state,j.mode,j.id job_id,j.updated_at job_updated_at
+		j.state,j.mode,j.id job_id,j.updated_at job_updated_at,j.error_code
 		FROM source_tokens t JOIN source_books b ON b.source_id=t.source_id
 		LEFT JOIN generation_jobs j ON j.id=COALESCE(
 			(SELECT id FROM generation_jobs WHERE source_id=b.source_id
@@ -169,6 +189,7 @@ app.openapi(searchRoute, async (c) => {
 						: "ready_to_generate") as z.infer<typeof BookSchema>["state"],
 				job_id: row.job_id,
 				job_updated_at: row.job_updated_at,
+				job_error_code: publicJobError(row.error_code),
 				job_state: row.state as z.infer<typeof BookSchema>["job_state"],
 				job_mode: row.mode as z.infer<typeof BookSchema>["job_mode"],
 				author_slug: row.author_slug,
@@ -178,6 +199,31 @@ app.openapi(searchRoute, async (c) => {
 	if (suggestionCache.size >= 128) suggestionCache.delete(suggestionCache.keys().next().value!);
 	suggestionCache.set(cacheKey, { expires: Date.now() + 15_000, result });
 	return c.json(result, 200, noStore);
+});
+
+app.openapi(downloadRoute, async (c) => {
+	if (!c.env.JOB_DB || !c.env.SEARCH_RATE_LIMITER)
+		return c.json({ error: { code: "UNAVAILABLE", message: "EPUB downloads are not configured" } }, 503, noStore);
+	const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
+	if (!(await c.env.SEARCH_RATE_LIMITER.limit({ key: `source-epub:${ip}` })).success)
+		return c.json({ error: { code: "RATE_LIMITED", message: "Try again later" } }, 429, noStore);
+	const { source_id } = c.req.valid("param");
+	const source = await c.env.JOB_DB.prepare("SELECT epub_url FROM source_books WHERE source_id=?")
+		.bind(source_id).first<{ epub_url: string }>();
+	if (!source)
+		return c.json({ error: { code: "NOT_FOUND", message: "Source edition not indexed" } }, 404, noStore);
+	let url: URL;
+	try {
+		url = new URL(source.epub_url);
+	} catch {
+		return c.json({ error: { code: "INVALID_SOURCE", message: "Source EPUB URL is invalid" } }, 400, noStore);
+	}
+	const number = source_id.slice(10);
+	const path = new RegExp(`^/(?:ebooks/${number}\\.epub(?:3)?(?:\\.(?:images|noimages))?|cache/epub/${number}/pg${number}(?:-images)?(?:-3)?\\.epub)$`);
+	if (url.protocol !== "https:" || url.hostname !== "www.gutenberg.org" ||
+		url.username || url.password || url.port || url.search || url.hash || !path.test(url.pathname))
+		return c.json({ error: { code: "INVALID_SOURCE", message: "Source EPUB URL must match the Gutenberg ID" } }, 400, noStore);
+	return new Response(null, { status: 302, headers: { ...noStore, Location: url.href } });
 });
 
 internal.openapi(syncRoute, async (c) => {

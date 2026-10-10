@@ -61,6 +61,10 @@ export function fetchSourceBooks(q: string): Promise<{ books: SourceBook[] }> {
 	return fetchJson(`${API_BASE}/source-books?q=${encodeURIComponent(q)}&limit=10`, { cache: "no-store" });
 }
 
+export function sourceEpubUrl(sourceId: string): string {
+	return `${API_BASE}/source-books/${encodeURIComponent(sourceId)}/epub`;
+}
+
 function ownerRequest<T>(path: string, token: string, body?: object): Promise<T> {
 	return fetchJson<T>(`${API_BASE}${path}`, {
 		method: body ? "POST" : "GET",

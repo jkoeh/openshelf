@@ -43,6 +43,15 @@ immediately terminates the child; only network failures get a bounded grace
 period. On success it reports the resulting slugs; the Worker
 independently verifies R2 before marking the job complete.
 
+For a `BOOK_TOO_LONG` failure, the local log reports the exact parsed spoken
+word count and configured limit. Review that count, retry the failed job through
+the owner API, and run `books consume-jobs --api-base URL --max-words N --once`
+with an explicit sufficient limit when this is the only queued job. Retry keeps
+the original build ID and still performs all rights and archive checks. Raising
+the CLI limit for one invocation does not change the default consumer budget.
+The independent source EPUB download in the client does not require a running
+consumer or successful audio preflight.
+
 **Modules:** `src/openshelf/pipeline/ops/*`
 **Command:** `openshelf-pipeline ops ...`
 **Installed command:** `openshelf-pipeline`

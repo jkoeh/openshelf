@@ -55,6 +55,52 @@ beforeEach(async () => {
 });
 
 describe("source search and generation API", () => {
+	it("downloads an indexed EPUB independently of failed audio, PC credentials, and quotas", async () => {
+		await sync([source(2554, "Crime and Punishment")]);
+		const made = await (await create(2554)).json<{ id: string }>();
+		await env.JOB_DB.prepare("UPDATE generation_jobs SET state='failed',stage='failed',error_code='BookTooLong' WHERE id=?")
+			.bind(made.id).run();
+		const searched = await (await request("/source-books?q=punishment"))
+			.json<{ books: { job_error_code: string }[] }>();
+		expect(searched.books[0].job_error_code).toBe("BOOK_TOO_LONG");
+		createAllowed = false;
+		const response = await app.request(`${origin}/api/v1/source-books/gutenberg%3A2554/epub`, {}, {
+			R2_BUCKET: env.R2_BUCKET, JOB_DB: env.JOB_DB, SEARCH_RATE_LIMITER: limiter,
+		});
+		expect(response.status).toBe(302);
+		expect(response.headers.get("Location")).toBe(source(2554, "Crime").epub_url);
+		expect(response.headers.get("Cache-Control")).toBe("no-store");
+		const job = await (await request(`/generation-jobs/${made.id}`)).json<{ state: string }>();
+		expect(job.state).toBe("failed");
+		expect(await env.JOB_DB.prepare("SELECT COUNT(*) count FROM generation_starts").first("count")).toBe(1);
+	});
+
+	it("validates and rate limits source EPUB lookups without redirecting invalid editions", async () => {
+		await sync([source(2554, "Crime and Punishment")]);
+		const path = "/source-books/gutenberg%3A2554/epub";
+		expect((await request("/source-books/gutenberg%3A999999/epub")).status).toBe(404);
+		expect((await request("/source-books/not-a-source/epub")).status).toBe(400);
+		for (const epubUrl of [
+			"not-a-url", "https://evil.example/ebooks/2554.epub",
+			"https://www.gutenberg.org/ebooks/11.epub3.images",
+			"https://www.gutenberg.org/ebooks/2554.html",
+			"https://user:password@www.gutenberg.org/ebooks/2554.epub3.images",
+			"https://www.gutenberg.org/ebooks/2554.epub3.images?redirect=evil",
+			"https://www.gutenberg.org/ebooks/2554.epub3.images#fragment",
+			"http://www.gutenberg.org/ebooks/2554.epub3.images",
+		]) {
+			await env.JOB_DB.prepare("UPDATE source_books SET epub_url=? WHERE source_id='gutenberg:2554'").bind(epubUrl).run();
+			const response = await request(path);
+			expect(response.status).toBe(400);
+			expect(response.headers.get("Location")).toBeNull();
+		}
+		await env.JOB_DB.prepare("UPDATE source_books SET epub_url='https://www.gutenberg.org/cache/epub/2554/pg2554-images-3.epub' WHERE source_id='gutenberg:2554'").run();
+		expect((await request(path)).status).toBe(302);
+		searchAllowed = false;
+		expect((await request(path)).status).toBe(429);
+		expect((await app.request(`${origin}/api/v1${path}`, {}, { R2_BUCKET: env.R2_BUCKET })).status).toBe(503);
+	});
+
 	it("shows a private bounded queue and claims high-priority queued work first", async () => {
 		await sync([source(11, "Alice"), source(12, "A Second Book")]);
 		const first = await (await create(11)).json<{ id: string }>();

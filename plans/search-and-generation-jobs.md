@@ -20,6 +20,26 @@ voice, one concurrent job, and the existing root `.venv` with CUDA. Standard
 Ebooks, other engines, and additional workers follow through the same contracts.
 Normal catalog browsing and playback continue to use the existing R2 routes.
 
+### Independent EPUB retrieval and audio failure visibility
+
+Each indexed search result offers **Download EPUB** alongside its audio status.
+This is a separate fast request: the Worker looks up the exact source ID,
+validates its stored HTTPS Gutenberg EPUB URL (host, source ID, credentials,
+port, query, and fragment), and redirects to Gutenberg's original EPUB.
+It works with the PC offline and while any audio job is queued, running, failed,
+or canceled; it neither queues GPU work nor consumes a generation start.
+The original source EPUB is not an annotated audiobook artifact and is not
+added to the audiobook catalog. Existing completed-book downloads continue to
+use the annotated R2 EPUB route. Missing IDs, invalid stored URLs, and public
+request limits return explicit errors, with no redirect on failure.
+
+Search results include the latest job's public error code alongside its state.
+Reopening search must preserve the specific word-budget or rights failure
+message, without needing an active-job poll. Audio preflight retains its
+100,000-word default; a larger owner-reviewed book uses an explicit CLI
+`--max-words` override on its retry. Local consumer logs include the measured
+word count and limit when rejecting an oversized book.
+
 ```mermaid
 flowchart LR
     Client[Expo client] -->|Search, Generate, status, playback| Limit[Worker request limits]

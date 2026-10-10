@@ -10,7 +10,7 @@ async function mockCatalog(page: import("@playwright/test").Page, books: SourceB
   await page.route("**/api/v1/catalog**", async (route) => route.fulfill({ json: {
     version: 2, generated_at: "2026-09-29", books: [], total: 0, page: 1, limit: 20,
   } }));
-  await page.route("**/api/v1/source-books**", async (route) => route.fulfill({ json: { books } }));
+  await page.route("**/api/v1/source-books?*", async (route) => route.fulfill({ json: { books } }));
 }
 
 async function mockGoogleSignIn(page: import("@playwright/test").Page) {
@@ -58,6 +58,31 @@ test("mobile visitor requests an audiobook without a token and opens it when rea
   await expect(page).toHaveURL(/\/book\/lewis-carroll\/alice-g11/);
   expect(createCount).toBe(1);
   expect(statusCount).toBeGreaterThan(0);
+});
+
+test("failed long audio still offers an immediate EPUB download with its specific failure", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockCatalog(page, [{ ...edition, source_id: "gutenberg:2554", title: "Crime and Punishment",
+    state: "failed", job_state: "failed", job_id: "long-book-job", job_error_code: "BOOK_TOO_LONG" }]);
+  const audioRequests: string[] = [];
+  await page.route("**/api/v1/generation-jobs**", async (route) => {
+    audioRequests.push(route.request().url());
+    await route.abort();
+  });
+  await page.route("**/api/v1/source-books/gutenberg%3A2554/epub", async (route) => route.fulfill({
+    contentType: "application/epub+zip", headers: { "Content-Disposition": 'attachment; filename="crime-and-punishment.epub"' },
+    body: "PK\u0003\u0004download-fixture",
+  }));
+  await page.goto("/");
+  await page.getByRole("textbox", { name: "Search books" }).fill("crime");
+  await expect(page.getByText(/Audio generation stopped because this edition exceeds/)).toBeVisible();
+  const link = page.getByRole("link", { name: "Download EPUB" });
+  await expect(link).toHaveAttribute("href", /\/source-books\/gutenberg%3A2554\/epub$/);
+  const downloadPromise = page.waitForEvent("download");
+  await link.click();
+  expect((await downloadPromise).suggestedFilename()).toBe("crime-and-punishment.epub");
+  expect(audioRequests).toEqual([]);
+  await expect(page.getByText("Crime and Punishment", { exact: true })).toBeVisible();
 });
 
 test("desktop shows two edition cards and keeps failed jobs out of public retry", async ({ page }, testInfo) => {

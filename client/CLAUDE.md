@@ -85,6 +85,11 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
 - The catalog page keeps published-book browsing and adds debounced source
   suggestions. A visitor can request the fixed local Kokoro narration without
   entering a token. The source-search UI explains that the index is limited;
+  every indexed edition also offers an independent **Download EPUB** link via
+  `sourceEpubUrl(sourceId)`. This fast download opens the original Gutenberg
+  EPUB even when the PC is offline or audio is queued, running, failed, or
+  canceled; it does not request generation. Source search carries the latest
+  public audio error code so reopening search retains the specific failure.
   a missing match is never presented as proof Gutenberg lacks the book. The
   current owner token remains local for cancellation via the PC script. On web,
   the owner signs in with Google for cancel, retry, and regeneration controls.

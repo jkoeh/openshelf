@@ -3,13 +3,13 @@ import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, Text, useWindowDimensions, View } from "react-native";
 import { discoveryColors } from "../constants/discovery";
 import { useTheme } from "../hooks/useTheme";
-import { ApiError, cancelGenerationJob, createGenerationJob, fetchGenerationJob, fetchSourceBooks, regenerateGenerationJob, requestExpressiveGenerationJob, retryGenerationJob } from "../lib/api";
+import { ApiError, cancelGenerationJob, createGenerationJob, fetchGenerationJob, fetchSourceBooks, regenerateGenerationJob, requestExpressiveGenerationJob, retryGenerationJob, sourceEpubUrl } from "../lib/api";
 import { latestJob } from "../lib/generation-jobs";
 import type { GenerationJob, SourceBook } from "../types";
 
 function failureText(code: GenerationJob["error_code"] | undefined) {
   if (code === "RIGHTS_NOT_VERIFIED") return "Rights could not be verified for this edition. The owner can review it.";
-  if (code === "BOOK_TOO_LONG") return "This edition exceeds the PC's word budget. The owner can review it.";
+  if (code === "BOOK_TOO_LONG") return "Audio generation stopped because this edition exceeds the PC's word budget. The owner can raise the limit and retry. You can still download the EPUB.";
   return "Generation stopped. The owner can review the job.";
 }
 
@@ -141,7 +141,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
       Project Gutenberg editions
     </Text>
     <Text style={{ color: palette.muted, fontSize: 15, lineHeight: 22, marginTop: 5, marginBottom: 18 }}>
-      Search includes indexed editions only.
+      Search includes indexed editions only. Download the EPUB now, or request audio separately.
     </Text>
     {loading && <ActivityIndicator accessibilityLabel="Searching source books" color={palette.primary} style={{ marginVertical: 24 }} />}
     {error ? <Text accessibilityRole="alert" style={{ color: palette.text, marginBottom: 12 }}>{error}</Text> : null}
@@ -178,10 +178,16 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
             <Text selectable style={{ color: palette.muted, fontSize: 12, marginTop: 4 }}>Job ID: {job?.id ?? book.job_id}</Text>
           </View>}
           {failed && <Text style={{ color: palette.muted, lineHeight: 20, marginBottom: 16 }}>
-            {book.state === "available" ? "Latest regeneration stopped. The existing audiobook is still available." : failureText(job?.error_code)}
+            {book.state === "available" ? "Latest regeneration stopped. The existing audiobook is still available." : failureText(job?.error_code ?? book.job_error_code)}
           </Text>}
           {state === "canceled" && <Text style={{ color: palette.muted, marginBottom: 16 }}>Request canceled.</Text>}
           {job?.state === "completed" && <Text style={{ color: palette.text, fontWeight: "600", marginBottom: 16 }}>Generation completed</Text>}
+          <Link href={sourceEpubUrl(book.source_id)} target="_blank" asChild>
+            <Pressable accessibilityRole="link" style={{
+              borderWidth: 1, borderColor: palette.border, borderRadius: 9, minHeight: 48,
+              alignItems: "center", justifyContent: "center", paddingHorizontal: 12, marginBottom: 10,
+            }}><Text style={{ color: palette.primary, fontSize: 16, fontWeight: "600" }}>Download EPUB</Text></Pressable>
+          </Link>
           {ready && authorSlug && titleSlug ? (
             <Link href={`/book/${authorSlug}/${titleSlug}`} asChild>
               <Pressable accessibilityRole="button" style={{

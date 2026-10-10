@@ -2,6 +2,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { ErrorSchema } from "../schemas/error";
 import type { Env } from "../types";
 import { credentialStatus, noStore } from "../utils/job-auth";
+import { JobErrorCode, publicJobError } from "../utils/generation-errors";
 import { adminCredentialStatus } from "../utils/google-admin";
 import { createOpenAPIApp } from "../utils/openapi-app";
 import { r2Key } from "../utils/r2-keys";
@@ -21,7 +22,7 @@ const Job = z
 		stage: z.string(),
 		author_slug: z.string().nullable(),
 		title_slug: z.string().nullable(),
-		error_code: z.enum(["RIGHTS_NOT_VERIFIED", "BOOK_TOO_LONG", "GENERATION_FAILED"]).nullable(),
+		error_code: JobErrorCode.nullable(),
 		created_at: z.string(),
 		updated_at: z.string(),
 	})
@@ -233,13 +234,6 @@ interface ManagedRow extends Row {
 	lease_until: string | null;
 }
 function publicJob(row: Row): z.infer<typeof Job> {
-	const error_code = row.error_code === "RightsNotVerified"
-		? "RIGHTS_NOT_VERIFIED" as const
-		: row.error_code === "BookTooLong"
-			? "BOOK_TOO_LONG" as const
-			: row.error_code
-				? "GENERATION_FAILED" as const
-				: null;
 	return {
 		id: row.id,
 		source_id: row.source_id,
@@ -248,7 +242,7 @@ function publicJob(row: Row): z.infer<typeof Job> {
 		stage: row.stage,
 		author_slug: row.author_slug,
 		title_slug: row.title_slug,
-		error_code,
+		error_code: publicJobError(row.error_code),
 		created_at: row.created_at,
 		updated_at: row.updated_at,
 	};

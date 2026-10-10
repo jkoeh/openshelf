@@ -195,6 +195,7 @@ def check_word_budget(path: Path, max_words: int) -> int:
     if count < 1:
         raise ValueError("EPUB has no spoken words")
     if count > max_words:
+        print(f"Audio word budget rejected: {count} source spoken words; limit {max_words}", flush=True)
         raise BookTooLong(f"Book has {count} words; limit is {max_words}")
     return count
 

@@ -32,7 +32,7 @@ src/
     builds.ts           # GET /api/v1/books/:author/:title/builds — retained build selection metadata
     sections.ts         # GET /api/v1/books/:author/:title/sections/:sequence — text + word timestamps
     audio.ts            # GET /api/v1/books/:author/:title/sections/:sequence/audio — m4a Range stream
-    source-books.ts     # GET /api/v1/source-books and internal source sync
+    source-books.ts     # Source search, independent source EPUB download, internal source sync
     generation-jobs.ts  # Owner job control and PC lease protocol
     admin.ts            # Google owner identity check for browser controls
     cover.ts            # GET /api/v1/books/:author/:title/cover
@@ -119,7 +119,14 @@ request accepts no model, key, prompt, or arbitrary engine setting. The mode is
 stored with the job and returned by status and PC claim so retries preserve it.
 Both modes share the existing daily-start and queue caps. Source suggestions report
 publication availability and the relevant job mode, state, ID, and update time
-separately, so regeneration progress or failure never hides the playable book.
+separately, with a public failure code that survives reopening search, so
+regeneration progress or failure never hides the playable book.
+An independent source EPUB route performs a rate-limited indexed lookup,
+validates the stored HTTPS Gutenberg EPUB URL against the exact source ID,
+and redirects to the original EPUB. It needs no owner/PC credential, GPU job,
+audio word-budget check, or generation-start reservation. It works with the PC
+offline. The completed-book EPUB route continues to serve the annotated R2
+artifact. The OpenAPI route schemas describe both contracts.
 The job lookup prefers an active job (including a retried older job) through
 the partial `one_active_generation` index, then uses `latest_source_job` to
 find the newest created job without sorting job history. Both lookups run only

@@ -56,6 +56,8 @@ under `pipeline/src/openshelf/pipeline/engines/`.
   default 100,000 source spoken-word budget (body plus spoken headings). The
   owner may explicitly raise that budget with `--max-words`. It never opens a
   listener or stores the owner credential.
+  Word-budget rejections log the measured source spoken words and limit so
+  the owner can choose an explicit retry budget.
 - The PC consumer accepts only Worker-issued `standard` and `expressive` job
   modes. Standard runs fixed Kokoro `af_heart` without an OpenAI call. Expressive
   runs fixed Chatterbox `af_heart` with `--performance-direction batched` and
