@@ -335,18 +335,32 @@ describe("source search and generation API", () => {
 		expect((await create(11, "wrong-token")).status).toBe(429);
 	});
 
-	it("deduplicates concurrently and enforces the daily GPU cap", async () => {
-		await sync([source(11, "Alice"), source(12, "Book Two"), source(13, "Book Three")]);
+	it("deduplicates concurrently and allows more than two daily starts", async () => {
+		await sync([source(11, "Alice"), source(12, "Book Two"), source(13, "Book Three"), source(14, "Book Four")]);
 		const pair = await Promise.all([create(11), create(11)]);
 		expect(pair.map((r) => r.status)).toEqual([200, 200]);
 		const ids = await Promise.all(pair.map(async (r) => (await r.json<{ id: string }>()).id));
 		expect(ids[0]).toBe(ids[1]);
 		expect((await create(12)).status).toBe(200);
-		expect((await create(13)).status).toBe(429);
+		expect((await create(13)).status).toBe(200);
+		expect((await create(14)).status).toBe(429); // Three queued jobs remains the queue cap.
 		const count = await env.JOB_DB.prepare("SELECT COUNT(*) n FROM generation_jobs").first<{
 			n: number;
 		}>();
-		expect(count?.n).toBe(2);
+		expect(count?.n).toBe(3);
+	});
+
+	it("atomically admits the 300th daily start and rejects the 301st", async () => {
+		await sync([source(11, "Alice"), source(12, "Book Two")]);
+		const day = new Date().toISOString().slice(0, 10);
+		await env.JOB_DB.batch(Array.from({ length: 299 }, () => env.JOB_DB.prepare(
+			"INSERT INTO generation_starts(id,day,created_at) VALUES(?,?,?)",
+		).bind(crypto.randomUUID(), day, new Date().toISOString())));
+		const results = await Promise.all([create(11), create(12)]);
+		expect(results.map(result => result.status).sort()).toEqual([200, 429]);
+		const used = await env.JOB_DB.prepare("SELECT COUNT(*) n FROM generation_starts WHERE day=?")
+			.bind(day).first<{ n: number }>();
+		expect(used?.n).toBe(300);
 	});
 
 	it("allows capped public requests but keeps regeneration owner-only", async () => {

@@ -9,7 +9,7 @@ import type { GenerationJob, SourceBook } from "../types";
 
 function failureText(code: GenerationJob["error_code"] | undefined) {
   if (code === "RIGHTS_NOT_VERIFIED") return "Rights could not be verified for this edition. The owner can review it.";
-  if (code === "BOOK_TOO_LONG") return "Audio generation stopped because this edition exceeds the PC's word budget. The owner can raise the limit and retry. You can still read now.";
+  if (code === "BOOK_TOO_LONG") return "Audio generation stopped under an earlier word limit. That limit has been removed; the owner can retry. You can still read now.";
   return "Generation stopped. The owner can review the job.";
 }
 
@@ -193,7 +193,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
               borderWidth: 1, borderColor: palette.border, borderRadius: 9 }}>
               <Text style={{ color: palette.text, lineHeight: 21 }}>
                 Expressive audio uses OpenAI emotion direction and Chatterbox on your PC.
-                This spends one of the two daily generation starts.
+                This spends one of the 300 daily generation starts.
               </Text>
               <View style={{ flexDirection: "row", gap: 12, marginTop: 12 }}>
                 <Pressable accessibilityRole="button" disabled={!!busySource}

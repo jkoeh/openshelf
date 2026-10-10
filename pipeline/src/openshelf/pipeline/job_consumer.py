@@ -25,13 +25,8 @@ MAX_EPUB_BYTES = 50 * 1024 * 1024
 MAX_CENTRAL_DIRECTORY_BYTES = 2 * 1024 * 1024
 MAX_EXPANDED_BYTES = 256 * 1024 * 1024
 MAX_EPUB_ENTRIES = 5_000
-DEFAULT_MAX_WORDS = 100_000
 MAX_RIGHTS_BYTES = 128 * 1024
 GUTENBERG_HOSTS = {"www.gutenberg.org", "dev.gutenberg.org", "gutenberg.org"}
-
-
-class BookTooLong(ValueError):
-    """The selected edition exceeds the owner's generation budget."""
 
 
 class RightsNotVerified(ValueError):
@@ -187,16 +182,13 @@ def verify_public_domain(source_id: str) -> None:
     raise RightsNotVerified("could not verify Gutenberg rights")
 
 
-def check_word_budget(path: Path, max_words: int) -> int:
+def check_spoken_text(path: Path) -> int:
     from openshelf.pipeline.epub_parser import parse_epub
 
     count = sum(section.word_count + len(section.heading.spoken_text.split())
                 for section in parse_epub(str(path)))
     if count < 1:
         raise ValueError("EPUB has no spoken words")
-    if count > max_words:
-        print(f"Audio word budget rejected: {count} source spoken words; limit {max_words}", flush=True)
-        raise BookTooLong(f"Book has {count} words; limit is {max_words}")
     return count
 
 
@@ -255,8 +247,7 @@ def sync_gutenberg(api: JobAPI, pages: int) -> int:
     return total
 
 
-def process_job(api: JobAPI, job: dict, *, download_root: Path, audio_root: Path, device: str,
-                max_words: int = DEFAULT_MAX_WORDS) -> None:
+def process_job(api: JobAPI, job: dict, *, download_root: Path, audio_root: Path, device: str) -> None:
     source_id = job["source_id"]
     author_slug = sanitize(job["author"]) or "unknown"
     title_slug = (sanitize(job["title"]) or "untitled") + "-g" + source_id.split(":")[1]
@@ -269,8 +260,8 @@ def process_job(api: JobAPI, job: dict, *, download_root: Path, audio_root: Path
             fetch_epub(job["epub_url"], source_id, epub)
         validate_local_epub(epub)
         check_epub_rights(epub)
-        check_word_budget(epub, max_words)
         mode = job.get("mode", "standard")
+        check_spoken_text(epub)
         if mode == "standard":
             engine, voice, rendition = "kokoro", "af_heart", "kokoro-af-heart"
         elif mode == "expressive":
@@ -336,13 +327,9 @@ def main(argv=None) -> int:
     parser.add_argument("--sync-pages", type=int, default=0, help="Gutenberg pages to index before polling")
     parser.add_argument("--once", action="store_true", help="Claim at most one job")
     parser.add_argument("--device", choices=["auto", "cuda", "mps", "cpu"], default="auto")
-    parser.add_argument("--max-words", type=int, default=DEFAULT_MAX_WORDS,
-                        help="Maximum source spoken words per queued book (default: 100000)")
     args = parser.parse_args(argv)
     if args.sync_pages < 0 or args.sync_pages > 10:
         parser.error("--sync-pages must be 0..10")
-    if args.max_words < 1:
-        parser.error("--max-words must be positive")
     api = JobAPI(args.api_base, os.environ.get("OPENSHELF_PC_TOKEN", ""))
     if args.sync_pages:
         print(f"Indexed {sync_gutenberg(api, args.sync_pages)} Gutenberg editions")
@@ -352,8 +339,7 @@ def main(argv=None) -> int:
             if job:
                 print(f"Processing {job['source_id']} ({job['id']})")
                 process_job(api, job, download_root=PROJECT_ROOT / "download" / "books",
-                            audio_root=PROJECT_ROOT / "audio", device=args.device,
-                            max_words=args.max_words)
+                            audio_root=PROJECT_ROOT / "audio", device=args.device)
             elif args.once:
                 return 0
             else:

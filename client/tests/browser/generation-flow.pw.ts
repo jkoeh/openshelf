@@ -83,7 +83,7 @@ test("failed audio still opens readable text without submitting another job", as
   }));
   await page.goto("/");
   await page.getByRole("textbox", { name: "Search books" }).fill("crime");
-  await expect(page.getByText(/Audio generation stopped because this edition exceeds/)).toBeVisible();
+  await expect(page.getByText(/Audio generation stopped under an earlier word limit/)).toBeVisible();
   await page.getByRole("button", { name: "Read now" }).click();
   await expect(page).toHaveURL(/\/source\//);
   await expect(page.getByText("Tea and biscuits.")).toBeVisible();

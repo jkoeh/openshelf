@@ -13,7 +13,7 @@ export function audioCreation(job: GenerationJob | null) {
 			verb: "Taking a breather",
 			detail:
 				job.error_code === "BOOK_TOO_LONG"
-					? "Audio paused: this edition exceeds the word budget. Keep reading while the owner reviews it."
+					? "Audio stopped under an earlier word limit. That limit has been removed; the owner can retry. Keep reading in the meantime."
 					: "Audio creation stopped. You can keep reading.",
 		};
 	if (job?.state === "canceled")

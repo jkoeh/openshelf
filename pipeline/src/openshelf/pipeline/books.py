@@ -594,7 +594,6 @@ def _build_parser() -> argparse.ArgumentParser:
     consume.add_argument("--sync-pages", type=int, default=0)
     consume.add_argument("--once", action="store_true")
     consume.add_argument("--device", choices=["auto", "cuda", "mps", "cpu"], default="auto")
-    consume.add_argument("--max-words", type=int, default=100_000)
 
     catalog = subparsers.add_parser("sync-catalog", help="Index official Gutenberg CSV metadata")
     catalog.add_argument("--catalog", required=True)
@@ -619,8 +618,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return reprocess_book(args, parser)
         if args.command == "consume-jobs":
             from openshelf.pipeline import job_consumer
-            passed = ["--api-base", args.api_base, "--sync-pages", str(args.sync_pages), "--device", args.device,
-                      "--max-words", str(args.max_words)]
+            passed = ["--api-base", args.api_base, "--sync-pages", str(args.sync_pages), "--device", args.device]
             if args.once:
                 passed.append("--once")
             return job_consumer.main(passed)

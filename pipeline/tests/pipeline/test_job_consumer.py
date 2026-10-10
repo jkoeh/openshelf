@@ -109,7 +109,7 @@ class ConsumerTests(unittest.TestCase):
                     consumer.validate_local_epub(target)
                 parser.assert_not_called()
 
-    def test_word_budget_rejects_long_book_before_pipeline(self):
+    def test_empty_spoken_text_is_rejected_before_pipeline(self):
         job = {"id": "job-1", "source_id": "gutenberg:11", "title": "Alice", "author": "Lewis Carroll",
                "epub_url": "https://www.gutenberg.org/ebooks/11.epub", "build_id": "1234567890abcdef", "lease_token": "lease"}
         with tempfile.TemporaryDirectory() as folder:
@@ -119,25 +119,29 @@ class ConsumerTests(unittest.TestCase):
             with zipfile.ZipFile(epub, "w") as archive:
                 archive.writestr("META-INF/container.xml", "<container/>")
             api = FakeAPI()
-            with patch.object(consumer, "check_word_budget", side_effect=consumer.BookTooLong("over budget")), \
+            with patch.object(consumer, "check_spoken_text", side_effect=ValueError("EPUB has no spoken words")), \
                     patch.object(consumer.subprocess, "Popen") as popen:
-                with self.assertRaises(consumer.BookTooLong):
+                with self.assertRaisesRegex(ValueError, "no spoken words"):
                     consumer.process_job(api, job, download_root=root / "download", audio_root=root / "audio",
                                          device="cuda")
             popen.assert_not_called()
             self.rights.assert_called_once_with("gutenberg:11")
             self.epub_rights.assert_called_once_with(epub)
-            self.assertEqual(api.posts[-1][1]["error_code"], "BookTooLong")
+            self.assertEqual(api.posts[-1][1]["error_code"], "ValueError")
 
-    def test_word_budget_counts_parsed_spoken_words(self):
+    def test_spoken_text_accepts_large_books_and_counts_headings(self):
         parser = ModuleType("openshelf.pipeline.epub_parser")
         parser.parse_epub = lambda _path: [SimpleNamespace(
-            word_count=99_999, heading=SimpleNamespace(spoken_text="Chapter One"))]
+            word_count=999_999, heading=SimpleNamespace(spoken_text="Chapter One"))]
         with patch.dict(sys.modules, {"openshelf.pipeline.epub_parser": parser}):
-            with patch("sys.stdout", new_callable=io.StringIO) as log, self.assertRaises(consumer.BookTooLong):
-                consumer.check_word_budget(Path("unused.epub"), 100_000)
-            self.assertIn("100001 source spoken words; limit 100000", log.getvalue())
-            self.assertEqual(consumer.check_word_budget(Path("unused.epub"), 210_000), 100_001)
+            self.assertEqual(consumer.check_spoken_text(Path("unused.epub")), 1_000_001)
+
+    def test_unlimited_word_budget_still_rejects_empty_text(self):
+        parser = ModuleType("openshelf.pipeline.epub_parser")
+        parser.parse_epub = lambda _path: []
+        with patch.dict(sys.modules, {"openshelf.pipeline.epub_parser": parser}):
+            with self.assertRaisesRegex(ValueError, "no spoken words"):
+                consumer.check_spoken_text(Path("unused.epub"))
 
     def test_exact_book_command_keeps_build_and_resumes_only_existing_run(self):
         job = {"id": "job-1", "source_id": "gutenberg:11", "title": "Alice", "author": "Lewis Carroll",
@@ -151,8 +155,9 @@ class ConsumerTests(unittest.TestCase):
             api = FakeAPI()
             child = FakeChild()
             with patch.object(consumer.subprocess, "Popen", return_value=child) as popen, \
-                    patch.object(consumer, "check_word_budget", return_value=1000), patch.object(consumer.time, "sleep"):
+                    patch.object(consumer, "check_spoken_text", return_value=150_000) as budget, patch.object(consumer.time, "sleep"):
                 consumer.process_job(api, job, download_root=root / "download", audio_root=root / "audio", device="cuda")
+            budget.assert_called_once_with(epub)
             command = popen.call_args.args[0]
             self.assertIn("--epub", command)
             self.assertIn(str(epub), command)
@@ -163,7 +168,7 @@ class ConsumerTests(unittest.TestCase):
             run.parent.mkdir(parents=True)
             run.write_text("{}")
             with patch.object(consumer.subprocess, "Popen", return_value=FakeChild()) as popen, \
-                    patch.object(consumer, "check_word_budget", return_value=1000), patch.object(consumer.time, "sleep"):
+                    patch.object(consumer, "check_spoken_text", return_value=1000), patch.object(consumer.time, "sleep"):
                 consumer.process_job(api, job, download_root=root / "download", audio_root=root / "audio", device="cuda")
             self.assertIn("--resume", popen.call_args.args[0])
 
@@ -180,7 +185,7 @@ class ConsumerTests(unittest.TestCase):
             api = FakeAPI()
             with patch.object(consumer, "OPENAI_API_KEY", "test-local-key"), \
                     patch.object(consumer.subprocess, "Popen", return_value=FakeChild()) as popen, \
-                    patch.object(consumer, "check_word_budget", return_value=1000), \
+                    patch.object(consumer, "check_spoken_text", return_value=1_000_001) as budget, \
                     patch.object(consumer.time, "sleep"):
                 consumer.process_job(api, job, download_root=root / "download", audio_root=root / "audio",
                                      device="cuda")
@@ -191,9 +196,10 @@ class ConsumerTests(unittest.TestCase):
             self.assertEqual(command[command.index("--performance-direction") + 1], "batched")
             self.assertEqual(popen.call_args.kwargs["env"]["LLM_PROVIDER"], "openai")
             self.assertNotIn("test-local-key", str(api.posts))
+            budget.assert_called_once_with(epub)
 
             with patch.object(consumer, "OPENAI_API_KEY", ""), \
-                    patch.object(consumer, "check_word_budget", return_value=1000), \
+                    patch.object(consumer, "check_spoken_text", return_value=1000), \
                     patch.object(consumer.subprocess, "Popen") as rejected:
                 with self.assertRaisesRegex(ValueError, "OpenAI direction is not configured"):
                     consumer.process_job(api, job, download_root=root / "download", audio_root=root / "audio",
@@ -237,7 +243,7 @@ class ConsumerTests(unittest.TestCase):
                 archive.writestr("META-INF/container.xml", "<container/>")
             child = RunningChild()
             with patch.object(consumer.subprocess, "Popen", return_value=child), \
-                    patch.object(consumer, "check_word_budget", return_value=1000), \
+                    patch.object(consumer, "check_spoken_text", return_value=1000), \
                     patch.object(consumer.time, "sleep"), \
                     patch.object(consumer.time, "monotonic", side_effect=[0, 0, 31, 31, 31]):
                 with self.assertRaisesRegex(RuntimeError, "lease rejected"):
@@ -251,7 +257,7 @@ class ConsumerTests(unittest.TestCase):
             self.assertEqual(books.main(["consume-jobs", "--api-base", "https://example.com/api/v1",
                                          "--once", "--device", "cuda"]), 7)
         run.assert_called_once_with(["--api-base", "https://example.com/api/v1", "--sync-pages", "0",
-                                     "--device", "cuda", "--max-words", "100000", "--once"])
+                                     "--device", "cuda", "--once"])
 
     def test_legacy_sync_page_limit_prevents_large_d1_import(self):
         with patch("sys.stderr", new_callable=io.StringIO) as errors:

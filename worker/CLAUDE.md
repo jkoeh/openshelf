@@ -142,6 +142,9 @@ closed; the existing owner token remains valid for local CLI administration.
 The public `GOOGLE_CLIENT_ID` is declared as a plain-text variable in
 `wrangler.toml` for each development/deployment environment and matches the
 client's build-time `EXPO_PUBLIC_GOOGLE_CLIENT_ID`. It is not a client secret.
+For a configuration-only update of a live Worker, the single-secret API can
+add this same public ID as an encrypted binding without rewriting the resource
+binding list or publishing local code. Source deployments use the declared `vars`.
 `GET /api/v1/admin/me` verifies Google identity before the browser exposes
 controls; local owner tokens do not authenticate this browser identity route.
 The OpenAI key stays on the PC and never enters a Worker binding. A separate PC
@@ -156,7 +159,7 @@ identical origin, normalized query, and limit triples. Only successful public su
 responses enter the cache. Isolates do not share memory, so cold instances
 still query D1; clients receive `no-store`, and job state can lag by at most
 15 seconds. D1 enforces active-job
-deduplication, three pending jobs, two successful start reservations per UTC
+deduplication, three pending jobs, 300 successful start reservations per UTC
 day and three attempts per job. Canceling a queued/running job moves it to a
 terminal `canceled` state and revokes its lease without refunding the start;
 the PC stops at its next rejected heartbeat.

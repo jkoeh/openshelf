@@ -52,19 +52,19 @@ under `pipeline/src/openshelf/pipeline/engines/`.
   an exact Gutenberg EPUB after host and EPUB validation, renews its lease, and
   invokes the existing exact-EPUB DAG runner with a fixed build ID. Before any
   LLM or synthesis work, it rejects archives above 2 MiB central-directory
-  metadata, 256 MiB expanded size, or 5,000 entries, and books above the
-  default 100,000 source spoken-word budget (body plus spoken headings). The
-  owner may explicitly raise that budget with `--max-words`. It never opens a
+  metadata, 256 MiB expanded size, or 5,000 entries. Standard and expressive
+  jobs have no word-count ceiling or `--max-words` option. Parsed spoken text
+  (body plus spoken headings) must still be nonempty.
+  Empty books are still rejected. It never opens a
   listener or stores the owner credential.
-  Word-budget rejections log the measured source spoken words and limit so
-  the owner can choose an explicit retry budget.
+  Historical word-budget failures can be retried with the updated consumer.
 - The PC consumer accepts only Worker-issued `standard` and `expressive` job
   modes. Standard runs fixed Kokoro `af_heart` without an OpenAI call. Expressive
   runs fixed Chatterbox `af_heart` with `--performance-direction batched` and
   `LLM_PROVIDER=openai` for that child process only. It advertises expressive
   claim capability only when a local `OPENAI_API_KEY` is configured. The key is
   never sent to the Worker, logged, or stored in a job. Both modes use the same
-  Gutenberg rights, EPUB, word-budget, lease, and publication checks.
+  Gutenberg rights, EPUB, spoken-text validation, lease, and publication checks.
 - `pipeline/scripts/job-monitor.pyw` is a local Tkinter window. It reads the
   ignored production owner token for owner-only queue/priority/cancel calls and
   can start the existing outbound consumer with the separate local PC token.

@@ -26,10 +26,11 @@ for a broader rights-checked import.
 One job runs at a time. A claimed job names an exact Gutenberg ID and EPUB URL;
 the consumer validates its host and EPUB archive, rejects ZIP files above
 2 MiB central-directory metadata, 256 MiB expanded size, or 5,000 entries,
-parses the EPUB locally and rejects more than 100,000 source spoken words
-(body plus spoken headings) by default before any LLM or TTS call. Generated
-opening and closing credits are outside this source-word budget. `--max-words N`
-explicitly changes that per-job limit. A rejected book is reported as failed without
+parses the EPUB locally and rejects empty spoken text before any LLM or TTS call.
+Standard and expressive jobs have no word-count ceiling. The `--max-words`
+option is removed. Parsed spoken words include body text and spoken headings;
+generated opening and closing credits are outside this nonempty-text check.
+A rejected book is reported as failed without
 starting the expensive pipeline. Standard jobs call `books process --epub ...
 --engine kokoro --voice af_heart --rendition kokoro-af-heart --build-id ...
 --upload` without a model call. Expressive jobs call the same exact-EPUB path
@@ -43,14 +44,10 @@ immediately terminates the child; only network failures get a bounded grace
 period. On success it reports the resulting slugs; the Worker
 independently verifies R2 before marking the job complete.
 
-For a `BOOK_TOO_LONG` failure, the local log reports the exact parsed spoken
-word count and configured limit. Review that count, retry the failed job through
-the owner API, and run `books consume-jobs --api-base URL --max-words N --once`
-with an explicit sufficient limit when this is the only queued job. Retry keeps
-the original build ID and still performs all rights and archive checks. Raising
-the CLI limit for one invocation does not change the default consumer budget.
-The independent source EPUB download in the client does not require a running
-consumer or successful audio preflight.
+Earlier jobs that failed with `BOOK_TOO_LONG` can be retried through the owner
+API with the updated consumer. Retry keeps the original build ID and still
+performs all rights, archive, and nonempty-text checks.
+The Read now source reader does not require a running consumer or successful audio preflight.
 
 **Modules:** `src/openshelf/pipeline/ops/*`
 **Command:** `openshelf-pipeline ops ...`

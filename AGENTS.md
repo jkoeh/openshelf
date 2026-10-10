@@ -153,8 +153,8 @@ Notes:
   section's audio source has loaded.
 - The owner PC consumer checks Gutenberg EPUB ZIP metadata, expanded size,
   entry count, and parsed source spoken words before starting LLM or synthesis.
-  The default source-word budget is 100,000 words, including spoken headings;
-  `--max-words` is an explicit owner override for larger books.
+  Standard and expressive jobs have no word-count limit or `--max-words` option.
+  Parsed spoken text must still be nonempty, including spoken headings.
 - Source search offers one **Read now** action. It opens a source EPUB reader immediately, fetches the validated EPUB with `inline=1`, and independently creates or follows an audio job. Failed/canceled audio and queue/start limits never block text. The reader follows the OPF spine and renders plain text. An animated owl shows stage milestones (0% queued, 25% preparation, 50% synthesis/alignment/encoding/upload, 100% complete), honors reduced motion, and becomes Start Listening when published. The default EPUB endpoint still redirects for direct downloads; inline mode streams through the API without credentials; upstream redirects are bounded and revalidated against the exact source ID. The annotated R2 EPUB endpoint remains available; the UI uses Read now instead of download buttons.
 - Generation requests for the fixed local Kokoro voice may be public, subject to
   the atomic daily-start and queue caps. An expressive request is owner-only and
@@ -170,7 +170,7 @@ Notes:
   in search results. Its backdrop and close button keep mobile discovery readable.
   Both the deployed client build and Worker need the same public OAuth client ID.
   Only the owner can cancel, retry, regenerate, or request the expressive mode. The
-  two-start daily cap and three-job queue cap cover both modes.
+  300-start daily cap and three-job queue cap cover both modes.
   Cancellation is a terminal job state: queued
   work cannot be claimed, and a running consumer loses its lease on the next
   heartbeat and stops its child process. A canceled start is not refunded.

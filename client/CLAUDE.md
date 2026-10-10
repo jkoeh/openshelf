@@ -120,7 +120,8 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
   owner may request expressive narration as a separate, fixed Chatterbox
   `af_heart` job with batched OpenAI emotion direction on the PC. This action
   is visible only after owner sign-in and clearly identifies the paid OpenAI
-  step; it sends no API key, arbitrary prompt, model, engine, or voice. Public
+  step and that each accepted start uses one of 300 daily starts;
+  it sends no API key, arbitrary prompt, model, engine, or voice. Public
   requests continue to use fixed Kokoro. Job status identifies the selected
   mode so progress remains understandable on mobile, tablet, and desktop. A
   newly completed polled job counts as published when the owner starts an
@@ -128,9 +129,9 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
   A published edition stays playable while its latest regeneration job is
   queued, running, or failed; latest job state drives progress and admin controls
   independently of publication availability.
-  If the PC rejects an edition above its spoken-word budget, the generation
-  status explains that the owner must deliberately raise `--max-words` before
-  an admin retry. If official Gutenberg rights cannot be verified as public
+  Neither mode has a word-count limit. Historical `BOOK_TOO_LONG` failures
+  explain that the earlier limit was removed and the owner can retry the job.
+  If official Gutenberg rights cannot be verified as public
   domain in the USA, the status explains the failure without offering public
   retry.
   The PC rechecks rights before synthesis on every attempt, so retry cannot

@@ -162,6 +162,10 @@ remote-R2 development. Pages production and preview builds use the same ID
 through `EXPO_PUBLIC_GOOGLE_CLIENT_ID`; local web development can use ignored
 `client/.env`. Google authorized JavaScript origins must include each site
 origin used for login. Owner access still requires verified `johnkoeh@gmail.com`.
+The existing live Workers can receive `GOOGLE_CLIENT_ID` through the scoped
+single-secret update API, which preserves their code and other bindings. This
+stores the public ID as an encrypted binding; it remains a public client ID,
+not a Google client secret. Source deployments declare the same ID in `vars`.
 If either ID is absent, browser admin actions stay unavailable.
 For the Git-integrated Pages build, add `EXPO_PUBLIC_GOOGLE_CLIENT_ID` to the
 Pages project's production and preview build environment variables, then
@@ -193,12 +197,10 @@ on the PC, the
 `https://openshelf-api.johnkoeh.workers.dev/api/v1` API base, and
 `R2_BUCKET=openshelf`. Keep these environment credentials separate.
 
-Audio preflight defaults to 100,000 source spoken words. A `BOOK_TOO_LONG`
-failure reports the count and limit in the consumer log and remains visible
-when reopening source search. After reviewing a longer book, retry as owner
-and use `books consume-jobs --api-base URL --max-words N --once` when it is the
-only queued job. This deliberate per-invocation override retains the default
-budget and all rights checks.
+Standard and expressive jobs have no word-count limit. The `--max-words`
+option is removed. Older `BOOK_TOO_LONG` failures can be retried as owner using
+the updated consumer without a word-count override.
+Rights, archive, and empty-text checks still apply.
 
 ### Windows job monitor
 
@@ -244,7 +246,7 @@ The 1,000-candidate per-run ceiling
 and 500-record default keep each import small. Repeat with `--after-id <last imported Gutenberg ID>`
 to cover later ranges only after checking D1's daily row-write usage and the
 account plan; the cap applies per run, not per day.
-Use `--once` to claim at most one job. The Worker caps generation at two starts
+Use `--once` to claim at most one job. The Worker caps generation at 300 starts
 per UTC day, three queued jobs, and three attempts per job; public job creation
 is limited to five attempts per minute per client IP and search to 60 per
 minute per client IP. Cancellation revokes a running lease and stops the PC
@@ -263,9 +265,9 @@ from the request status and run:
 The script reads the ignored production owner key locally; it never asks for
 that key in the public site. Add `-Environment staging` for a staging job.
 The PC consumer rejects EPUB archives above 2 MiB ZIP metadata, 256 MiB
-expanded size, or 5,000 entries, and books over 100,000 source spoken words
-(body plus spoken headings) before starting any LLM or synthesis work.
-Use `--max-words N` to deliberately raise or lower that per-job ceiling.
+expanded size, or 5,000 entries before starting any LLM or synthesis work.
+It also rejects empty spoken text. Neither standard nor expressive jobs have
+a word-count limit. Both include body text and spoken headings in the nonempty check.
 
 Offline API, PC, and headless browser checks run in `.github/workflows/verify.yml`.
 The staging acceptance run covered index sync, autocomplete, protected creation,

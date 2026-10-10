@@ -296,7 +296,7 @@ const reservation = (
 ) =>
 	db
 		.prepare(`INSERT INTO generation_starts(id,day,created_at)
-	SELECT ?,?,? WHERE (SELECT COUNT(*) FROM generation_starts WHERE day=?) < 2 AND ${condition}`)
+	SELECT ?,?,? WHERE (SELECT COUNT(*) FROM generation_starts WHERE day=?) < 300 AND ${condition}`)
 		.bind(id, timestamp.slice(0, 10), timestamp, timestamp.slice(0, 10), ...values);
 
 async function verifyPublished(
