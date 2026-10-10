@@ -1,4 +1,4 @@
-import { env } from "cloudflare:test";
+import { env, fetchMock } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import app from "../../src/index";
 import type { Env } from "../../src/types";
@@ -55,6 +55,23 @@ beforeEach(async () => {
 });
 
 describe("source search and generation API", () => {
+	it("streams source EPUB for immediate reading and validates upstream redirects", async () => {
+		await sync([source(11, "Alice")]);
+		fetchMock.activate();
+		fetchMock.disableNetConnect();
+		try {
+			const upstream = fetchMock.get("https://www.gutenberg.org");
+			upstream.intercept({ path: "/ebooks/11.epub3.images" }).reply(302, "", { headers: { Location: "/cache/epub/11/pg11-images-3.epub" } });
+			upstream.intercept({ path: "/cache/epub/11/pg11-images-3.epub" }).reply(200, "epub-bytes");
+			const response = await request("/source-books/gutenberg%3A11/epub?inline=1");
+			expect(response.status).toBe(200);
+			expect(response.headers.get("Content-Type")).toBe("application/epub+zip");
+			expect(await response.text()).toBe("epub-bytes");
+			upstream.intercept({ path: "/ebooks/11.epub3.images" }).reply(302, "", { headers: { Location: "https://evil.example/book.epub" } });
+			expect((await request("/source-books/gutenberg%3A11/epub?inline=1")).status).toBe(502);
+			fetchMock.assertNoPendingInterceptors();
+		} finally { fetchMock.deactivate(); }
+	});
 	it("downloads an indexed EPUB independently of failed audio, PC credentials, and quotas", async () => {
 		await sync([source(2554, "Crime and Punishment")]);
 		const made = await (await create(2554)).json<{ id: string }>();

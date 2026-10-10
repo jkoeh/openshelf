@@ -1,15 +1,15 @@
-import { Link } from "expo-router";
+import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, Text, useWindowDimensions, View } from "react-native";
 import { discoveryColors } from "../constants/discovery";
 import { useTheme } from "../hooks/useTheme";
-import { ApiError, cancelGenerationJob, createGenerationJob, fetchGenerationJob, fetchSourceBooks, regenerateGenerationJob, requestExpressiveGenerationJob, retryGenerationJob, sourceEpubUrl } from "../lib/api";
+import { ApiError, cancelGenerationJob, fetchGenerationJob, fetchSourceBooks, regenerateGenerationJob, requestExpressiveGenerationJob, retryGenerationJob } from "../lib/api";
 import { latestJob } from "../lib/generation-jobs";
 import type { GenerationJob, SourceBook } from "../types";
 
 function failureText(code: GenerationJob["error_code"] | undefined) {
   if (code === "RIGHTS_NOT_VERIFIED") return "Rights could not be verified for this edition. The owner can review it.";
-  if (code === "BOOK_TOO_LONG") return "Audio generation stopped because this edition exceeds the PC's word budget. The owner can raise the limit and retry. You can still download the EPUB.";
+  if (code === "BOOK_TOO_LONG") return "Audio generation stopped because this edition exceeds the PC's word budget. The owner can raise the limit and retry. You can still read now.";
   return "Generation stopped. The owner can review the job.";
 }
 
@@ -18,6 +18,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
   adminToken: string | null;
   onAdminExpired: () => void;
 }) {
+  const router = useRouter();
   const { theme, colors } = useTheme();
   const palette = discoveryColors(theme, colors);
   const { width } = useWindowDimensions();
@@ -76,24 +77,6 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
     return () => { alive = false; clearInterval(interval); };
   }, [activeIds]);
 
-  const act = async (book: SourceBook) => {
-    setBusySource(book.source_id);
-    setError("");
-    try {
-      const current = latestJob(book, jobs[book.source_id]);
-      const state = current?.state ?? book.job_state ?? book.state;
-      const id = current?.id ?? book.job_id;
-      const next = id && (state === "queued" || state === "running")
-        ? await fetchGenerationJob(id)
-        : await createGenerationJob(book.source_id);
-      setJobs((previous) => ({ ...previous, [book.source_id]: next }));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not request this audiobook.");
-    } finally {
-      setBusySource(null);
-    }
-  };
-
   const adminAct = async (book: SourceBook, action: "cancel" | "retry" | "regenerate") => {
     if (!adminToken) return;
     const id = latestJob(book, jobs[book.source_id])?.id ?? book.job_id;
@@ -141,7 +124,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
       Project Gutenberg editions
     </Text>
     <Text style={{ color: palette.muted, fontSize: 15, lineHeight: 22, marginTop: 5, marginBottom: 18 }}>
-      Search includes indexed editions only. Download the EPUB now, or request audio separately.
+      Read immediately. We will prepare the audio while you turn the pages. Search includes indexed editions only.
     </Text>
     {loading && <ActivityIndicator accessibilityLabel="Searching source books" color={palette.primary} style={{ marginVertical: 24 }} />}
     {error ? <Text accessibilityRole="alert" style={{ color: palette.text, marginBottom: 12 }}>{error}</Text> : null}
@@ -182,27 +165,19 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
           </Text>}
           {state === "canceled" && <Text style={{ color: palette.muted, marginBottom: 16 }}>Request canceled.</Text>}
           {job?.state === "completed" && <Text style={{ color: palette.text, fontWeight: "600", marginBottom: 16 }}>Generation completed</Text>}
-          <Link href={sourceEpubUrl(book.source_id)} target="_blank" asChild>
-            <Pressable accessibilityRole="link" style={{
-              borderWidth: 1, borderColor: palette.border, borderRadius: 9, minHeight: 48,
-              alignItems: "center", justifyContent: "center", paddingHorizontal: 12, marginBottom: 10,
-            }}><Text style={{ color: palette.primary, fontSize: 16, fontWeight: "600" }}>Download EPUB</Text></Pressable>
-          </Link>
-          {ready && authorSlug && titleSlug ? (
-            <Link href={`/book/${authorSlug}/${titleSlug}`} asChild>
-              <Pressable accessibilityRole="button" style={{
-                backgroundColor: palette.primary, borderRadius: 9, minHeight: 48,
-                alignItems: "center", justifyContent: "center", paddingHorizontal: 12,
-              }}><Text style={{ color: palette.primaryText, fontSize: 16, fontWeight: "600" }}>Open audiobook</Text></Pressable>
-            </Link>
-          ) : !failed && !ready ? (
-            <Pressable accessibilityRole="button" disabled={!!busySource} onPress={() => act(book)} style={{
-              backgroundColor: palette.primary, opacity: busySource ? 0.65 : 1,
-              borderRadius: 9, minHeight: 48, alignItems: "center", justifyContent: "center", paddingHorizontal: 12,
-            }}><Text style={{ color: palette.primaryText, fontSize: 16, fontWeight: "600" }}>
-              {busySource === book.source_id ? "Requesting…" : active ? "Refresh status" : "Request audiobook"}
-            </Text></Pressable>
-          ) : null}
+          <Pressable accessibilityRole="button" onPress={() => {
+            if (ready && authorSlug && titleSlug) {
+              router.push(`/read/${authorSlug}/${titleSlug}`);
+            } else {
+              router.push({ pathname: "/source/[id]", params: {
+                id: book.source_id, title: book.title, author: book.author,
+                job: job?.id ?? book.job_id ?? "", state,
+              } });
+            }
+          }} style={{ backgroundColor: palette.primary, borderRadius: 9, minHeight: 48,
+            alignItems: "center", justifyContent: "center", paddingHorizontal: 12 }}>
+            <Text style={{ color: palette.primaryText, fontSize: 16, fontWeight: "600" }}>Read now</Text>
+          </Pressable>
           {adminToken && ((active && (job?.id ?? book.job_id)) || (failed && (job?.id ?? book.job_id)) || ready) && (
             <Pressable accessibilityRole="button" disabled={!!busySource}
               onPress={() => adminAct(book, active ? "cancel" : failed ? "retry" : "regenerate")}

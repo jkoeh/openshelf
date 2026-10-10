@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { zipSync, strToU8 } from "fflate";
 import type { SourceBook } from "../../types";
 
 const edition: SourceBook = {
@@ -10,6 +11,12 @@ async function mockCatalog(page: import("@playwright/test").Page, books: SourceB
   await page.route("**/api/v1/catalog**", async (route) => route.fulfill({ json: {
     version: 2, generated_at: "2026-09-29", books: [], total: 0, page: 1, limit: 20,
   } }));
+  const epub = zipSync(Object.fromEntries(Object.entries({
+    "META-INF/container.xml": '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+    "book.opf": '<package><manifest><item id="one" href="one.xhtml"/></manifest><spine><itemref idref="one"/></spine></package>',
+    "one.xhtml": '<html><body><h1>A reading adventure</h1><p>Tea and biscuits.</p></body></html>',
+  }).map(([path, text]) => [path, strToU8(text)])));
+  await page.route("**/api/v1/source-books/*/epub?inline=1", route => route.fulfill({ contentType: "application/epub+zip", body: Buffer.from(epub) }));
   await page.route("**/api/v1/source-books?*", async (route) => route.fulfill({ json: { books } }));
 }
 
@@ -51,22 +58,23 @@ test("mobile visitor requests an audiobook without a token and opens it when rea
   await expect(page.getByText(edition.title)).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("catalog-mobile.png"), fullPage: true });
   await expect(page.getByText("No books found")).toHaveCount(0);
-  await page.getByRole("button", { name: "Request audiobook" }).click();
-  await expect(page.getByLabel("Owner token")).toHaveCount(0);
-  await expect(page.getByText("Generation completed")).toBeVisible({ timeout: 10_000 });
-  await page.getByRole("link", { name: "Open audiobook" }).click();
-  await expect(page).toHaveURL(/\/book\/lewis-carroll\/alice-g11/);
+  await page.getByRole("button", { name: "Read now" }).click();
+  await expect(page.getByText("Tea and biscuits.")).toBeVisible();
+  await expect(page.getByText("Nestling · 0%")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start Listening" })).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("button", { name: "Start Listening" }).click();
+  await expect(page).toHaveURL(/\/read\/lewis-carroll\/alice-g11/);
   expect(createCount).toBe(1);
   expect(statusCount).toBeGreaterThan(0);
 });
 
-test("failed long audio still offers an immediate EPUB download with its specific failure", async ({ page }) => {
+test("failed audio still opens readable text without submitting another job", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockCatalog(page, [{ ...edition, source_id: "gutenberg:2554", title: "Crime and Punishment",
     state: "failed", job_state: "failed", job_id: "long-book-job", job_error_code: "BOOK_TOO_LONG" }]);
   const audioRequests: string[] = [];
   await page.route("**/api/v1/generation-jobs**", async (route) => {
-    audioRequests.push(route.request().url());
+    if (route.request().method() === "POST") audioRequests.push(route.request().url());
     await route.abort();
   });
   await page.route("**/api/v1/source-books/gutenberg%3A2554/epub", async (route) => route.fulfill({
@@ -76,14 +84,45 @@ test("failed long audio still offers an immediate EPUB download with its specifi
   await page.goto("/");
   await page.getByRole("textbox", { name: "Search books" }).fill("crime");
   await expect(page.getByText(/Audio generation stopped because this edition exceeds/)).toBeVisible();
-  const link = page.getByRole("link", { name: "Download EPUB" });
-  await expect(link).toHaveAttribute("href", /\/source-books\/gutenberg%3A2554\/epub$/);
-  const downloadPromise = page.waitForEvent("download");
-  await link.click();
-  expect((await downloadPromise).suggestedFilename()).toBe("crime-and-punishment.epub");
+  await page.getByRole("button", { name: "Read now" }).click();
+  await expect(page).toHaveURL(/\/source\//);
+  await expect(page.getByText("Tea and biscuits.")).toBeVisible();
   expect(audioRequests).toEqual([]);
-  await expect(page.getByText("Crime and Punishment", { exact: true })).toBeVisible();
+
 });
+
+test("read now keeps text available when the audio queue is full", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockCatalog(page);
+  await page.route("**/api/v1/generation-jobs", route => route.fulfill({ status: 429, json: {
+    error: { code: "QUEUE_FULL", message: "The audio queue is full. Try again later." },
+  } }));
+  await page.goto("/");
+  await page.getByRole("textbox", { name: "Search books" }).fill("alice");
+  await expect(page.getByRole("button", { name: "Download EPUB" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Read now" }).click();
+  await expect(page.getByText("Tea and biscuits.")).toBeVisible();
+  await expect(page.getByText("The audio queue is full. Try again later.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start Listening" })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath("source-reader-mobile.png"), fullPage: true });
+});
+
+for (const [stage, verb, percent] of [["download", "Gathering", 25], ["synthesis", "Hooting", 50]] as const) {
+  test(`source reader shows ${percent}% for ${stage}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockCatalog(page, [{ ...edition, state: "running", job_state: "running", job_id: "in-progress" }]);
+    await page.route("**/api/v1/generation-jobs/in-progress", route => route.fulfill({ json: {
+      id: "in-progress", source_id: edition.source_id, mode: "standard", state: "running", stage,
+      author_slug: null, title_slug: null, error_code: null, created_at: "2026-10-10", updated_at: "2026-10-10",
+    } }));
+    await page.goto("/");
+    await page.getByRole("textbox", { name: "Search books" }).fill("alice");
+    await page.getByRole("button", { name: "Read now" }).click();
+    await expect(page.getByText(`${verb} · ${percent}%`)).toBeVisible();
+    await expect(page.getByText("Tea and biscuits.")).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`reader-${percent}.png`), fullPage: true });
+  });
+}
 
 test("desktop shows two edition cards and keeps failed jobs out of public retry", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -117,8 +156,8 @@ test("desktop shows two edition cards and keeps failed jobs out of public retry"
   expect(first).not.toBeNull();
   expect(other).not.toBeNull();
   expect(Math.abs(first!.y - other!.y)).toBeLessThan(40);
-  await page.getByRole("button", { name: "Request audiobook" }).first().click();
-  await expect(page.getByText(/Rights could not be verified/)).toBeVisible({ timeout: 10_000 });
+  await page.getByRole("button", { name: "Read now" }).first().click();
+  await expect(page.getByText(/Audio creation stopped/)).toBeVisible({ timeout: 20_000 });
   await expect(page.getByRole("button", { name: "Retry generation" })).toHaveCount(0);
   await expect(page.getByLabel("Owner token")).toHaveCount(0);
   expect(createCount).toBe(1);
@@ -131,7 +170,7 @@ test("tablet keeps edition cards within the viewport", async ({ page }, testInfo
   await page.goto("/");
   await page.getByRole("textbox", { name: "Search books" }).fill("alice");
   await expect(page.getByText("Another Edition")).toBeVisible();
-  const cards = await page.getByRole("button", { name: "Request audiobook" }).all();
+  const cards = await page.getByRole("button", { name: "Read now" }).all();
   const first = await cards[0].boundingBox();
   const second = await cards[1].boundingBox();
   expect(first).not.toBeNull();
@@ -154,12 +193,12 @@ test("mobile search presents two matching editions without overflow", async ({ p
   await expect(page.getByText("Celebrated Crimes (Complete)")).toBeVisible();
   const rightEdge = await page.evaluate(() => document.documentElement.scrollWidth);
   expect(rightEdge).toBeLessThanOrEqual(390);
-  await expect(page.getByRole("button", { name: "Request audiobook" })).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "Read now" })).toHaveCount(2);
   await page.screenshot({ path: testInfo.outputPath("design-mobile.png"), fullPage: true });
   expect(consoleErrors).toEqual([]);
 });
 
-test("mobile owner sign-in unlocks cancellation without exposing a local key", async ({ page }) => {
+test("mobile owner sign-in unlocks cancellation without exposing a local key", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const queued = { id: "job-1", source_id: "gutenberg:11", state: "queued", stage: "queued",
     author_slug: null, title_slug: null, error_code: null, created_at: "2026-09-29", updated_at: "2026-09-29" };
@@ -177,12 +216,119 @@ test("mobile owner sign-in unlocks cancellation without exposing a local key", a
   await expect(page.getByText(edition.title)).toBeVisible();
   await expect(page.getByRole("button", { name: "Cancel generation" })).toHaveCount(0);
   await page.getByRole("button", { name: "Owner controls" }).click();
+  const dialog = page.getByRole("dialog", { name: "Owner controls" });
+  await expect(dialog).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("owner-sign-in-mobile.png"), fullPage: true });
   await page.getByRole("button", { name: "Sign in with Google" }).click();
+  await expect(dialog).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Cancel generation" })).toBeVisible();
   await page.getByRole("button", { name: "Cancel generation" }).click();
   await expect(page.getByText("Request canceled.")).toBeVisible();
   expect(canceled).toBe(true);
   await expect(page.getByLabel("Owner token")).toHaveCount(0);
+  await page.getByRole("button", { name: "Owner controls" }).click();
+  await expect(dialog.getByText(/Signed in as johnkoeh@gmail.com/)).toBeVisible();
+  await dialog.getByRole("button", { name: "Sign out" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Owner controls" })).toHaveText("Owner controls");
+  await expect(page.getByRole("button", { name: "Generate expressive audio" })).toHaveCount(0);
+  expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))).not.toContain("mock-google-token");
+});
+
+test("owner modal fits narrow and short screens and restores keyboard focus", async ({ page }, testInfo) => {
+  await mockCatalog(page);
+  await mockGoogleSignIn(page);
+  await page.goto("/");
+  for (const viewport of [{ width: 320, height: 568 }, { width: 844, height: 390 }, { width: 1280, height: 900 }]) {
+    await page.setViewportSize(viewport);
+    const trigger = page.getByRole("button", { name: "Owner controls", exact: true });
+    await trigger.click();
+    const dialog = page.getByRole("dialog", { name: "Owner controls" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Sign in with Google" })).toBeVisible();
+    const card = await page.getByTestId("owner-modal-card").boundingBox();
+    expect(card).not.toBeNull();
+    expect(card!.x).toBeGreaterThanOrEqual(20);
+    expect(card!.y).toBeGreaterThanOrEqual(20);
+    expect(card!.x + card!.width).toBeLessThanOrEqual(viewport.width - 20);
+    expect(card!.y + card!.height).toBeLessThanOrEqual(viewport.height - 20);
+    await page.screenshot({ path: testInfo.outputPath(`owner-modal-${viewport.width}.png`), fullPage: true });
+    for (let i = 0; i < 5; i++) {
+      await page.keyboard.press("Tab");
+      expect(await dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+    }
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await trigger.click();
+    await dialog.getByRole("button", { name: "Close owner controls" }).click();
+    await expect(dialog).toHaveCount(0);
+    await trigger.click();
+    await page.getByTestId("owner-modal-backdrop").click({ position: { x: 5, y: 5 } });
+    await expect(dialog).toHaveCount(0);
+  }
+});
+
+test("owner can retry after the Google script fails to load", async ({ page }) => {
+  await mockCatalog(page);
+  await mockGoogleSignIn(page);
+  let scriptAttempts = 0;
+  await page.route("https://accounts.google.com/gsi/client", async (route) => {
+    scriptAttempts++;
+    if (scriptAttempts === 1) await route.abort();
+    else await route.fallback();
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Owner controls" }).click();
+  const dialog = page.getByRole("dialog", { name: "Owner controls" });
+  await expect(dialog.getByRole("alert")).toContainText("Google sign-in could not load");
+  await dialog.getByRole("button", { name: "Retry sign-in" }).click();
+  await dialog.getByRole("button", { name: "Sign in with Google" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(scriptAttempts).toBe(2);
+});
+
+test("owner verification distinguishes access rejection from service failures", async ({ page }) => {
+  await mockCatalog(page);
+  await mockGoogleSignIn(page);
+  let status = 401;
+  await page.route("**/api/v1/admin/me", async (route) => {
+    await route.fulfill({ status, json: { error: { code: "TEST_ERROR", message: "Fixture" } } });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Owner controls" }).click();
+  const dialog = page.getByRole("dialog", { name: "Owner controls" });
+  for (const [responseStatus, message] of [
+    [401, "This Google account is not authorized"],
+    [503, "Owner sign-in is temporarily unavailable"],
+    [429, "Too many sign-in attempts"],
+    [500, "Could not check your account"],
+  ] as const) {
+    status = responseStatus;
+    await dialog.getByRole("button", { name: "Sign in with Google" }).click();
+    await expect(dialog.getByRole("alert")).toContainText(message);
+    await expect(page.getByRole("button", { name: "Owner controls", exact: true })).toHaveText("Owner controls");
+  }
+});
+
+test("owner sign-in times out and can recover without reopening the modal", async ({ page }) => {
+  await mockCatalog(page);
+  await mockGoogleSignIn(page);
+  let releaseScript!: () => void;
+  const heldScript = new Promise<void>((resolve) => { releaseScript = resolve; });
+  let scriptAttempts = 0;
+  await page.route("https://accounts.google.com/gsi/client", async (route) => {
+    if (++scriptAttempts === 1) await heldScript;
+    await route.fallback();
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Owner controls" }).click();
+  const dialog = page.getByRole("dialog", { name: "Owner controls" });
+  await expect(dialog.getByText("Loading Google sign-in…")).toBeVisible();
+  await expect(dialog.getByRole("alert")).toContainText("Google sign-in could not load", { timeout: 15_000 });
+  await dialog.getByRole("button", { name: "Retry sign-in" }).click();
+  releaseScript();
+  await expect(dialog.getByRole("button", { name: "Sign in with Google" })).toBeVisible();
 });
 
 test("mobile owner confirms an OpenAI-directed job before it is created", async ({ page }, testInfo) => {
@@ -250,7 +396,7 @@ test("owner can start expressive regeneration after standard completion reaches 
 
   await page.goto("/");
   await page.getByRole("textbox", { name: "Search books" }).fill("alice");
-  await expect(page.getByRole("link", { name: "Open audiobook" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Read now" })).toBeVisible();
   await page.getByRole("button", { name: "Owner controls" }).click();
   await page.getByRole("button", { name: "Sign in with Google" }).click();
   await page.getByRole("button", { name: "Generate expressive audio" }).click();
@@ -277,10 +423,10 @@ test("published audiobook remains playable while owner retries failed regenerati
   } }));
   await page.goto("/");
   await page.getByRole("textbox", { name: "Search books" }).fill("alice");
-  await expect(page.getByRole("link", { name: "Open audiobook" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Read now" })).toBeVisible();
   await page.getByRole("button", { name: "Owner controls" }).click();
   await page.getByRole("button", { name: "Sign in with Google" }).click();
   await page.getByRole("button", { name: "Retry generation" }).click();
   await expect(page.getByText("Standard generation queued")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Open audiobook" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Read now" })).toBeVisible();
 });

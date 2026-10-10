@@ -85,7 +85,7 @@ export default function CatalogPage() {
               letterSpacing: -1.6, marginTop: width < 600 ? 40 : 48,
             }}>Find your next listen</Text>
             <Text style={{ color: palette.muted, fontSize: width < 600 ? 16 : 20, lineHeight: 25, marginTop: 8, marginBottom: 25 }}>
-              Discover public-domain books and request audio.
+              Open a book now. Audio comes along as you read.
             </Text>
             <SearchBar value={query} onChangeText={setQuery} />
             <SourceSuggestions query={query} adminToken={adminToken} onAdminExpired={() => setAdminToken(null)} />
@@ -104,7 +104,7 @@ export default function CatalogPage() {
             !loading && !error && query.trim().length < 2 ? (
               <View style={{ alignItems: "center", paddingTop: 48 }}>
                 <Text style={{ color: palette.muted, fontSize: 16 }}>
-                  No audiobooks published yet. Search for an edition to request one.
+                  No audiobooks published yet. Search for an edition to read now.
                 </Text>
               </View>
             ) : null

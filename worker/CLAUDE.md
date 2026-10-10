@@ -123,7 +123,10 @@ separately, with a public failure code that survives reopening search, so
 regeneration progress or failure never hides the playable book.
 An independent source EPUB route performs a rate-limited indexed lookup,
 validates the stored HTTPS Gutenberg EPUB URL against the exact source ID,
-and redirects to the original EPUB. It needs no owner/PC credential, GPU job,
+and redirects to the original EPUB by default. With `inline=1`, it streams the
+validated EPUB through the API for the immediate source reader, without forwarding
+credentials; up to three upstream redirects are revalidated against the exact source ID. Upstream errors return 502.
+It needs no owner/PC credential, GPU job,
 audio word-budget check, or generation-start reservation. It works with the PC
 offline. The completed-book EPUB route continues to serve the annotated R2
 artifact. The OpenAPI route schemas describe both contracts.
@@ -136,6 +139,9 @@ also accepts a Google Identity Services ID token after the Worker verifies its G
 signature, issuer, configured OAuth client audience, expiry, verified email,
 and exact `johnkoeh@gmail.com` address. An unconfigured Google client ID fails
 closed; the existing owner token remains valid for local CLI administration.
+The public `GOOGLE_CLIENT_ID` is declared as a plain-text variable in
+`wrangler.toml` for each development/deployment environment and matches the
+client's build-time `EXPO_PUBLIC_GOOGLE_CLIENT_ID`. It is not a client secret.
 `GET /api/v1/admin/me` verifies Google identity before the browser exposes
 controls; local owner tokens do not authenticate this browser identity route.
 The OpenAI key stays on the PC and never enters a Worker binding. A separate PC

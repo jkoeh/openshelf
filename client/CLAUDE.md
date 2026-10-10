@@ -13,6 +13,7 @@ app/                        # Expo Router — file-based routes
   about.tsx                 # About page
   book/[author]/[title].tsx # Book detail page
   read/[author]/[title].tsx # Reader page
+  source/[id].tsx           # Immediate source EPUB reader + audio creation status
   +not-found.tsx            # 404
 
 components/                 # Reusable UI components
@@ -60,6 +61,9 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
 - Business logic lives in `lib/` (pure TS, no React imports)
 - Hooks in `hooks/` bridge lib logic to React components
 - API base URL via `EXPO_PUBLIC_API_BASE` env var (defaults to localhost:8787)
+- Google owner sign-in uses the public `EXPO_PUBLIC_GOOGLE_CLIENT_ID` from Pages
+  production/preview build variables or ignored `client/.env` in local development.
+  It must match the Worker's `GOOGLE_CLIENT_ID`; README.md records the configured ID.
 - Web deploys to Cloudflare Pages from `client/dist`. Keep `public/_redirects`
   present so Expo Router deep links fall back to `index.html`.
 - Production web deploys are automated by the `openshelf` Cloudflare Pages
@@ -80,24 +84,39 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
   separately calls the no-store `fetchBookBuilds` selector API. The rendition selector
   is collapsed by default, always shows the selected engine, expands into engine ->
   voice -> upload-time choices, and collapses again after selection. Raw build IDs stay
-  internal to URLs, local storage, and progress keys.
+  internal to URLs, local storage, and progress keys. Book detail offers Read now and
+  listening actions; standalone EPUB download buttons are removed from the UI.
 - `useSyncEngine` computes active word/chunk inside a `requestAnimationFrame` loop and only setStates when the active word/chunk index changes. It reads `player.currentTime` and consumes inline `words` from the section response; there is no separate alignment fetch.
 - The catalog page keeps published-book browsing and adds debounced source
-  suggestions. A visitor can request the fixed local Kokoro narration without
-  entering a token. The source-search UI explains that the index is limited;
-  every indexed edition also offers an independent **Download EPUB** link via
-  `sourceEpubUrl(sourceId)`. This fast download opens the original Gutenberg
-  EPUB even when the PC is offline or audio is queued, running, failed, or
-  canceled; it does not request generation. Source search carries the latest
+  suggestions. Every indexed edition offers one **Read now** action that immediately
+  opens `source/[id]`. That reader fetches the exact EPUB through `?inline=1`
+  and independently creates a fixed Kokoro job, or resumes status for an existing
+  job. Published editions open the existing reader. Failed/canceled jobs remain
+  readable without public retries. Queue/start-limit failures cannot block text.
+  EPUB parsing follows the OPF spine and renders text as native components, never
+  executing source HTML. The source reader polls jobs every 15 seconds and shows
+  an animated owl above text, honoring reduced motion: Nestling (queued, 0%),
+  Gathering (download/parse/direction, 25%), Hooting (synthesis/alignment/encode/upload,
+  50%), and Ready to soar (completed, 100%). These are stage milestones, not measured
+  synthesis percentages. On completion, Start Listening opens the published reader;
+  it does not interrupt text reading. Source search carries the latest
   public audio error code so reopening search retains the specific failure.
   a missing match is never presented as proof Gutenberg lacks the book. The
   current owner token remains local for cancellation via the PC script. On web,
   the owner signs in with Google for cancel, retry, and regeneration controls.
   The Google ID token lives only in React memory and is sent to the Worker;
-  the sign-in panel closes after successful verification so it does not cover
-  the discovery page on narrow screens;
+  Owner controls opens a centered modal above the discovery page, with a dimmed
+  backdrop, a visible close button, Escape/backdrop dismissal, trapped keyboard
+  focus, and focus restored to the trigger on close. The modal fits narrow and
+  short screens and scrolls when needed. It asks the signed-out owner to sign in
+  with Google, shows loading and verification progress, and offers retry if the
+  Google script fails or times out. Unauthorized accounts, server configuration,
+  rate limits, and connection failures have distinct messages. The modal closes
+  after successful verification; reopening it shows the owner account, guidance
+  to manage jobs from search results, and sign-out;
   the client never persists it or bundles the local owner key. If the OAuth
-  client ID is unconfigured, the admin control explains setup is needed. Paid
+  client ID is unconfigured, the modal clearly says sign-in is unavailable and
+  offers Close; deployment setup details belong in README.md. Paid
   owner may request expressive narration as a separate, fixed Chatterbox
   `af_heart` job with batched OpenAI emotion direction on the PC. This action
   is visible only after owner sign-in and clearly identifies the paid OpenAI

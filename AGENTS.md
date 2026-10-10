@@ -68,7 +68,7 @@ flowchart LR
         W_EPUB[GET /books/:a/:t/epub]
         W_SPEC[GET /openapi.json + /docs<br/>auto-generated from Zod schemas]
         W_SEARCH[GET /source-books<br/>bounded autocomplete]
-        W_SOURCE_EPUB[GET /source-books/:source_id/epub<br/>fast independent source EPUB download]
+        W_SOURCE_EPUB[GET /source-books/:source_id/epub<br/>source EPUB redirect or inline stream]
         W_ADMIN[GET /admin/me<br/>verify Google owner]
         W_JOBS[Public Kokoro requests/status<br/>Owner cancel/retry/regenerate/priority<br/>Owner bounded queue and recent history<br/>Owner OpenAI-directed Chatterbox requests<br/>PC claim/heartbeat/finish]
     end
@@ -91,7 +91,8 @@ flowchart LR
     subgraph Client[Client — Expo]
         direction TB
         C1[Catalog page<br/>fetchCatalog]
-        C_SEARCH[Source search + generation status<br/>Download EPUB independently of audio]
+        C_SEARCH[Source search + generation status<br/>Read now: EPUB reader + audio job]
+        C_SOURCE[Source reader<br/>OPF spine text + animated owl stage progress<br/>Start Listening when published]
         C_ADMIN[Google owner sign-in<br/>cancel/retry/regenerate<br/>request expressive audio]
         C2[Book detail<br/>fetchBook → manifest with renditions]
         C2B[Collapsed rendition picker<br/>engine -> voice -> upload time]
@@ -107,6 +108,10 @@ flowchart LR
     W_SEARCH --> C_SEARCH
     C_SEARCH --> W_JOBS
     C_SEARCH --> W_SOURCE_EPUB
+    C_SEARCH --> C_SOURCE
+    W_SOURCE_EPUB --> C_SOURCE
+    W_JOBS --> C_SOURCE
+    C_SOURCE --> C3
     C_ADMIN --> W_ADMIN
     C_ADMIN --> W_JOBS
     W_BOOK --> C2
@@ -150,14 +155,7 @@ Notes:
   entry count, and parsed source spoken words before starting LLM or synthesis.
   The default source-word budget is 100,000 words, including spoken headings;
   `--max-words` is an explicit owner override for larger books.
-- Source search offers a fast, independent **Download EPUB** action for every
-  indexed edition, including queued, running, failed, and canceled audio jobs.
-  The Worker validates the stored Gutenberg URL against the source ID and
-  redirects to the original source EPUB. This request needs no PC, audio job,
-  generation-start reservation, or audio word-budget check. The annotated R2
-  EPUB remains available on completed audiobook detail pages. Search carries
-  the latest audio failure code so a word-budget rejection is visible after
-  reopening the app; it does not imply an EPUB download failure.
+- Source search offers one **Read now** action. It opens a source EPUB reader immediately, fetches the validated EPUB with `inline=1`, and independently creates or follows an audio job. Failed/canceled audio and queue/start limits never block text. The reader follows the OPF spine and renders plain text. An animated owl shows stage milestones (0% queued, 25% preparation, 50% synthesis/alignment/encoding/upload, 100% complete), honors reduced motion, and becomes Start Listening when published. The default EPUB endpoint still redirects for direct downloads; inline mode streams through the API without credentials; upstream redirects are bounded and revalidated against the exact source ID. The annotated R2 EPUB endpoint remains available; the UI uses Read now instead of download buttons.
 - Generation requests for the fixed local Kokoro voice may be public, subject to
   the atomic daily-start and queue caps. An expressive request is owner-only and
   selects a fixed Chatterbox `af_heart` rendition with batched OpenAI emotion
@@ -166,8 +164,12 @@ Notes:
   Identity Services ID token only after the Worker verifies its signature,
   issuer, audience, expiry, verified email, and exact `johnkoeh@gmail.com`
   address. The existing local owner token remains valid for CLI administration.
-  Browser tokens remain in memory and are never logged or persisted. Only the
-  owner can cancel, retry, regenerate, or request the expressive mode. The
+  Browser tokens remain in memory and are never logged or persisted. The
+  web Owner controls modal offers Google sign-in, loading/retry/error feedback,
+  and sign-out; it closes after verified sign-in and enables owner job actions
+  in search results. Its backdrop and close button keep mobile discovery readable.
+  Both the deployed client build and Worker need the same public OAuth client ID.
+  Only the owner can cancel, retry, regenerate, or request the expressive mode. The
   two-start daily cap and three-job queue cap cover both modes.
   Cancellation is a terminal job state: queued
   work cannot be claimed, and a running consumer loses its lease on the next
@@ -225,6 +227,7 @@ client/                 # TypeScript — Expo app (web + iOS + Android)
 download/               # (gitignored) downloaded EPUBs
 audio/                  # (gitignored) generated audio files
 plans/                  # design docs and plans
+  astra-prototype/      # standalone Astra game experiment; SPEC.md, static dist/, local model preview
 design-qa.md             # catalog visual comparison and responsive QA record
 .github/workflows/      # offline API, consumer/monitor, and headless browser CI gate
 scripts/                # PC setup and local monitor launcher

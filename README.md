@@ -71,7 +71,9 @@ emotion direction on the PC. It has no public API option for arbitrary prompts,
 models, or voices, and both modes share the same daily and queue caps. The local
 owner token remains available for CLI administration.
 The browser verifies sign-in through `GET /api/v1/admin/me` before showing
-admin controls; it keeps the Google ID token in memory only.
+admin controls; it keeps the Google ID token in memory only. Owner controls
+opens a responsive modal with Google sign-in, loading/error feedback, and
+sign-out. Successful sign-in closes the modal and enables job actions in search.
 
 ## Development
 
@@ -127,11 +129,11 @@ Voice direction uses the configured LLM provider (`LLM_PROVIDER`, with provider 
 
 ### Generation jobs
 
-Every indexed search result offers **Download EPUB** independently of audio.
-The download redirects to the exact original Gutenberg EPUB immediately; it
-works with the PC offline or with audio queued, running, failed, or canceled.
-It does not consume a daily generation start. Completed audiobook detail pages
-continue to download the annotated EPUB from R2.
+Every indexed search result offers **Read now**. It opens the source EPUB reader
+immediately and independently requests audio, or follows an existing job.
+An animated owl shows stage milestones above the text until Start Listening is
+ready. Text remains available if the PC is offline or generation fails or hits
+queue/start limits. Book detail offers Read now; the annotated EPUB API remains available.
 
 Generation accepts exact Project Gutenberg IDs. Public jobs use Kokoro
 `af_heart`; owner-only expressive jobs use Chatterbox `af_heart` and OpenAI
@@ -148,11 +150,26 @@ for `johnkoeh@gmail.com` or the local owner token. `OPENAI_API_KEY` stays in
 `pipeline/.env` or the PC shell; a consumer without it leaves expressive jobs
 queued for a capable run. Standard jobs never call OpenAI. To enable
 browser sign-in, create a Google OAuth Web client with the production Pages
-origin `https://openshelf.pages.dev` (and your local web origin for testing),
+origins `https://openshelf.johannkoeh.io`, `https://openshelf.pages.dev`, and
+your local web origin (including its port) for testing,
 set its client ID as the Worker's `GOOGLE_CLIENT_ID` in staging and production,
 and set `EXPO_PUBLIC_GOOGLE_CLIENT_ID` for the client build. The client ID is
 public; no Google client secret or owner token belongs in the web bundle.
+OpenShelf's public OAuth Web client ID is
+`121946934713-47vg0jerk474j3jta9tkp52j1ta50sjc.apps.googleusercontent.com`.
+The Worker declares it in `wrangler.toml` for local, staging, production, and
+remote-R2 development. Pages production and preview builds use the same ID
+through `EXPO_PUBLIC_GOOGLE_CLIENT_ID`; local web development can use ignored
+`client/.env`. Google authorized JavaScript origins must include each site
+origin used for login. Owner access still requires verified `johnkoeh@gmail.com`.
 If either ID is absent, browser admin actions stay unavailable.
+For the Git-integrated Pages build, add `EXPO_PUBLIC_GOOGLE_CLIENT_ID` to the
+Pages project's production and preview build environment variables, then
+rebuild the deployment; setting it only in a local shell does not configure
+the published site. The Worker and client must use the same Web client ID,
+and every origin where sign-in is used must be an authorized JavaScript origin
+in that Google OAuth client. Verify the deployed Owner controls modal displays
+the Google button and that the owner account passes `/api/v1/admin/me`.
 Apply all Worker D1 migrations before deploying the matching Worker; the latest
 job lookup index keeps autocomplete bounded as job history grows.
 
@@ -281,6 +298,8 @@ The production Worker reads `worker/wrangler.toml`, where `[env.production]` dep
 - Build command: `npm run build:web`
 - Output directory: `dist`
 - Environment variable: `EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1`
+- Owner login build variable: `EXPO_PUBLIC_GOOGLE_CLIENT_ID` (the same public
+  Google OAuth Web client ID configured as the Worker's `GOOGLE_CLIENT_ID`).
 
 ```bash
 cd client

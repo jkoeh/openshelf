@@ -3,6 +3,9 @@ main = "src/index.ts"
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
 
+[vars]
+GOOGLE_CLIENT_ID = "121946934713-47vg0jerk474j3jta9tkp52j1ta50sjc.apps.googleusercontent.com"
+
 [[r2_buckets]]
 binding = "R2_BUCKET"
 bucket_name = "openshelf"
@@ -39,6 +42,9 @@ period = 60
 [env.staging]
 name = "openshelf-api-staging"
 
+[env.staging.vars]
+GOOGLE_CLIENT_ID = "121946934713-47vg0jerk474j3jta9tkp52j1ta50sjc.apps.googleusercontent.com"
+
 [[env.staging.r2_buckets]]
 binding = "R2_BUCKET"
 bucket_name = "openshelf-staging"
@@ -72,6 +78,9 @@ period = 60
 [env.production]
 name = "openshelf-api"
 
+[env.production.vars]
+GOOGLE_CLIENT_ID = "121946934713-47vg0jerk474j3jta9tkp52j1ta50sjc.apps.googleusercontent.com"
+
 [[env.production.r2_buckets]]
 binding = "R2_BUCKET"
 bucket_name = "openshelf"
@@ -104,6 +113,9 @@ period = 60
 
 [env.remote_r2]
 name = "openshelf-api-remote-r2-dev"
+
+[env.remote_r2.vars]
+GOOGLE_CLIENT_ID = "121946934713-47vg0jerk474j3jta9tkp52j1ta50sjc.apps.googleusercontent.com"
 
 [[env.remote_r2.r2_buckets]]
 binding = "R2_BUCKET"

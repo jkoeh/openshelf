@@ -1,4 +1,4 @@
-import { Link, useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import {
 	BookOpen,
 	ChevronDown,
@@ -12,7 +12,7 @@ import { ActivityIndicator, Image, Pressable, ScrollView, Text, View } from "rea
 import ChapterList from "../../../components/ChapterList";
 import Header from "../../../components/Header";
 import { useTheme } from "../../../hooks/useTheme";
-import { coverUrl, epubUrl, fetchBook, fetchBookBuilds } from "../../../lib/api";
+import { coverUrl, fetchBook, fetchBookBuilds } from "../../../lib/api";
 import { formatDuration, stringToHue } from "../../../lib/format";
 import { selectRendition } from "../../../lib/renditions";
 import {
@@ -565,27 +565,9 @@ export default function BookDetailPage() {
 							}}
 						>
 							<BookOpen size={17} color={colors.text} strokeWidth={2.3} />
-							<Text style={{ color: colors.text, fontSize: 15, fontWeight: "500" }}>Read</Text>
+							<Text style={{ color: colors.text, fontSize: 15, fontWeight: "500" }}>Read now</Text>
 						</Pressable>
-						<Link href={epubUrl(author, title)} asChild>
-							<Pressable
-								style={{
-									flex: 1,
-									backgroundColor: colors.surface,
-									borderRadius: 12,
-									paddingVertical: 14,
-									flexDirection: "row",
-									alignItems: "center",
-									justifyContent: "center",
-									gap: 6,
-								}}
-							>
-								<Download size={17} color={colors.text} strokeWidth={2.3} />
-								<Text style={{ color: colors.text, fontSize: 15, fontWeight: "500" }}>
-									EPUB
-								</Text>
-							</Pressable>
-						</Link>
+
 					</View>
 				</View>
 

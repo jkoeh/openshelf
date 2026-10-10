@@ -70,8 +70,13 @@ const downloadRoute = createRoute({
 	path: "/{source_id}/epub",
 	tags: ["sources"],
 	summary: "Download the source EPUB independently of audio generation",
-	request: { params: z.object({ source_id: z.string().regex(/^gutenberg:[1-9][0-9]*$/) }) },
+	request: {
+		params: z.object({ source_id: z.string().regex(/^gutenberg:[1-9][0-9]*$/) }),
+		query: z.object({ inline: z.enum(["1"]).optional() }),
+	},
 	responses: {
+		200: { description: "Inline source EPUB", content: { "application/epub+zip": { schema: { type: "string", format: "binary" } } } },
+		502: error,
 		302: {
 			description: "Original Gutenberg EPUB download",
 			headers: { Location: { schema: { type: "string", format: "uri" } } },
@@ -223,6 +228,24 @@ app.openapi(downloadRoute, async (c) => {
 	if (url.protocol !== "https:" || url.hostname !== "www.gutenberg.org" ||
 		url.username || url.password || url.port || url.search || url.hash || !path.test(url.pathname))
 		return c.json({ error: { code: "INVALID_SOURCE", message: "Source EPUB URL must match the Gutenberg ID" } }, 400, noStore);
+	if (c.req.valid("query").inline === "1") {
+		try {
+			let upstream: Response | undefined;
+			for (let redirects = 0; redirects <= 3; redirects++) {
+				upstream = await fetch(url.href, { redirect: "manual", signal: AbortSignal.timeout(30_000) });
+				if (![301, 302, 303, 307, 308].includes(upstream.status)) break;
+				const location = upstream.headers.get("Location");
+				await upstream.body?.cancel();
+				if (!location) throw new Error("Invalid redirect");
+				url = new URL(location, url);
+				if (url.protocol !== "https:" || url.hostname !== "www.gutenberg.org" || url.username || url.password || url.port || url.search || url.hash || !path.test(url.pathname)) throw new Error("Invalid redirect");
+			}
+			if (!upstream?.ok || !upstream.body) throw new Error("Source unavailable");
+			return new Response(upstream.body, { headers: { ...noStore, "Content-Type": "application/epub+zip" } });
+		} catch {
+			return c.json({ error: { code: "SOURCE_UNAVAILABLE", message: "Could not load this EPUB. Try again shortly." } }, 502, noStore);
+		}
+	}
 	return new Response(null, { status: 302, headers: { ...noStore, Location: url.href } });
 });
 
