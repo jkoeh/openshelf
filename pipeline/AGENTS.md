@@ -65,13 +65,23 @@ under `pipeline/src/openshelf/pipeline/engines/`.
   claim capability only when a local `OPENAI_API_KEY` is configured. The key is
   never sent to the Worker, logged, or stored in a job. Both modes use the same
   Gutenberg rights, EPUB, spoken-text validation, lease, and publication checks.
-- `pipeline/scripts/job-monitor.pyw` is a local Tkinter window. It reads the
+- `pipeline/scripts/job-monitor.pyw` launches a local browser dashboard. It reads the
   ignored production owner token for owner-only queue/priority/cancel calls and
   can start the existing outbound consumer with the separate local PC token.
-  It shows the local consumer PID and log without accepting inbound connections.
+  It shows the local consumer PID and log through a server bound only to
+  127.0.0.1 on an ephemeral port. job_monitor_web.py serves only allowlisted
+  assets from monitor/ and authenticated, bounded data/control endpoints.
+  A random token is passed in the launch URL fragment, removed from the URL,
+  and kept in tab sessionStorage; every API request requires it in a header.
+  Exact Host, Origin and Fetch Metadata checks reject foreign browser requests;
+  POST requires same-origin JSON, and there is no CORS. CSP disallows framing
+  and external scripts. Dashboard assets are included as Python package data.
+  Secrets are redacted from log tails before transmission.
+  Failed/canceled jobs can be retried. Stopping the consumer is allowed only
+  when no running job or synthesis child exists. Closing the monitor stops
+  only the dashboard server, not the consumer; closing a browser tab leaves both.
   Its owner API client uses a fixed HTTPS origin and rejects redirects. It never
-  embeds or prints credentials, and closing the window does not stop a
-  running consumer. Canceling a selected task uses the Worker lease-revocation
+  embeds or prints credentials. Canceling a selected task uses the Worker lease-revocation
   route; the consumer terminates its child at its next heartbeat.
 - Before launching TTS, the PC consumer reads official per-book Gutenberg RDF
   for the exact source ID and requires `Public domain in the USA.`. Missing or
@@ -101,8 +111,8 @@ under `pipeline/src/openshelf/pipeline/engines/`.
 Pipeline tests are Python `unittest` tests under `pipeline/tests/` and should
 be mocked/offline. Engine tests should not require real model downloads, GPU,
 network, R2, or ffmpeg.
-The Windows monitor's API and process helpers are tested offline without
-opening a Tk window or contacting the production Worker.
+The monitor's API, process helpers, and local HTTP security boundary are tested
+offline without contacting the production Worker.
 
 Useful focused commands from the repo root:
 

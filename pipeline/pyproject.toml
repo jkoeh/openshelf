@@ -35,3 +35,6 @@ openshelf-pipeline = "openshelf.pipeline.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"openshelf.pipeline" = ["monitor/*.html", "monitor/*.css", "monitor/*.js"]

@@ -67,12 +67,14 @@ class MonitorTests(unittest.TestCase):
                 active, recent = api.list_jobs()
                 api.set_priority(active[0].id, True)
                 api.cancel(active[0].id)
+                api.retry(active[0].id)
             self.assertIsInstance(build_opener.call_args.args[0], monitor._NoRedirect)
             self.assertEqual(active[0].title, "Alice")
             self.assertEqual(recent, [])
             self.assertEqual(calls[0].full_url, monitor.API_BASE + "/admin/generation-jobs")
             self.assertEqual(json.loads(calls[1].data), {"priority": "high"})
             self.assertEqual(calls[2].full_url, monitor.API_BASE + f"/generation-jobs/{active[0].id}/cancel")
+            self.assertEqual(calls[3].full_url, monitor.API_BASE + f"/generation-jobs/{active[0].id}/retry")
             self.assertNotIn(b"owner-token", calls[1].data)
 
     def test_missing_owner_token_fails_before_network(self):

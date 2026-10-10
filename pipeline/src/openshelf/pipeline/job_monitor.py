@@ -132,6 +132,9 @@ class QueueAPI:
     def cancel(self, job_id: str) -> None:
         self._request(f"/generation-jobs/{job_id}/cancel", {})
 
+    def retry(self, job_id: str) -> None:
+        self._request(f"/generation-jobs/{job_id}/retry", {})
+
 
 def find_consumer(root: Path = PROJECT_ROOT) -> psutil.Process | None:
     """Find the production consumer, including one started outside the window."""

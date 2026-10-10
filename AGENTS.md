@@ -121,7 +121,7 @@ flowchart LR
     W_AUDIO --> C4
 
     subgraph PC[Owner PC — outbound consumer]
-        J_MON[Local Windows job monitor<br/>queue + lease health + recent jobs<br/>high priority + cancel + consumer status]
+        J_MON[Local browser job monitor · loopback only<br/>queue + lease health + recent jobs<br/>priority + cancel + retry + consumer status]
         J1[Poll + lease job] --> J2[Exact Gutenberg EPUB]
         J2 --> J2R[Verify RDF + EPUB public-domain rights]
         J2R --> J3[Standard: Kokoro<br/>Expressive: OpenAI direction + Chatterbox<br/>both: WhisperX + R2]
@@ -181,8 +181,13 @@ Notes:
   each level. Priority changes do not preempt a running job or bypass start and
   queue caps. Cancel uses the existing owner endpoint and revokes a running
   lease; the PC stops its child at the next heartbeat. The monitor loads owner
-  and PC credentials only from ignored local files and never serves a network
-  listener.
+  and PC credentials only from ignored local files. Its browser dashboard binds
+  only to 127.0.0.1 on a random port; every data/control request requires a random
+  session token, exact Host validation, and same-origin checks. No CORS is enabled.
+  Credentials never reach the browser. Failed/canceled jobs can be retried;
+  the consumer can be started or stopped while idle. Closing the monitor leaves
+  the consumer running. Static dashboard assets live beside job_monitor_web.py
+  in pipeline/src/openshelf/pipeline/monitor/.
 
 ### Rendition vs build invariant
 
@@ -205,7 +210,7 @@ This is the contract that lets every per-build URL set `Cache-Control: immutable
 ```
 pipeline/               # Python — EPUB ingestion, TTS, R2 upload
   src/openshelf/        # Python package
-  scripts/              # CLI entry points + local job monitor window
+  scripts/              # CLI entry points + local browser monitor launcher
   tests/                # Python tests (mocked, offline)
   docs/                 # Pipeline step documentation
   requirements.txt
