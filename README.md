@@ -205,17 +205,24 @@ Rights, archive, and empty-text checks still apply.
 ### Windows job monitor
 
 Double-click `scripts/open-job-monitor.cmd` after the root `.venv` is set up.
-The local browser dashboard shows pending, running, expired-lease (stuck), and recent jobs,
+The Windows Studio app embeds the dashboard and automatically starts or adopts
+the production consumer. Install `pywebview>=6,<7` in the root environment;
+Microsoft WebView2 Runtime is required. The dashboard shows pending, running, expired-lease (stuck), and recent jobs,
 the local consumer state, and its log tail. Select a queued job to set high or
 normal priority; select a queued/running job and choose **Cancel job** to revoke
 its lease. A running PC child stops at its next heartbeat (up to about 30
 seconds). Failed/canceled jobs offer retry. The dashboard can start the existing
-outbound production consumer and stop it while idle. Close monitor shuts down
-the dashboard server and leaves the consumer running. Owner and PC
+outbound production consumer and stop it while idle. Closing the app window or
+**Close Studio** stops both the dashboard server and the entire consumer process
+tree. Interrupted jobs can be reclaimed after their lease expires on next launch
+within the existing three-attempt cap;
+partial audio is retained for resuming. Repeated launches focus the same window.
+Owner and PC
 tokens are read from ignored files under `worker/.secrets/`, never entered in
 the UI. The queue refreshes every 15 seconds. The server binds only to 127.0.0.1
 on a random port, with a session token and strict same-origin checks; it is not
-accessible from another device. No public deployment is needed.
+accessible from another device. Authentication is handled by the embedded window,
+so no browser link or saved session is needed. No public deployment is needed.
 Deploy the matching additive D1 migration before the Worker update.
 CI runs the monitor's offline unit tests alongside the consumer tests.
 Source sync can cover a few more Gutendex pages with `--sync-pages N` (up to

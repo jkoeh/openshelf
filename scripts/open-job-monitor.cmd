@@ -5,4 +5,4 @@ if not exist ".venv\Scripts\pythonw.exe" (
   pause
   exit /b 1
 )
-start "OpenShelf Job Monitor" ".venv\Scripts\pythonw.exe" "pipeline\scripts\job-monitor.pyw"
+start "OpenShelf Studio" ".venv\Scripts\pythonw.exe" "pipeline\scripts\job-monitor.pyw"

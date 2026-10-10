@@ -6,7 +6,6 @@ import os
 import re
 import secrets
 import threading
-import webbrowser
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -73,11 +72,13 @@ def stop_idle_consumer(api, root: Path) -> None:
 class DashboardServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, api=None, root: Path = PROJECT_ROOT):
+    def __init__(self, api=None, root: Path = PROJECT_ROOT, *, on_close=None, on_start=None):
         self.root = root
         self.api = api or monitor.QueueAPI(root)
         self.token = secrets.token_urlsafe(32)
         self.control_lock = threading.Lock()
+        self.on_close = on_close
+        self.on_start = on_start
         super().__init__(("127.0.0.1", 0), Handler)
         self.origin = f"http://127.0.0.1:{self.server_port}"
 
@@ -90,6 +91,7 @@ class DashboardServer(ThreadingHTTPServer):
         return {"active": [row(job) for job in active], "recent": [row(job) for job in recent],
                 "consumer": {"running": process is not None, "pid": process.pid if process else None},
                 "log": redact(monitor.log_tail(self.root, lines=70), self.root),
+                "desktop": self.on_close is not None,
                 "refresh_seconds": monitor.REFRESH_SECONDS}
 
 
@@ -172,10 +174,13 @@ class Handler(BaseHTTPRequestHandler):
             with self.server.control_lock:
                 if self.path == "/api/close" and not data:
                     self.send(200, {"ok": True})
-                    threading.Thread(target=self.server.shutdown, daemon=True).start()
+                    threading.Thread(target=self.server.on_close or self.server.shutdown, daemon=True).start()
                     return
                 if self.path == "/api/consumer/start" and not data:
-                    monitor.start_consumer(self.server.root)
+                    if self.server.on_start:
+                        self.server.on_start()
+                    else:
+                        monitor.start_consumer(self.server.root)
                 elif self.path == "/api/consumer/stop" and not data:
                     stop_idle_consumer(self.server.api, self.server.root)
                 elif self.path == "/api/job" and set(data) == {"id", "action"}:
@@ -209,6 +214,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    with DashboardServer() as server:
-        webbrowser.open(server.origin + "/#" + server.token)
-        server.serve_forever()
+    from openshelf.pipeline.job_monitor_desktop import main as desktop_main
+    desktop_main()

@@ -65,21 +65,37 @@ under `pipeline/src/openshelf/pipeline/engines/`.
   claim capability only when a local `OPENAI_API_KEY` is configured. The key is
   never sent to the Worker, logged, or stored in a job. Both modes use the same
   Gutenberg rights, EPUB, spoken-text validation, lease, and publication checks.
-- `pipeline/scripts/job-monitor.pyw` launches a local browser dashboard. It reads the
+- `pipeline/scripts/job-monitor.pyw` launches Windows OpenShelf Studio, a pywebview
+  WebView2 window hosting the local dashboard. It reads the
   ignored production owner token for owner-only queue/priority/cancel calls and
   can start the existing outbound consumer with the separate local PC token.
   It shows the local consumer PID and log through a server bound only to
   127.0.0.1 on an ephemeral port. job_monitor_web.py serves only allowlisted
   assets from monitor/ and authenticated, bounded data/control endpoints.
-  A random token is passed in the launch URL fragment, removed from the URL,
-  and kept in tab sessionStorage; every API request requires it in a header.
+  The native host supplies the random authentication header only to requests
+  for this server's local API. Embedded mode does not put tokens in URLs or
+  browser storage; refresh and navigation continue to work. The isolated WebView
+  profile is temporary and deleted on exit. No custom Python/JavaScript bridge
+  or remote debugging is exposed. The request hook is explicitly synchronous
+  using pywebview's Event so header injection completes before dispatch.
+  Browser-only fixtures retain fragment/tab
+  session authentication for offline HTTP/UI testing.
   Exact Host, Origin and Fetch Metadata checks reject foreign browser requests;
   POST requires same-origin JSON, and there is no CORS. CSP disallows framing
   and external scripts. Dashboard assets are included as Python package data.
   Secrets are redacted from log tails before transmission.
   Failed/canceled jobs can be retried. Stopping the consumer is allowed only
-  when no running job or synthesis child exists. Closing the monitor stops
-  only the dashboard server, not the consumer; closing a browser tab leaves both.
+  when no running job or synthesis child exists. job_monitor_desktop.py owns the
+  window, server, and exact production consumer tree via a Windows Job Object
+  with kill-on-close (separate Job Objects cover pre-existing child groups when
+  Windows cannot merge their job hierarchies). Launch starts or adopts the consumer; repeated launches
+  focus the existing window using a per-checkout named mutex. Closing the window
+  or Close Studio stops both services and all consumer descendants, even during
+  synthesis. A killed job's lease expires and can be reclaimed on the next launch
+  within the existing three-attempt cap;
+  partial output is retained for the existing fixed-build resume contract.
+  A startup failure closes all resources already acquired and shows a native
+  error message. pywebview>=6,<7 and WebView2 Runtime are required on Windows.
   Its owner API client uses a fixed HTTPS origin and rejects redirects. It never
   embeds or prints credentials. Canceling a selected task uses the Worker lease-revocation
   route; the consumer terminates its child at its next heartbeat.
@@ -113,6 +129,10 @@ be mocked/offline. Engine tests should not require real model downloads, GPU,
 network, R2, or ffmpeg.
 The monitor's API, process helpers, and local HTTP security boundary are tested
 offline without contacting the production Worker.
+`pipeline/tests/pipeline/desktop_smoke.py` is an opt-in Windows integration
+check using an inert consumer tree and real WebView2: authentication survives
+refresh, native window close stops the listener/tree, and owner-process exit
+kills adopted children. It never touches production jobs.
 
 Useful focused commands from the repo root:
 

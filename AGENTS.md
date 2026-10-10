@@ -121,7 +121,7 @@ flowchart LR
     W_AUDIO --> C4
 
     subgraph PC[Owner PC — outbound consumer]
-        J_MON[Local browser job monitor · loopback only<br/>queue + lease health + recent jobs<br/>priority + cancel + retry + consumer status]
+        J_MON[Windows Studio · embedded local dashboard<br/>owns server + consumer process tree<br/>priority + cancel + retry + consumer status]
         J1[Poll + lease job] --> J2[Exact Gutenberg EPUB]
         J2 --> J2R[Verify RDF + EPUB public-domain rights]
         J2R --> J3[Standard: Kokoro<br/>Expressive: OpenAI direction + Chatterbox<br/>both: WhisperX + R2]
@@ -185,9 +185,18 @@ Notes:
   only to 127.0.0.1 on a random port; every data/control request requires a random
   session token, exact Host validation, and same-origin checks. No CORS is enabled.
   Credentials never reach the browser. Failed/canceled jobs can be retried;
-  the consumer can be started or stopped while idle. Closing the monitor leaves
-  the consumer running. Static dashboard assets live beside job_monitor_web.py
-  in pipeline/src/openshelf/pipeline/monitor/.
+  the consumer can be started or stopped while idle. The Windows Studio launcher
+  embeds the dashboard in a private WebView2 window, automatically starts or
+  adopts the exact production consumer, and uses a Windows Job Object to own its
+  full process tree. Closing the window stops the HTTP server and all owned
+  consumer/synthesis processes, including on application crash. Interrupted jobs
+  remain leased until expiry, then can be reclaimed within the existing
+  three-attempt cap on next launch with the same
+  build's existing resume behavior. Repeated launches focus the existing window.
+  Authentication is supplied only to local API requests by the native host;
+  users never need to save a URL or token. Static assets live beside
+  job_monitor_web.py in pipeline/src/openshelf/pipeline/monitor/; desktop lifecycle
+  and Windows ownership are implemented in job_monitor_desktop.py.
 
 ### Rendition vs build invariant
 

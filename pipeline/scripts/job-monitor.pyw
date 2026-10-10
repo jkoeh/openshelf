@@ -1,4 +1,4 @@
-"""Launch OpenShelf's authenticated local browser dashboard."""
+"""Launch OpenShelf Studio, owning its dashboard and consumer processes."""
 import sys
 from pathlib import Path
 

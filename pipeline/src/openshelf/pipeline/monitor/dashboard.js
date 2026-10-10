@@ -46,6 +46,7 @@ function actions(job) {
 }
 function render() {
   const {active, recent, consumer} = snapshot;
+  $('close').textContent = snapshot.desktop ? 'Close Studio' : 'Close monitor';
   $('queued').textContent = active.filter(j => j.state === 'queued').length;
   $('working').textContent = active.filter(j => j.status === 'Working').length;
   $('stuck').textContent = active.filter(j => j.status.startsWith('Stuck')).length;
@@ -89,7 +90,8 @@ $('consumer-action').addEventListener('click', async () => {
   await mutate(`/api/consumer/${running ? 'stop' : 'start'}`, {}, running ? 'Consumer stopped.' : 'Consumer started. It will pick up the next queued book.');
 });
 $('close').addEventListener('click', async () => {
-  if (!await confirm('Close this monitor?', 'The local dashboard server will shut down. Your audiobook consumer will keep running.', 'Close monitor')) return;
+  const desktop = snapshot?.desktop;
+  if (!await confirm(desktop ? 'Close the workshop?' : 'Close this monitor?', desktop ? 'The dashboard and consumer will stop, including any audio being generated. An interrupted job can be reclaimed after its lease expires, subject to its retry limit.' : 'The local dashboard server will shut down. Your audiobook consumer will keep running.', desktop ? 'Close Studio' : 'Close monitor')) return;
   try { await api('/api/close', {}); closed = true; $('notice').textContent = 'Monitor closed. Your consumer keeps running. You can close this tab.'; document.querySelectorAll('button').forEach(b => b.disabled = true); }
   catch(error) { $('error').textContent = error.message; $('error').hidden = false; }
 });

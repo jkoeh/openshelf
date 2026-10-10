@@ -2,16 +2,20 @@
 
 ## Outbound generation consumer
 
-`scripts/open-job-monitor.cmd` launches the browser queue monitor with
+`scripts/open-job-monitor.cmd` launches Windows OpenShelf Studio with
 the root `.venv`; `pipeline/scripts/job-monitor.pyw` can also be run with that
 environment's `pythonw.exe`. Its HTTP server binds only to 127.0.0.1 on a random
-port, with a random session token delivered in the launch URL fragment and
-retained in tab sessionStorage after removing the fragment. API requests require
+port inside a private embedded WebView2 window. A native request handler adds
+the session token only to this server's API requests; there are no saved web
+links or browser session tokens to expire. The request event is explicitly
+synchronous so credentials are attached before dispatch. API requests require
 that token, an exact Host, and same-origin Origin/Fetch Metadata; mutations
 require JSON. No CORS, external scripts, arbitrary file paths, or proxy routes
 are allowed. Credentials stay on the Python backend; known secrets are redacted
 from log tails. Dashboard assets are in src/openshelf/pipeline/monitor/ and the
-HTTP boundary is in job_monitor_web.py. It reads the
+HTTP boundary is in job_monitor_web.py. job_monitor_desktop.py owns the window
+and services. Install pywebview>=6,<7 in the root environment; Microsoft WebView2
+Runtime is required. No JavaScript/Python application bridge is exposed. It reads the
 production owner token from `worker/.secrets/prod-owner-token`, refreshes the
 owner-only queue view every 15 seconds, and shows active/recent jobs, priority,
 attempts, stage, heartbeat/lease expiry, local consumer status, and local log
@@ -21,8 +25,19 @@ for confirmation, revokes its Worker lease, and the PC stops a running child at
 its next heartbeat. Failed/canceled jobs offer retry. The dashboard can start
 the existing outbound consumer using
 `worker/.secrets/prod-pc-token`, and stop it only while idle (no running job or
-processing child). Close monitor shuts down only the local dashboard server;
-closing a browser tab leaves the server and consumer running. The
+processing child). Launch starts the consumer automatically or adopts its existing
+process tree. Windows Job Objects with kill-on-close own all consumer children;
+pre-existing child groups receive their own object when Windows cannot merge
+their existing job hierarchies. Every handle is owned only by Studio;
+closing the window or Close Studio stops both the server and consumer immediately.
+Even an app crash closes the Job Object handle and kills its consumer descendants.
+An interrupted running job remains leased until expiry, then can be reclaimed
+within the existing three-attempt cap on
+the next launch and resumed under the existing fixed-build contract. Partial
+files are retained. Closing does not permanently cancel the book's queue job.
+Repeated launches focus the existing window via a per-checkout named mutex.
+The isolated WebView profile is deleted on exit. Startup failures clean up acquired
+resources and show an actionable native message. The
 two tokens and the OpenAI key remain local and are never displayed or logged.
 The owner API client uses only the fixed production HTTPS origin and does not
 follow redirects with its bearer token. It sends the same OpenShelf User-Agent
