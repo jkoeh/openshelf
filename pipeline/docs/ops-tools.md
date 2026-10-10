@@ -22,7 +22,10 @@ attempts, stage, heartbeat/lease expiry, local consumer status, and local log
 tail. An expired running lease is labeled stuck; a long but heartbeating job is
 still working. Only a queued job may be set high/normal priority. Cancel asks
 for confirmation, revokes its Worker lease, and the PC stops a running child at
-its next heartbeat. Failed/canceled jobs offer retry. The dashboard can start
+its next heartbeat. Failed/canceled jobs with fewer than three attempts offer
+retry. Retry preserves the job and build, clears its error, and consumes a new
+daily start only when successfully requeued within the queue and daily caps.
+The dashboard can start
 the existing outbound consumer using
 `worker/.secrets/prod-pc-token`, and stop it only while idle (no running job or
 processing child). Launch starts the consumer automatically or adopts its existing

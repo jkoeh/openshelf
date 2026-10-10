@@ -162,7 +162,10 @@ still query D1; clients receive `no-store`, and job state can lag by at most
 deduplication, three pending jobs, 300 successful start reservations per UTC
 day and three attempts per job. Canceling a queued/running job moves it to a
 terminal `canceled` state and revokes its lease without refunding the start;
-the PC stops at its next rejected heartbeat.
+the PC stops at its next rejected heartbeat. The owner can retry failed or
+canceled jobs with fewer than three attempts. Retry requeues the same job and
+build, clears its error, and reserves another daily start atomically with the
+queue transition; the 300-per-day and three-pending-job caps still apply.
 The local Windows monitor uses owner authentication for a bounded, no-store
 queue view: all active jobs (the queue cap bounds these) plus the 20 most recent
 terminal jobs, joined to source title/author. It receives priority, attempts,

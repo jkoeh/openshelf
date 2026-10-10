@@ -174,6 +174,9 @@ Notes:
   Cancellation is a terminal job state: queued
   work cannot be claimed, and a running consumer loses its lease on the next
   heartbeat and stops its child process. A canceled start is not refunded.
+  Owner retry accepts failed or canceled jobs with fewer than three attempts,
+  preserves the original job/build, clears its error, and atomically reserves
+  a new daily start when returning the job to the capped queue.
 - The local Windows monitor reads a bounded owner-only job list every 15 seconds.
   It shows queued, running, expired-lease (stuck), and recent terminal jobs,
   plus the local consumer process and log. Queued jobs have normal or high

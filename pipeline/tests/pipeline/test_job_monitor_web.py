@@ -99,6 +99,20 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(self.request("/api/job", "POST", {"id": job_id, "action": "retry"})[0], 200)
         self.api.retry.assert_called_once_with(job_id)
 
+    def test_retry_accepts_canceled_jobs_but_rejects_exhausted_attempts(self):
+        for state in ("failed", "canceled"):
+            for attempts in (2, 3):
+                with self.subTest(state=state, attempts=attempts):
+                    entry = job(state=state, attempts=attempts)
+                    self.api.list_jobs.return_value = ([], [monitor.MonitoredJob.from_api(entry)])
+                    self.api.retry.reset_mock()
+                    status = self.request("/api/job", "POST", {"id": entry["id"], "action": "retry"})[0]
+                    self.assertEqual(status, 200 if attempts < 3 else 409)
+                    if attempts < 3:
+                        self.api.retry.assert_called_once_with(entry["id"])
+                    else:
+                        self.api.retry.assert_not_called()
+
     def test_log_redaction_and_no_exception_leak(self):
         directory = self.root / "worker" / ".secrets"
         directory.mkdir(parents=True)

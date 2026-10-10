@@ -41,7 +41,7 @@ function actions(job) {
   const node = element('div', undefined, 'book-actions');
   if (job.state === 'queued') node.append(button(job.priority ? '↓ Normal priority' : '↑ Move up next', () => jobAction(job, job.priority ? 'normal' : 'high')));
   if (['queued','running'].includes(job.state)) node.append(button('Cancel', () => jobAction(job, 'cancel'), 'secondary cancel'));
-  if (['failed','canceled'].includes(job.state)) node.append(button('Retry', () => jobAction(job, 'retry')));
+  if (['failed','canceled'].includes(job.state) && job.attempts < 3) node.append(button('Retry', () => jobAction(job, 'retry')));
   return node;
 }
 function render() {

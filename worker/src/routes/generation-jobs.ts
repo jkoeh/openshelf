@@ -118,7 +118,7 @@ const retry = createRoute({
 	method: "post",
 	path: "/:id/retry",
 	tags: ["generation"],
-	summary: "Retry failed job in its original build",
+	summary: "Retry failed or canceled job in its original build",
 	request: { params: Id },
 	responses: {
 		200: jobResponse,
@@ -493,7 +493,7 @@ owner.openapi(retry, async (c) => {
 		id = c.req.valid("param").id,
 		job = await get(db, id);
 	if (!job) return c.json({ error: { code: "NOT_FOUND", message: "Job not found" } }, 404);
-	if (job.state !== "failed" || job.attempts >= 3)
+	if (!["failed", "canceled"].includes(job.state) || job.attempts >= 3)
 		return c.json({ error: { code: "NOT_RETRYABLE", message: "Job cannot be retried" } }, 409);
 	const start = crypto.randomUUID(),
 		timestamp = now();
@@ -502,12 +502,12 @@ owner.openapi(retry, async (c) => {
 			db,
 			start,
 			timestamp,
-			"(SELECT COUNT(*) FROM generation_jobs WHERE state='queued') < 3 AND EXISTS(SELECT 1 FROM generation_jobs WHERE id=? AND state='failed' AND attempts<3)",
+			"(SELECT COUNT(*) FROM generation_jobs WHERE state='queued') < 3 AND EXISTS(SELECT 1 FROM generation_jobs WHERE id=? AND state IN ('failed','canceled') AND attempts<3)",
 			[id],
 		),
 		db
 			.prepare(`UPDATE generation_jobs SET state='queued',stage='queued',start_id=?,error_code=NULL,updated_at=?
-		WHERE id=? AND state='failed' AND EXISTS(SELECT 1 FROM generation_starts WHERE id=?)
+		WHERE id=? AND state IN ('failed','canceled') AND attempts<3 AND EXISTS(SELECT 1 FROM generation_starts WHERE id=?)
 		AND (SELECT COUNT(*) FROM generation_jobs WHERE state='queued') < 3`)
 			.bind(start, timestamp, id, start),
 	]);

@@ -422,7 +422,39 @@ describe("source search and generation API", () => {
 		expect((await (await claim()).json<{ job: unknown }>()).job).toBeNull();
 	});
 
-	it("does not spend a daily slot for a full queue or rejected retry", async () => {
+	it.each(["failed", "canceled"])("retries %s jobs with the same build and a fresh lease", async (state) => {
+		await sync([source(11, "Alice")]);
+		const made = await (await create(11)).json<{ id: string }>();
+		const first = (await (await claim()).json<{ job: { build_id: string; lease_token: string } }>()).job;
+		if (state === "canceled") {
+			expect((await request(`/generation-jobs/${made.id}/cancel`, "POST", undefined, ownerToken)).status).toBe(200);
+		} else {
+			expect((await request(`/internal/generation-jobs/${made.id}/finish`, "POST", {
+				lease_token: first.lease_token, success: false, error_code: "PIPELINE_FAILED",
+			}, pcToken)).status).toBe(200);
+		}
+		const path = `/generation-jobs/${made.id}/retry`;
+		expect((await request(path, "POST")).status).toBe(401);
+		const retried = await request(path, "POST", undefined, ownerToken);
+		expect(retried.status).toBe(200);
+		expect(await retried.json()).toMatchObject({ id: made.id, state: "queued", stage: "queued", error_code: null });
+		expect((await request(path, "POST", undefined, ownerToken)).status).toBe(409);
+		const next = (await (await claim()).json<{ job: { id: string; build_id: string; lease_token: string; attempts: number } }>()).job;
+		expect(next).toMatchObject({ id: made.id, build_id: first.build_id, attempts: 2 });
+		expect(next.lease_token).not.toBe(first.lease_token);
+		expect((await request(`/internal/generation-jobs/${made.id}/heartbeat`, "POST", { lease_token: first.lease_token }, pcToken)).status).toBe(409);
+		expect(await env.JOB_DB.prepare("SELECT COUNT(*) n FROM generation_starts").first()).toMatchObject({ n: 2 });
+	});
+
+	it.each(["failed", "canceled"])("rejects %s retry after three attempts without spending a start", async (state) => {
+		await sync([source(11, "Alice")]);
+		const made = await (await create(11)).json<{ id: string }>();
+		await env.JOB_DB.prepare("UPDATE generation_jobs SET state=?,attempts=3 WHERE id=?").bind(state, made.id).run();
+		expect((await request(`/generation-jobs/${made.id}/retry`, "POST", undefined, ownerToken)).status).toBe(409);
+		expect(await env.JOB_DB.prepare("SELECT COUNT(*) n FROM generation_starts").first()).toMatchObject({ n: 1 });
+	});
+
+	it.each(["failed", "canceled"])("does not spend a daily slot for a full queue or rejected %s retry", async (state) => {
 		await sync([
 			source(11, "One"),
 			source(12, "Two"),
@@ -442,7 +474,7 @@ describe("source search and generation API", () => {
 					`gutenberg:${id}`,
 					"1234567890abcdef",
 					start,
-					id === 14 ? "failed" : "queued",
+					id === 14 ? state : "queued",
 					"queued",
 					"2020-01-01T00:00:00Z",
 					"2020-01-01T00:00:00Z",

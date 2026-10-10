@@ -195,7 +195,7 @@ class Handler(BaseHTTPRequestHandler):
                         self.server.api.set_priority(job_id, action == "high")
                     elif action == "cancel" and job.state in {"queued", "running"}:
                         self.server.api.cancel(job_id)
-                    elif action == "retry" and job.state in {"failed", "canceled"}:
+                    elif action == "retry" and job.state in {"failed", "canceled"} and job.attempts < 3:
                         self.server.api.retry(job_id)
                     else:
                         raise monitor.MonitorError("That action is unavailable for this job's current state.")
