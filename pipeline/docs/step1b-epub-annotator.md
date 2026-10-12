@@ -5,7 +5,9 @@
 
 Inject `ContentElement.id` values from parsed `Section` objects back into the
 source EPUB. Sections are grouped by `epub_item_name`, so multiple semantic
-sections in one XHTML document are supported.
+sections or chapters discovered from numbered headings in one XHTML document
+are supported. Heading metadata may omit an embedded illustration caption;
+annotation still matches the complete original element text.
 
 The annotator replays the parser’s content-tag traversal and cleanup rules,
 including meaningful leaf `div` elements, then assigns IDs in source order.

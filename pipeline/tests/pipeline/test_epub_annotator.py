@@ -10,7 +10,8 @@ from unittest.mock import patch, MagicMock, call
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 from openshelf.pipeline.epub_annotator import annotate_epub
-from openshelf.pipeline.epub_parser import ContentElement, Section, SectionHeading
+from openshelf.pipeline.epub_parser import ContentElement, Section, SectionHeading, parse_epub
+from bs4 import BeautifulSoup
 
 
 # --- Test helpers ---
@@ -78,6 +79,34 @@ class TestAnnotateEpubReturnType(unittest.TestCase):
 
 
 class TestAnnotateEpubIdInjection(unittest.TestCase):
+
+    @patch("openshelf.pipeline.epub_annotator.epub.write_epub")
+    @patch("openshelf.pipeline.epub_annotator.epub.read_epub")
+    def test_split_chapters_keep_heading_and_body_ids_on_original_tags(self, mock_read, mock_write):
+        html = ('<html><body><div><p>Continued prose.</p>'
+                '<h2><span class="caption">An illustration.</span>CHAPTER X.</h2>'
+                '<p>First chapter text.</p><h2>CHAPTER XI.</h2>'
+                '<p>Second chapter text.</p></div></body></html>')
+        item = _make_epub_item("body.xhtml", html)
+        item.get_id.return_value = "body"
+        book = _make_epub_book([item])
+        book.spine = [("body", "yes")]
+        book.toc = []
+        book.get_metadata.return_value = []
+        mock_read.return_value = book
+        mock_write.side_effect = lambda buf, book: buf.write(b"")
+        sections = parse_epub("fake.epub")
+
+        annotate_epub("fake.epub", sections)
+
+        soup = BeautifulSoup(item.set_content.call_args[0][0], "html.parser")
+        for section in sections:
+            for element in section.elements:
+                tag = soup.find(id=element.id)
+                self.assertIsNotNone(tag)
+                self.assertEqual(tag.get_text(" ", strip=True), element.text)
+        self.assertEqual([s.ordinal for s in sections], [10, 11])
+        self.assertEqual([s.text for s in sections], ["First chapter text.", "Second chapter text."])
 
     @patch("openshelf.pipeline.epub_annotator.epub.write_epub")
     @patch("openshelf.pipeline.epub_annotator.epub.read_epub")

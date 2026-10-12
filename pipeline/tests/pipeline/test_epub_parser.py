@@ -85,6 +85,44 @@ def _section(sequence: int = 1) -> Section:
 
 class TestSemanticSectionParsing(unittest.TestCase):
     @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_gutenberg_chapters_split_inside_wrappers_without_losing_continuation(self, read_epub):
+        from ebooklib import epub
+        continuation, first, second = (_words(name) for name in ("continued", "first", "second"))
+        book = _book([_item("body", "body.xhtml", (
+            f'<html><body><div><p>{continuation}</p><h2 id="ch11">'
+            '<a id="CHAPTER_XI"></a><span class="caption">Piling up the fire.</span>'
+            'CHAPTER XI.</h2><p>' + first + '</p></div><div>'
+            '<h2 id="ch12">CHAPTERXII.</h2><h3>A title</h3>'
+            f'<p>{second}</p><aside epub:type="footnote"><h2>Chapter 99.</h2>'
+            '<p>Note text</p></aside></div></body></html>'
+        ))])
+        book.toc = [epub.Link("body.xhtml#ch11", "Chapter XI.", "one"),
+                    epub.Link("body.xhtml#ch12", "Chapter XII.", "two")]
+        read_epub.return_value = book
+
+        sections = parse_epub("gutenberg.epub")
+
+        self.assertEqual([s.ordinal for s in sections], [None, 11, 12])
+        self.assertEqual([s.text for s in sections], [continuation, first, second])
+        self.assertEqual(sections[1].heading.display_label, "CHAPTER XI.")
+        self.assertEqual(sections[1].heading.spoken_text, "Chapter Eleven.")
+        self.assertEqual(sections[2].heading.spoken_text, "Chapter Twelve. A title.")
+        self.assertIn("Piling up the fire.", sections[1].elements[0].text)
+        self.assertEqual(sections[2].heading.element_ids, ["sec3-el0000", "sec3-el0001"])
+        self.assertFalse(sections[2].elements[-1].spoken)
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
+    def test_navigation_keeps_first_document_label_and_exact_fragment(self, read_epub):
+        from ebooklib import epub
+        body = _words("body")
+        book = _book([_item("body", "body.xhtml", f'<body><p>{body}</p></body>')])
+        book.toc = [epub.Link("body.xhtml#one", "Chapter I.", "one"),
+                    epub.Link("body.xhtml#two", "Chapter II.", "two")]
+        read_epub.return_value = book
+        [section] = parse_epub("book.epub")
+        self.assertEqual(section.ordinal, 1)
+
+    @patch("openshelf.pipeline.epub_parser.epub.read_epub")
     def test_roman_chapter_preserves_display_and_normalizes_spoken_heading(self, read_epub):
         body = _words("alice")
         read_epub.return_value = _book([
@@ -244,6 +282,21 @@ class TestSemanticSectionParsing(unittest.TestCase):
 
 
 class TestAliceRegression(unittest.TestCase):
+    def test_real_gutenberg_pride_and_prejudice_discovers_all_61_chapters(self):
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        path = os.path.join(root, "download", "books", "gutenberg", "austen-jane",
+                            "pride-and-prejudice-g1342.epub")
+        if not os.path.exists(path):
+            self.skipTest("local Gutenberg Pride and Prejudice fixture is not available")
+        sections = parse_epub(path)
+        chapters = [s for s in sections if s.ordinal is not None]
+        self.assertEqual([s.ordinal for s in chapters], list(range(1, 62)))
+        self.assertIn("truth universally acknowledged", chapters[0].text[:200])
+        self.assertGreater(sum(s.word_count for s in sections), 120000)
+        self.assertEqual(chapters[-1].heading.spoken_text, "Chapter Sixty-One.")
+        self.assertEqual(len({e.id for s in sections for e in s.elements}),
+                         sum(len(s.elements) for s in sections))
+
     def test_real_standard_ebooks_alice_keeps_epigraph_and_twelve_ordinals(self):
         root = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "..", "..")

@@ -58,9 +58,15 @@ covers, imprints, colophons, illustration lists, copyright/uncopyright pages,
 and Gutenberg legal boilerplate are excluded from audiobook sections.
 
 Each semantic `section` or `article` container with its own meaningful content
-becomes an audiobook section. When no semantic child container exists, the
-document body is one candidate. Multiple sections in one XHTML document retain
-document order.
+becomes an audiobook section. When no semantic child container exists, explicit
+numbered chapter headings split the document into separate sections, even when
+several chapters share one XHTML file or sit inside non-semantic wrappers.
+Content before the first chapter remains a separate candidate subject to the
+existing filtering rules; this preserves prose continuing from a previous file.
+Without numbered chapter headings, the document body is one candidate.
+Multiple sections in one XHTML document retain document order. Navigation labels
+retain their fragment targets; a document-level fallback uses the first label,
+never the last chapter in the file.
 
 Classification precedence is:
 
@@ -89,6 +95,10 @@ The section heading is built from leading heading-like elements:
 For a chapter:
 
 - a Roman/Arabic or `Chapter N` label becomes `display_label`;
+- terminal periods and Gutenberg's `CHAPTERXXVII.` spelling are accepted;
+- illustration captions embedded in headings are excluded from heading display
+  and speech, while the original element HTML and text remain available for
+  annotation;
 - a following title/subtitle becomes `display_title`;
 - a standalone non-numeric heading becomes `display_title`;
 - `spoken_text` deterministically expands an English ordinal, e.g. display
@@ -124,3 +134,12 @@ The Standard Ebooks edition parses as:
 
 The source title page is excluded. Chapter 1 body starts with
 `Alice was beginning...`.
+
+## Gutenberg Pride and Prejudice regression
+
+The illustrated Gutenberg edition (1342) contains 61 numbered chapter headings
+across six body XHTML files. All 61 chapter ordinals must be discovered in order;
+each heading is excluded from its own body text, and each source content block
+is assigned to at most one section. XHTML file boundaries can also create
+unnumbered continuation sections; they must not drop narrative text. Existing
+generated builds require regeneration under a fresh build ID to use this parse.

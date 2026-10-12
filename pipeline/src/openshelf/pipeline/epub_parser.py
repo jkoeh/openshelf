@@ -159,11 +159,11 @@ _GUTENBERG_SEPARATOR_RE = re.compile(
 _ROMAN_VALUES = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
 _INVISIBLE_TEXT_RE = re.compile("[\ufeff\u200b\u200c\u200d\u2060]")
 _CHAPTER_PREFIX_RE = re.compile(
-    r"^chapter\s+([IVXLCDM]+|\d+)(?:\s*[.:\-—]\s*(.+))?$",
+    r"^chapter\s*([IVXLCDM]+|\d+)(?:\s*[.:\-—]\s*(.*))?$",
     re.IGNORECASE,
 )
 _ORDINAL_TITLE_RE = re.compile(
-    r"^([IVXLCDM]+|\d+)(?:\s*[.:\-—]\s+(.+))?$",
+    r"^([IVXLCDM]+|\d+)(?:\s*[.:\-—]\s*(.*))?$",
     re.IGNORECASE,
 )
 
@@ -324,7 +324,18 @@ def _semantic_candidates(soup: BeautifulSoup) -> list:
         if _semantic_type_for_node(node)
     ]
     if not semantic:
-        return [soup.body or soup]
+        root = soup.body or soup
+        tags = list(iter_content_tags(root))
+        boundaries = [
+            index for index, tag in enumerate(tags)
+            if _is_heading_tag(tag) and _is_spoken(tag)
+            and _section_type_from_heading(_heading_texts([tag]))[1] is not None
+        ]
+        if not boundaries:
+            return [root]
+        # Keep the original tags and ancestors for annotation and spoken flags.
+        starts = ([0] if boundaries[0] else []) + boundaries
+        return [tags[start:end] for start, end in zip(starts, starts[1:] + [len(tags)])]
 
     candidates = []
     for node in semantic:
@@ -357,6 +368,9 @@ def _has_nested_content_tag(tag, excluded: set[int]) -> bool:
 
 def iter_content_tags(root, excluded_roots: Iterable | None = None):
     """Yield source content blocks once, including meaningful leaf divs."""
+    if isinstance(root, list):
+        yield from root
+        return
     excluded = {id(node) for node in (excluded_roots or [])}
     for tag in root.find_all(_CONTENT_TAGS):
         if any(id(parent) in excluded for parent in [tag] + list(tag.parents)):
@@ -402,11 +416,17 @@ def _leading_heading_tags(candidate, excluded_roots: Iterable | None = None) -> 
 
 
 def _heading_texts(heading_tags: list) -> list[str]:
-    return [
-        clean_extracted_text(tag.get_text(separator=" "))
-        for tag in heading_tags
-        if clean_extracted_text(tag.get_text(separator=" "))
-    ]
+    texts = []
+    for tag in heading_tags:
+        # Gutenberg embeds illustration captions inside chapter heading tags.
+        # Strip them only from heading metadata, leaving source elements intact.
+        heading = BeautifulSoup(str(tag), "html.parser")
+        for caption in heading.select(".caption"):
+            caption.decompose()
+        text = clean_extracted_text(heading.get_text(separator=" "))
+        if text:
+            texts.append(text)
+    return texts
 
 
 def _section_type_from_heading(texts: list[str]) -> tuple[str | None, int | None, str]:
@@ -436,8 +456,10 @@ def _navigation_labels(book) -> dict[str, str]:
             href = getattr(entry, "href", "")
             title = getattr(entry, "title", "")
             if href and title:
-                path = unquote(urldefrag(href)[0]).lstrip("./")
-                labels[path] = clean_extracted_text(title)
+                target = unquote(href).lstrip("./")
+                path = urldefrag(target)[0]
+                labels.setdefault(path, clean_extracted_text(title))
+                labels.setdefault(target, clean_extracted_text(title))
 
     visit(getattr(book, "toc", []))
     return labels
@@ -643,11 +665,16 @@ def parse_epub(epub_path: str) -> list[Section]:
             excluded = [
                 other
                 for other in candidates
-                if other is not candidate and candidate in list(other.parents)
+                if not isinstance(other, list)
+                and other is not candidate and candidate in list(other.parents)
             ]
             heading_tags = _leading_heading_tags(candidate, excluded)
             heading_texts = _heading_texts(heading_tags)
-            nav_label = nav_labels.get(filename, "")
+            nav_label = next(
+                (nav_labels[f"{filename}#{tag.get('id')}"] for tag in heading_tags
+                 if f"{filename}#{tag.get('id')}" in nav_labels),
+                "" if isinstance(candidate, list) else nav_labels.get(filename, ""),
+            )
             section_type, ordinal, inline_title = _classify_candidate(
                 candidate,
                 filename,
