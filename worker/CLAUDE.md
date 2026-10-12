@@ -146,6 +146,8 @@ source-EPUB upload accepts only indexed Standard Ebooks IDs, EPUB ZIP magic and
 at most 32 MiB. Cache keys use SHA-256 of the source ID under
 `source-epubs/standardebooks/`; responses use `no-store`. Missing cached files
 return 502 without contacting upstream. Direct downloads still redirect.
+HEAD requests check R2 metadata only and return no body, allowing the importer
+to skip cached EPUBs without opening an unused R2 stream.
 The public `GOOGLE_CLIENT_ID` is declared as a plain-text variable in
 `wrangler.toml` for each development/deployment environment and matches the
 client's build-time `EXPO_PUBLIC_GOOGLE_CLIENT_ID`. It is not a client secret.

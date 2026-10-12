@@ -78,6 +78,9 @@ describe("source search and generation API", () => {
 		expect(response.status).toBe(200);
 		expect(await response.text()).toBe("PK\x03\x04epub-bytes");
 		expect(response.headers.get("Cache-Control")).toBe("no-store");
+		const head = await app.request(`${origin}/api/v1${route}?inline=1`, { method: "HEAD" }, { R2_BUCKET: env.R2_BUCKET, JOB_DB: env.JOB_DB, SEARCH_RATE_LIMITER: limiter });
+		expect(head.status).toBe(200);
+		expect(await head.text()).toBe("");
 		for (const invalid of [epubUrl.replace("/alice/", "/other/"), epubUrl + "&evil=1", epubUrl.replace("standardebooks.org", "evil.example")]) {
 			expect((await sync([{ source_id: sourceId, title: "Alice", author: "Lewis Carroll", epub_url: invalid }])).status).toBe(400);
 		}

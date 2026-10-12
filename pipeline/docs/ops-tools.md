@@ -183,6 +183,9 @@ and nonempty text before indexing, then upload the reading copy through the
 PC-authenticated source-EPUB route (32 MiB maximum). This allows reading despite
 Standard Ebooks blocking Cloudflare upstream fetches. Dry runs check metadata
 without EPUB downloads or API writes. Failed EPUB validations are skipped.
+Already cached editions are checked with HEAD and skipped without downloading
+again. HTTP 403/429 stops the run immediately, preserving completed imports;
+retry later after the upstream limit clears. No automatic retries bypass limits.
 
 The operator downloads Gutenberg's weekly CSV.gz and RDF tar.bz2 feeds into
 `download/`, then runs `books sync-catalog --catalog <csv.gz> --rights-archive

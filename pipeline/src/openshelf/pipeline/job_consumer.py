@@ -250,6 +250,19 @@ class JobAPI:
         with urllib.request.urlopen(request, timeout=90) as response:
             return json.load(response)
 
+    def source_epub_cached(self, source_id: str) -> bool:
+        request = urllib.request.Request(
+            self.base + "/source-books/" + urllib.parse.quote(source_id, safe="") + "/epub?inline=1",
+            method="HEAD", headers={"User-Agent": "OpenShelf/1.0 (+https://github.com/jkoeh/openshelf)"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return response.status == 200
+        except urllib.error.HTTPError as exc:
+            if exc.code in (404, 502):
+                return False
+            raise
+
 
 def sync_gutenberg(api: JobAPI, pages: int) -> int:
     url = "https://gutendex.com/books/"

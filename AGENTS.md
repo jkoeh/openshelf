@@ -307,6 +307,9 @@ an indexed Standard Ebooks ID. Inline reading streams this cache with `no-store`
 missing caches fail explicitly. Direct download requests retain the source redirect.
 `--dry-run` validates metadata without downloading or uploading EPUBs. Source
 cache bytes are independent of audiobook publication and are retained on refresh.
+Imports check the cache with a HEAD request before downloading an EPUB again.
+HTTP 403 or 429 stops the import immediately with a nonzero status, preserving
+completed entries; operators may resume later without repeating cached downloads.
 Standard Ebooks publication slugs append `-se-` plus the first 12 hex characters
 of SHA-256 of the source ID; Gutenberg retains `-g<id>`. Both generation modes
 share existing limits, leases, resume behavior, and publication checks.

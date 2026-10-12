@@ -241,7 +241,13 @@ app.openapi(downloadRoute, async (c) => {
 	if (source_id.startsWith("standardebooks:")) url.search = "?source=download";
 	if (c.req.valid("query").inline === "1") {
 		if (source_id.startsWith("standardebooks:")) {
-			const cached = await c.env.R2_BUCKET.get(await sourceEpubKey(source_id));
+			const key = await sourceEpubKey(source_id);
+			if (c.req.method === "HEAD") {
+				const cached = await c.env.R2_BUCKET.head(key);
+				if (!cached) return c.json({ error: { code: "SOURCE_UNAVAILABLE", message: "This EPUB has not been cached yet. Try again shortly." } }, 502, noStore);
+				return new Response(null, { headers: { ...noStore, "Content-Type": "application/epub+zip" } });
+			}
+			const cached = await c.env.R2_BUCKET.get(key);
 			if (!cached) return c.json({ error: { code: "SOURCE_UNAVAILABLE", message: "This EPUB has not been cached yet. Try again shortly." } }, 502, noStore);
 			return new Response(cached.body, { headers: { ...noStore, "Content-Type": "application/epub+zip" } });
 		}

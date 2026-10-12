@@ -6,6 +6,7 @@ import io
 import tarfile
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -37,6 +38,7 @@ class CatalogTests(unittest.TestCase):
         with patch.object(se, "catalog_books", return_value=[book]), \
                 patch.object(source_catalog.JobAPI, "__init__", return_value=None), \
                 patch.object(source_catalog.JobAPI, "post", side_effect=lambda route, body: posts.append((route, body))), \
+                patch.object(source_catalog.JobAPI, "source_epub_cached", return_value=False), \
                 patch("openshelf.pipeline.job_consumer.fetch_epub", side_effect=lambda url, sid, path: path.write_bytes(b"PK\x03\x04")), \
                 patch("openshelf.pipeline.job_consumer.check_epub_rights"), \
                 patch("openshelf.pipeline.job_consumer.check_spoken_text", return_value=100), \
@@ -45,6 +47,20 @@ class CatalogTests(unittest.TestCase):
             self.assertEqual(upload.call_args.args[0], source_id)
         self.assertEqual(posts[0][0], "/internal/source-books/sync")
         self.assertEqual(posts[0][1]["books"], [book])
+
+    def test_standard_ebooks_skips_cached_downloads_and_stops_on_rate_limit(self):
+        books = [{"source_id": "standardebooks:author/one", "epub_url": "https://standardebooks.org/one"},
+                 {"source_id": "standardebooks:author/two", "epub_url": "https://standardebooks.org/two"},
+                 {"source_id": "standardebooks:author/three", "epub_url": "https://standardebooks.org/three"}]
+        with patch.object(se, "catalog_books", return_value=books), \
+                patch.object(source_catalog.JobAPI, "__init__", return_value=None), \
+                patch.object(source_catalog.JobAPI, "source_epub_cached", side_effect=[True, False]) as cached, \
+                patch("openshelf.pipeline.job_consumer.fetch_epub", side_effect=urllib.error.HTTPError(books[1]["epub_url"], 429, "Limited", {}, None)) as fetch, \
+                patch.object(source_catalog.JobAPI, "post") as post:
+            self.assertEqual(source_catalog.main(["--source", "standard-ebooks", "--api-base", "https://example.com/api/v1"]), 1)
+            self.assertEqual(cached.call_count, 2)
+            self.assertEqual(fetch.call_count, 1)
+            post.assert_not_called()
 
     @staticmethod
     def rdf(number, rights, epub_url=None):

@@ -9,6 +9,7 @@ import os
 import re
 import tarfile
 import tempfile
+import urllib.error
 from pathlib import Path
 
 from openshelf.pipeline.job_consumer import (JobAPI, MAX_RIGHTS_BYTES,
@@ -132,11 +133,21 @@ def main(argv=None) -> int:
             with tempfile.TemporaryDirectory() as directory:
                 epub = Path(directory) / "book.epub"
                 try:
+                    if api.source_epub_cached(book["source_id"]):
+                        total += 1
+                        print(f"Already cached {total}; source ID {book['source_id']}")
+                        continue
                     fetch_epub(book["epub_url"], book["source_id"], epub)
                     if epub.stat().st_size > 32 * 1024 * 1024:
                         raise ValueError("EPUB exceeds reader size limit")
                     check_epub_rights(epub, book["source_id"])
                     check_spoken_text(epub)
+                except urllib.error.HTTPError as exc:
+                    if exc.code in (403, 429):
+                        print(f"Stopped after {total} cached editions: HTTP {exc.code}. Retry the import later.")
+                        return 1
+                    print(f"Skipped {book['source_id']}: HTTP {exc.code}")
+                    continue
                 except (ValueError, OSError) as exc:
                     print(f"Skipped {book['source_id']}: {type(exc).__name__}")
                     continue
