@@ -6,6 +6,7 @@ import type {
 	CatalogResponse,
 	SectionResponse,
 	Manifest,
+	BookManagement,
 } from "../types";
 
 class ApiError extends Error {
@@ -46,7 +47,7 @@ export interface CatalogParams {
 	sort?: string;
 }
 
-export function fetchCatalog(params: CatalogParams = {}): Promise<CatalogResponse> {
+export function fetchCatalog(params: CatalogParams = {}, fresh = false): Promise<CatalogResponse> {
 	const search = new URLSearchParams();
 	if (params.q) search.set("q", params.q);
 	if (params.author) search.set("author", params.author);
@@ -54,7 +55,7 @@ export function fetchCatalog(params: CatalogParams = {}): Promise<CatalogRespons
 	if (params.limit) search.set("limit", String(params.limit));
 	if (params.sort) search.set("sort", params.sort);
 	const qs = search.toString();
-	return fetchJson<CatalogResponse>(`${API_BASE}/catalog${qs ? `?${qs}` : ""}`);
+	return fetchJson<CatalogResponse>(`${API_BASE}/catalog${qs ? `?${qs}` : ""}`, fresh ? { cache: "no-store" } : undefined);
 }
 
 export function fetchSourceBooks(q: string): Promise<{ books: SourceBook[] }> {
@@ -115,8 +116,18 @@ export function verifyAdminIdentity(token: string): Promise<{ email: string }> {
 	return ownerRequest("/admin/me", token);
 }
 
-export function fetchBook(author: string, title: string): Promise<Manifest> {
-	return fetchJson<Manifest>(`${API_BASE}/books/${author}/${title}`);
+export function fetchBook(author: string, title: string, fresh = false): Promise<Manifest> {
+	return fetchJson<Manifest>(`${API_BASE}/books/${author}/${title}`, fresh ? { cache: "no-store" } : undefined);
+}
+
+export function fetchBookManagement(author: string, title: string, token: string): Promise<BookManagement> {
+	return ownerRequest(`/books/${encodeURIComponent(author)}/${encodeURIComponent(title)}/management`, token);
+}
+
+export function deleteBook(author: string, title: string, token: string): Promise<{ deleted: true }> {
+	return fetchJson(`${API_BASE}/books/${encodeURIComponent(author)}/${encodeURIComponent(title)}`, {
+		method: "DELETE", headers: { Authorization: `Bearer ${token}` }, cache: "no-store",
+	});
 }
 
 export function fetchBookBuilds(author: string, title: string): Promise<BookBuildsResponse> {

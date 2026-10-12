@@ -383,6 +383,10 @@ owner.openapi(create, async (c) => {
 		.first<{ source_id: string; author_slug: string | null; title_slug: string | null }>();
 	if (!source)
 		return c.json({ error: { code: "NOT_FOUND", message: "Source edition not indexed" } }, 404);
+	if (await db.prepare(`SELECT 1 FROM book_deletions d JOIN source_books s
+		ON s.author_slug=d.author_slug AND s.title_slug=d.title_slug WHERE s.source_id=?`)
+		.bind(source_id).first())
+		return c.json({ error: { code: "BOOK_DELETING", message: "Finish deleting this book before generating audio" } }, 409, noStore);
 	const existing = await db
 		.prepare(
 			`SELECT ${fields} FROM generation_jobs WHERE source_id=? AND state IN ('queued','running') LIMIT 1`,
@@ -494,6 +498,10 @@ owner.openapi(retry, async (c) => {
 		id = c.req.valid("param").id,
 		job = await get(db, id);
 	if (!job) return c.json({ error: { code: "NOT_FOUND", message: "Job not found" } }, 404);
+	if (await db.prepare(`SELECT 1 FROM book_deletions d JOIN source_books s
+		ON s.author_slug=d.author_slug AND s.title_slug=d.title_slug WHERE s.source_id=?`)
+		.bind(job.source_id).first())
+		return c.json({ error: { code: "BOOK_DELETING", message: "Finish deleting this book before retrying audio" } }, 409, noStore);
 	if (!["failed", "canceled"].includes(job.state) || job.attempts >= 3)
 		return c.json({ error: { code: "NOT_RETRYABLE", message: "Job cannot be retried" } }, 409);
 	const start = crypto.randomUUID(),

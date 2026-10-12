@@ -10,6 +10,9 @@ import {
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Image, Pressable, ScrollView, Text, View } from "react-native";
 import ChapterList from "../../../components/ChapterList";
+import AdminSignIn from "../../../components/AdminSignIn";
+import BookOwnerActions from "../../../components/BookOwnerActions";
+import { useOwner } from "../../../hooks/useOwner";
 import Header from "../../../components/Header";
 import { useTheme } from "../../../hooks/useTheme";
 import { coverUrl, fetchBook, fetchBookBuilds } from "../../../lib/api";
@@ -45,7 +48,14 @@ export default function BookDetailPage() {
 	}>();
 	const { colors } = useTheme();
 	const router = useRouter();
+	const { token, setToken } = useOwner();
+	const [refreshVersion, setRefreshVersion] = useState(0);
+	const ownerSignIn = <AdminSignIn token={token} onToken={setToken} />;
 	const [manifest, setManifest] = useState<Manifest | null>(null);
+	const ownerActions = author && title ? <BookOwnerActions key={`${author}/${title}`}
+		author={author} title={title} bookTitle={manifest?.title ?? title}
+		onDeleted={() => router.replace({ pathname: "/", params: { refresh: String(Date.now()) } })}
+		onRefresh={() => setRefreshVersion((value) => value + 1)} /> : null;
 	const [builds, setBuilds] = useState<BookBuildsResponse | null>(null);
 	const [selectedRenditionKey, setSelectedRenditionKey] = useState<string | null>(null);
 	const [selectedBuildId, setSelectedBuildId] = useState<string | null>(null);
@@ -66,7 +76,7 @@ export default function BookDetailPage() {
 		setSelectedBuildId(saved?.build ?? build ?? null);
 		setSelectedEngine(null);
 		setRenditionSelectorOpen(false);
-		fetchBook(author, title)
+		fetchBook(author, title, refreshVersion > 0)
 			.then((data) => {
 				if (!cancelled) setManifest(data);
 			})
@@ -86,12 +96,12 @@ export default function BookDetailPage() {
 		return () => {
 			cancelled = true;
 		};
-	}, [author, title, rendition, build]);
+	}, [author, title, rendition, build, refreshVersion]);
 
 	if (loading) {
 		return (
 			<View style={{ flex: 1, backgroundColor: colors.background }}>
-				<Header showBack />
+				<Header showBack rightElement={ownerSignIn} />
 				<ActivityIndicator style={{ flex: 1 }} color={colors.primary} />
 			</View>
 		);
@@ -100,7 +110,8 @@ export default function BookDetailPage() {
 	if (error || !manifest || !author || !title) {
 		return (
 			<View style={{ flex: 1, backgroundColor: colors.background }}>
-				<Header title="Error" showBack />
+				<Header title="Error" showBack rightElement={ownerSignIn} />
+				{ownerActions}
 				<View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
 					<Text style={{ color: colors.textSecondary, fontSize: 17 }}>
 						{error ?? "Book not found"}
@@ -116,7 +127,8 @@ export default function BookDetailPage() {
 	if (!selected) {
 		return (
 			<View style={{ flex: 1, backgroundColor: colors.background }}>
-				<Header title="Error" showBack />
+				<Header title="Error" showBack rightElement={ownerSignIn} />
+				{ownerActions}
 				<View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
 					<Text style={{ color: colors.textSecondary, fontSize: 17 }}>
 						No playable rendition found
@@ -204,8 +216,9 @@ export default function BookDetailPage() {
 
 	return (
 		<View style={{ flex: 1, backgroundColor: colors.background }}>
-			<Header showBack />
+			<Header showBack rightElement={ownerSignIn} />
 			<ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+				{ownerActions}
 				{/* Hero — book cover + metadata */}
 				<View style={{ alignItems: "center", paddingTop: 24, paddingBottom: 20, paddingHorizontal: 24 }}>
 					{/* Generated cover */}

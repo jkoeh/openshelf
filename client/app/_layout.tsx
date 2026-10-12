@@ -2,6 +2,7 @@ import "../global.css";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { ThemeProvider, useTheme } from "../hooks/useTheme";
+import { OwnerProvider } from "../hooks/useOwner";
 
 function ThemedStack() {
   const { colors, theme } = useTheme();
@@ -22,7 +23,7 @@ function ThemedStack() {
 export default function RootLayout() {
   return (
     <ThemeProvider>
-      <ThemedStack />
+      <OwnerProvider><ThemedStack /></OwnerProvider>
     </ThemeProvider>
   );
 }

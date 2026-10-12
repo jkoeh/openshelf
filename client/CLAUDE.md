@@ -61,6 +61,18 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
 - `tests/browser/standard-ebooks.pw.ts` checks Standard Ebooks source labels,
   encoded edition-path navigation, immediate EPUB reading and exact job identity.
 - Business logic lives in `lib/` (pure TS, no React imports)
+- `hooks/useOwner.tsx` shares verified owner identity in React memory across routes;
+  sign-out and rejected/expired credentials clear it for all screens.
+- `components/BookOwnerActions.tsx` provides published-book owner controls. It
+  loads the exact indexed source through the authenticated book management API,
+  offers standard regeneration and confirmed paid expressive regeneration, polls
+  the returned job every 15 seconds, and allows canceling active generation.
+  Existing listening stays available during regeneration. Manual/unindexed books
+  explain that regeneration is unavailable but can still be deleted. Delete
+  requires an explicit confirmation naming the book and all renditions/builds,
+  then returns to a refreshed catalog. Errors remain visible and retryable.
+  Deleting immediately after canceling running generation can return a brief
+  wait message while the PC stops that work at its next heartbeat.
 - Hooks in `hooks/` bridge lib logic to React components
 - API base URL via `EXPO_PUBLIC_API_BASE` env var (defaults to localhost:8787)
 - Google owner sign-in uses the public `EXPO_PUBLIC_GOOGLE_CLIENT_ID` from Pages

@@ -98,6 +98,19 @@ npm run seed
 - Routes are thin — extract params, fetch from R2, return JSON
 - Each route is defined by a Zod-driven `createRoute(...)` block + a handler. The Zod schema is the contract: validation, types, and the OpenAPI spec all flow from it. **Never** hand-edit `openapi.json`; change the schema instead.
 - All R2 key construction goes through `utils/r2-keys.ts`
+- The book route also supplies owner-only management metadata and deletion.
+  Management resolves an indexed source by its exact publication slugs; the
+  client never guesses source IDs from book titles. Delete removes the exact
+  book prefix in bounded batches, invalidates its catalog row without overwriting
+  concurrent catalog writes, clears D1 publication pointers, and retires previous
+  jobs. It rejects active generation and canceled, previously claimed work for
+  120 seconds after cancellation, allowing heartbeat rejection or the PC's
+  lease-renewal timeout to stop its child.
+  Migration `0006_book_deletions.sql` adds a
+  per-book deletion guard and database triggers excluding new/retried generation
+  while deletion runs. A ten-minute deletion lease rejects overlapping calls;
+  failures release the lease but retain the guard for safe owner retries. Successful
+  deletion removes the guard. Public responses retain their existing cache policy.
 - Inside `app.openapi(...)` handlers, return errors with inline `c.json({ error: { code, message } }, status)` so the response is type-checked against `ErrorSchema`. The helpers in `utils/response.ts` are reserved for the global `onError`/`notFound` (which run outside any `createRoute`).
 - Path/query schemas live in `schemas/params.ts` if shared across routes; route-local response shapes live in the route file.
 - Tests use `@cloudflare/vitest-pool-workers` with fixture data in `fixtures/`. They use `app.request(...)` and are unaffected by the OpenAPI migration.
@@ -127,6 +140,14 @@ validates the stored HTTPS Gutenberg or Standard Ebooks EPUB URL against the exa
 and redirects to the original EPUB by default. With `inline=1`, it streams the
 validated EPUB through the API for the immediate source reader, without forwarding
 credentials; up to three upstream redirects are revalidated against the exact source ID. Upstream errors return 502.
+For Standard Ebooks, inline reading streams the PC-verified R2 source cache;
+Cloudflare fetches are blocked upstream with 403. The internal PC-authenticated
+source-EPUB upload accepts only indexed Standard Ebooks IDs, EPUB ZIP magic and
+at most 32 MiB. Cache keys use SHA-256 of the source ID under
+`source-epubs/standardebooks/`; responses use `no-store`. Missing cached files
+return 502 without contacting upstream. Direct downloads still redirect.
+HEAD requests check R2 metadata only and return no body, allowing the importer
+to skip cached EPUBs without opening an unused R2 stream.
 It needs no owner/PC credential, GPU job,
 audio word-budget check, or generation-start reservation. It works with the PC
 offline. The completed-book EPUB route continues to serve the annotated R2
@@ -140,14 +161,6 @@ also accepts a Google Identity Services ID token after the Worker verifies its G
 signature, issuer, configured OAuth client audience, expiry, verified email,
 and exact `johnkoeh@gmail.com` address. An unconfigured Google client ID fails
 closed; the existing owner token remains valid for local CLI administration.
-For Standard Ebooks, inline reading streams the PC-verified R2 source cache;
-Cloudflare fetches are blocked upstream with 403. The internal PC-authenticated
-source-EPUB upload accepts only indexed Standard Ebooks IDs, EPUB ZIP magic and
-at most 32 MiB. Cache keys use SHA-256 of the source ID under
-`source-epubs/standardebooks/`; responses use `no-store`. Missing cached files
-return 502 without contacting upstream. Direct downloads still redirect.
-HEAD requests check R2 metadata only and return no body, allowing the importer
-to skip cached EPUBs without opening an unused R2 stream.
 The public `GOOGLE_CLIENT_ID` is declared as a plain-text variable in
 `wrangler.toml` for each development/deployment environment and matches the
 client's build-time `EXPO_PUBLIC_GOOGLE_CLIENT_ID`. It is not a client secret.

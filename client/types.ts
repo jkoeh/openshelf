@@ -85,6 +85,12 @@ export interface Manifest {
   renditions: Record<string, ManifestRendition>;
 }
 
+export interface BookManagement {
+  source_id: string | null;
+  active_job_id: string | null;
+  deleting: boolean;
+}
+
 export interface ManifestRendition {
   voice: string;
   engine: string;

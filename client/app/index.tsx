@@ -8,6 +8,8 @@ import { discoveryColors } from "../constants/discovery";
 import { useTheme } from "../hooks/useTheme";
 import { fetchCatalog } from "../lib/api";
 import type { CatalogBook } from "../types";
+import { useLocalSearchParams } from "expo-router";
+import { useOwner } from "../hooks/useOwner";
 
 const PAGE_SIZE = 20;
 
@@ -21,7 +23,8 @@ export default function CatalogPage() {
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [adminToken, setAdminToken] = useState<string | null>(null);
+  const { token: adminToken, setToken: setAdminToken } = useOwner();
+  const { refresh } = useLocalSearchParams<{ refresh?: string }>();
   const requestVersion = useRef(0);
 
   const loadBooks = useCallback(
@@ -34,7 +37,7 @@ export default function CatalogPage() {
           q: search || undefined,
           page: pageNum,
           limit: PAGE_SIZE,
-        });
+        }, !!refresh);
         if (version !== requestVersion.current) return;
         const newBooks = data.books ?? [];
         setBooks((prev) => (append ? [...prev, ...newBooks] : newBooks));
@@ -46,7 +49,7 @@ export default function CatalogPage() {
         if (version === requestVersion.current) setLoading(false);
       }
     },
-    [],
+    [refresh],
   );
 
   useEffect(() => {

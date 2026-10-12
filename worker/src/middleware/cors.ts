@@ -3,7 +3,7 @@ import type { Env } from "../types";
 
 const CORS_HEADERS = {
 	"Access-Control-Allow-Origin": "*",
-	"Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+	"Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
 	"Access-Control-Allow-Headers": "Content-Type, Range, Authorization, X-Lease-Token",
 	"Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length",
 	"Access-Control-Max-Age": "86400",

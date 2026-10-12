@@ -17,6 +17,8 @@ import {
 	regenerateGenerationJob,
 	requestExpressiveGenerationJob,
 	verifyAdminIdentity,
+	fetchBookManagement,
+	deleteBook,
 } from "../../lib/api";
 
 const mockFetch = vi.fn();
@@ -27,6 +29,18 @@ beforeEach(() => {
 });
 
 describe("source discovery and owner jobs", () => {
+	it("resolves and deletes a book only with the owner bearer token and no-store", async () => {
+		mockFetch.mockImplementation(async () => jsonResponse({ deleted: true }));
+		await fetchBookManagement("jane-austen", "pride-g1342", "google-id-token");
+		await deleteBook("jane-austen", "pride-g1342", "google-id-token");
+		expect(mockFetch.mock.calls[0][0]).toContain("/books/jane-austen/pride-g1342/management");
+		expect(mockFetch.mock.calls[0][1].method).toBe("GET");
+		expect(mockFetch.mock.calls[1][1].method).toBe("DELETE");
+		for (const [, init] of mockFetch.mock.calls) {
+			expect(init.headers.Authorization).toBe("Bearer google-id-token");
+			expect(init.cache).toBe("no-store");
+		}
+	});
 	it("builds an independent EPUB URL for the exact source ID", () => {
 		expect(sourceEpubUrl("gutenberg:2554")).toBe("http://localhost:8787/api/v1/source-books/gutenberg%3A2554/epub");
 		expect(mockFetch).not.toHaveBeenCalled();

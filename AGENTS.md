@@ -62,6 +62,7 @@ flowchart LR
         direction TB
         W_CAT[GET /catalog<br/>catalog.json fast path<br/>book + default rendition/build]
         W_BOOK[GET /books/:a/:t<br/>→ book manifest with current_build per rendition]
+        W_MANAGE[Owner book management<br/>regenerate source + delete publication]
         W_BUILDS[GET /books/:a/:t/builds<br/>-> available renditions/build uploads]
         W_CH[GET /books/:a/:t/sections/:n<br/>?rendition · ?build<br/>→ heading + body + region words]
         W_AUDIO[GET /books/:a/:t/sections/:n/audio<br/>?rendition · ?build<br/>→ m4a stream / range]
@@ -86,8 +87,8 @@ flowchart LR
     R_EPUB --> W_EPUB
     R_JOBS --> W_SEARCH
     R_JOBS --> W_SOURCE_EPUB
-    R_JOBS --> W_JOBS
     R_SOURCE --> W_SOURCE_EPUB
+    R_JOBS --> W_JOBS
     W_JOBS --> R_JOBS
 
     subgraph Client[Client — Expo]
@@ -116,6 +117,7 @@ flowchart LR
     C_SOURCE --> C3
     C_ADMIN --> W_ADMIN
     C_ADMIN --> W_JOBS
+    C_ADMIN --> W_MANAGE
     W_BOOK --> C2
     W_BUILDS --> C2B
     C2B --> C3
@@ -150,6 +152,18 @@ Notes:
 - The client does not poll status for sync; `useSyncEngine` reads `player.currentTime` directly inside `requestAnimationFrame` and only re-renders when the active word index changes.
 - Tap-to-seek in the reader looks up `words[i].start` and calls
   `player.seekTo`. Tapping the heading seeks to its first heading word.
+- Verified web owners can regenerate or delete from the published book detail
+  screen. Owner identity is shared across catalog and book routes in React memory.
+  Regeneration queues a fresh standard or expressive build for the indexed source
+  while the existing audio remains playable. Deletion requires an explicit in-app
+  confirmation and removes all published renditions/builds, EPUB, cover and catalog
+  entry for that book. Active generation must be canceled or completed first.
+  Recently canceled running work gets a 120-second grace period before deletion
+  so the PC can stop its child at the next heartbeat or lease-renewal timeout.
+  A D1 deletion guard excludes concurrent generation and overlapping deletion;
+  interrupted deletion can be retried. Source reading/index metadata is retained,
+  publication pointers are cleared, and prior jobs are retired from retry.
+  Cached public responses can remain visible until their existing cache expires.
 - When section audio finishes, the reader advances to the next section in the
   same selected rendition/build and starts playback only after the next
   section's audio source has loaded.

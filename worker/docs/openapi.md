@@ -54,6 +54,13 @@ export default app;
 
 ## Shared schemas
 
+The book route defines owner-only management lookup and DELETE schemas alongside
+the public manifest. Delete uses the same verified owner authentication as job
+administration, has no cached responses, and rejects active jobs or concurrent
+deletion. Its D1 guard remains after interruption until an owner retries cleanup;
+generation cannot bypass the guard. Apply migration `0006_book_deletions.sql`
+before deploying the updated Worker.
+
 `utils/source-editions.ts` provides the shared source ID schema for Gutenberg
 and canonical Standard Ebooks editions, exact EPUB URL validation and source
 publication slugs. Source search, sync, reading and generation use this contract.

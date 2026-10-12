@@ -176,6 +176,14 @@ in that Google OAuth client. Verify the deployed Owner controls modal displays
 the Google button and that the owner account passes `/api/v1/admin/me`.
 Apply all Worker D1 migrations before deploying the matching Worker; the latest
 job lookup index keeps autocomplete bounded as job history grows.
+Owner controls are also available on book detail pages. Verified owners can
+regenerate standard audio, confirm paid expressive regeneration, or confirm
+deletion of every published rendition/build, cover and EPUB for that book.
+The source edition remains indexed and readable. Active generation must finish
+or be canceled first. Migration `0006_book_deletions.sql` guards deletion against
+concurrent generation; apply it before deploying these controls. Manual books
+without a linked indexed source can be deleted but cannot be regenerated from
+the client. Existing audio stays playable during regeneration.
 
 On this PC, the two locally generated tokens are in the ignored
 `worker/.secrets/` directory. The **owner token** stays on this PC for local
@@ -192,14 +200,6 @@ $env:R2_BUCKET = 'openshelf-staging'
 .\.venv\Scripts\python.exe pipeline/scripts/openshelf-pipeline.py books consume-jobs --api-base https://openshelf-api-staging.johnkoeh.workers.dev/api/v1 --sync-pages 2
 ```
 
-For production, use `worker/.secrets/prod-pc-token` as `OPENSHELF_PC_TOKEN`
-on the PC, the
-`https://openshelf-api.johnkoeh.workers.dev/api/v1` API base, and
-`R2_BUCKET=openshelf`. Keep these environment credentials separate.
-
-Standard and expressive jobs have no word-count limit. The `--max-words`
-option is removed. Older `BOOK_TOO_LONG` failures can be retried as owner using
-the updated consumer without a word-count override.
 Standard Ebooks editions can be added to the same source search without patron
 feeds. With `OPENSHELF_PC_TOKEN` set for the target environment, run:
 
@@ -215,6 +215,14 @@ Real Standard Ebooks imports also download and verify each EPUB, then upload a
 reading copy to R2 because Standard Ebooks blocks Cloudflare's direct downloads.
 Files above the reader's 32 MiB bound or with unverifiable rights are skipped.
 
+For production, use `worker/.secrets/prod-pc-token` as `OPENSHELF_PC_TOKEN`
+on the PC, the
+`https://openshelf-api.johnkoeh.workers.dev/api/v1` API base, and
+`R2_BUCKET=openshelf`. Keep these environment credentials separate.
+
+Standard and expressive jobs have no word-count limit. The `--max-words`
+option is removed. Older `BOOK_TOO_LONG` failures can be retried as owner using
+the updated consumer without a word-count override.
 Rights, archive, and empty-text checks still apply.
 
 ### Windows job monitor

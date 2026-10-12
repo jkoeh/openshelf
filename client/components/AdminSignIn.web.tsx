@@ -269,7 +269,7 @@ export default function AdminSignIn({
 								<>
 									<Text style={{ color: palette.muted, lineHeight: 20 }}>
 										Signed in as johnkoeh@gmail.com. Manage jobs from search
-										results.
+										results, or regenerate and delete from a book's detail page.
 									</Text>
 									<Pressable
 										accessibilityRole="button"

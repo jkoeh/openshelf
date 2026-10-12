@@ -124,6 +124,150 @@ for (const [stage, verb, percent] of [["download", "Gathering", 25], ["synthesis
   });
 }
 
+async function mockPublishedBook(page: import("@playwright/test").Page) {
+  await mockCatalog(page, []);
+  await mockGoogleSignIn(page);
+  const rendition = "kokoro-af-heart", build = "1234567890abcdef";
+  const sections = [{ sequence: 1, section_type: "chapter", ordinal: 1, display_label: "I",
+    display_title: "", filename: "section-01.m4a", duration_seconds: 100, word_count: 200 }];
+  const entry = { voice: "af_heart", engine: "kokoro", display: "Heart", current_build: build,
+    available_builds: [build], total_duration_seconds: 100, sections };
+  const book = { title: "Pride and Prejudice", author: "Jane Austen", source: "gutenberg",
+    renditions: { [rendition]: entry } };
+  const root = "**/api/v1/books/jane-austen/pride-g1342";
+  let deleted = false, deletes = 0;
+  await page.route("**/api/v1/catalog**", route => route.fulfill({ json: {
+    version: 2, generated_at: "2026-10-11", books: deleted ? [] : [{ title: book.title,
+      author: book.author, source: book.source, author_slug: "jane-austen", title_slug: "pride-g1342",
+      rendition, current_build: build, total_duration_seconds: 100, section_count: 1, has_cover: false }],
+    total: deleted ? 0 : 1, page: 1, limit: 20,
+  } }));
+  await page.route(root, route => {
+    if (route.request().method() === "DELETE") {
+      expect(route.request().headers().authorization).toBe("Bearer mock-google-token");
+      deleted = true; deletes++;
+      return route.fulfill({ json: { deleted: true } });
+    }
+    return route.fulfill({ json: book });
+  });
+  await page.route(root + "/management", route => {
+    expect(route.request().headers().authorization).toBe("Bearer mock-google-token");
+    return route.fulfill({ json: { source_id: "gutenberg:1342", active_job_id: null, deleting: false } });
+  });
+  await page.route(root + "/builds", route => route.fulfill({ json: { ...book, renditions: {
+    [rendition]: { ...entry, builds: [{ build, rendition, voice: "af_heart", engine: "kokoro",
+      pipeline_version: "2", is_current: true, uploaded_at: "2026-10-11T12:00:00Z",
+      total_duration_seconds: 100, section_count: 1, sections }] },
+  } } }));
+  await page.route(root + "/cover", route => route.fulfill({ status: 404 }));
+  return { getDeletes: () => deletes };
+}
+
+test("book owner sign-in persists across navigation and deletion needs explicit confirmation", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const fixture = await mockPublishedBook(page);
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Delete book", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Owner controls" }).click();
+  await page.getByRole("button", { name: "Sign in with Google" }).click();
+  await page.getByText("Pride and Prejudice", { exact: true }).last().click();
+  await expect(page).toHaveURL(/\/book\/jane-austen\/pride-g1342/);
+  await expect(page.getByRole("button", { name: "Regenerate audio", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Delete book", exact: true }).click();
+  await expect(page.getByText(/permanently removes all published audio/)).toBeVisible();
+  expect(fixture.getDeletes()).toBe(0);
+  await page.getByRole("button", { name: "Keep book" }).click();
+  expect(fixture.getDeletes()).toBe(0);
+  await page.getByRole("button", { name: "Delete book", exact: true }).click();
+  await page.screenshot({ path: testInfo.outputPath("book-delete-mobile.png"), fullPage: true });
+  await page.getByRole("button", { name: "Confirm delete book" }).click();
+  await expect(page).toHaveURL(/\/?refresh=/);
+  await expect(page.getByText("No audiobooks published yet. Search for an edition to read now.")).toBeVisible();
+  await expect(page.getByText("Pride and Prejudice", { exact: true }).last()).toBeHidden();
+  expect(fixture.getDeletes()).toBe(1);
+  expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))).not.toContain("mock-google-token");
+});
+
+test("book owner can regenerate and cancel while existing audio stays playable", async ({ page }, testInfo) => {
+  await mockPublishedBook(page);
+  const job = { id: "book-job", source_id: "gutenberg:1342", mode: "standard", state: "queued",
+    stage: "queued", author_slug: null, title_slug: null, error_code: null,
+    created_at: "2026-10-11", updated_at: "2026-10-11" };
+  let creates = 0;
+  await page.route("**/api/v1/generation-jobs", route => {
+    expect(route.request().headers().authorization).toBe("Bearer mock-google-token");
+    expect(route.request().postDataJSON()).toEqual({ source_id: "gutenberg:1342", regenerate: true });
+    creates++;
+    return route.fulfill({ json: job });
+  });
+  await page.route("**/api/v1/generation-jobs/book-job", route => route.fulfill({ json: job }));
+  await page.route("**/api/v1/generation-jobs/book-job/cancel", route => {
+    expect(route.request().headers().authorization).toBe("Bearer mock-google-token");
+    return route.fulfill({ json: { ...job, state: "canceled", stage: "canceled" } });
+  });
+  await page.goto("/book/jane-austen/pride-g1342");
+  await expect(page.getByRole("button", { name: "Regenerate audio", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Owner controls" }).click();
+  await page.getByRole("button", { name: "Sign in with Google" }).click();
+  await page.getByRole("button", { name: "Regenerate audio", exact: true }).click();
+  await expect(page.getByText("Regeneration queued · queued")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Delete book", exact: true })).toBeDisabled();
+  await expect(page.getByText("Start Listening", { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("book-regeneration-desktop.png"), fullPage: true });
+  await page.getByRole("button", { name: "Cancel regeneration" }).click();
+  await expect(page.getByText("Regeneration canceled.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Delete book", exact: true })).toBeEnabled();
+  expect(creates).toBe(1);
+});
+
+test("book owner can retry interrupted deletion and must confirm paid regeneration", async ({ page }) => {
+  const fixture = await mockPublishedBook(page);
+  let attempts = 0, creates = 0;
+  await page.route("**/api/v1/books/jane-austen/pride-g1342", route => {
+    if (route.request().method() !== "DELETE") return route.fallback();
+    attempts++;
+    if (attempts === 1) return route.fulfill({ status: 503, json: {
+      error: { code: "DELETE_INCOMPLETE", message: "Deletion did not finish. Retry Delete book to complete cleanup." },
+    } });
+    return route.fallback();
+  });
+  await page.route("**/api/v1/generation-jobs", route => {
+    creates++;
+    expect(route.request().postDataJSON()).toEqual({ source_id: "gutenberg:1342", mode: "expressive", regenerate: true });
+    return route.fulfill({ status: 429, json: { error: { code: "LIMIT_REACHED", message: "Generation quota reached" } } });
+  });
+  await page.goto("/book/jane-austen/pride-g1342");
+  await page.getByRole("button", { name: "Owner controls" }).click();
+  await page.getByRole("button", { name: "Sign in with Google" }).click();
+  await page.getByRole("button", { name: "Regenerate expressive audio" }).click();
+  await expect(page.getByText(/paid OpenAI direction/)).toBeVisible();
+  expect(creates).toBe(0);
+  await page.getByRole("button", { name: "Confirm expressive regeneration" }).click();
+  await expect(page.getByText("Generation quota reached")).toBeVisible();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByRole("button", { name: "Delete book", exact: true }).click();
+  await page.getByRole("button", { name: "Confirm delete book" }).click();
+  await expect(page.getByText(/Deletion did not finish/)).toBeVisible();
+  expect(fixture.getDeletes()).toBe(0);
+  await page.getByRole("button", { name: "Confirm delete book" }).click();
+  await expect(page).toHaveURL(/\/?refresh=/);
+  expect(fixture.getDeletes()).toBe(1);
+});
+
+test("book owner loses mutation controls when the session expires", async ({ page }) => {
+  await mockPublishedBook(page);
+  await page.route("**/api/v1/generation-jobs", route => route.fulfill({ status: 401, json: {
+    error: { code: "UNAUTHORIZED", message: "Owner session expired" },
+  } }));
+  await page.goto("/book/jane-austen/pride-g1342");
+  await page.getByRole("button", { name: "Owner controls" }).click();
+  await page.getByRole("button", { name: "Sign in with Google" }).click();
+  await page.getByRole("button", { name: "Regenerate audio", exact: true }).click();
+  await expect(page.getByText(/Owner session expired/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Delete book", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Owner controls", exact: true })).toHaveText("Owner controls");
+});
+
 test("desktop shows two edition cards and keeps failed jobs out of public retry", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   const second = { ...edition, source_id: "gutenberg:12", title: "Another Edition" };
