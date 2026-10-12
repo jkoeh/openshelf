@@ -38,6 +38,17 @@ added to the audiobook catalog. The completed-book EPUB API continues to
 use the annotated R2 EPUB route. Missing IDs, invalid stored URLs, and public
 request limits return explicit errors, with no redirect on failure.
 
+The client also supports reading outside the index. If a query of at least
+three characters has no indexed Standard Ebooks match, it searches one official
+HTML page directly with CORS and no credentials. Canonical downloadable entries
+are offered as live, unindexed suggestions; `not-pd` placeholders are excluded.
+The reader first tries the API cache, then fetches the exact official compatible
+EPUB on 404/502, within the existing 32 MiB reading limit. Neither live discovery
+nor direct reading creates a D1 entry or queues audio. Audio for these editions
+waits for verified PC ingestion. Upstream request limits remain visible and are
+not retried automatically. Owner regeneration/deletion controls remain available
+for published books and are included in the same release.
+
 Search results include the latest job's public error code alongside its state.
 Reopening search must preserve the specific word-budget or rights failure
 message, without needing an active-job poll. Standard and expressive audio jobs
@@ -57,6 +68,7 @@ flowchart LR
     PC -->|Progress and completion| Limit
     API -->|Verify published build| R2
     API -->|Responses| Client
+    SE[Standard Ebooks public website] -->|Direct search and EPUB on index/cache miss| Client
 ```
 
 ## Decisions and boundaries
