@@ -40,9 +40,10 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
     }
     setBooks([]);
     setLoading(true);
+    const controller = new AbortController();
     const timer = setTimeout(() => {
-      fetchSourceBooks(query.trim()).then((data) => {
-        if (current === version.current) { setBooks(data.books); setError(""); }
+      fetchSourceBooks(query.trim(), controller.signal).then((data) => {
+        if (current === version.current) { setBooks(data.books); setError(data.discovery_error ?? ""); }
       }).catch((reason) => {
         if (current === version.current) {
           setBooks([]);
@@ -50,7 +51,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
         }
       }).finally(() => { if (current === version.current) setLoading(false); });
     }, 300);
-    return () => clearTimeout(timer);
+    return () => { clearTimeout(timer); controller.abort(); };
   }, [query]);
 
   const activeIds = books.flatMap((book) => {
@@ -124,12 +125,12 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
       Gutenberg & Standard Ebooks editions
     </Text>
     <Text style={{ color: palette.muted, fontSize: 15, lineHeight: 22, marginTop: 5, marginBottom: 18 }}>
-      Read immediately. We will prepare the audio while you turn the pages. Search includes indexed editions only.
+      Read immediately. Audio is prepared for catalog editions while you turn the pages. Missing Standard Ebooks titles are searched live.
     </Text>
     {loading && <ActivityIndicator accessibilityLabel="Searching source books" color={palette.primary} style={{ marginVertical: 24 }} />}
     {error ? <Text accessibilityRole="alert" style={{ color: palette.text, marginBottom: 12 }}>{error}</Text> : null}
     {!loading && !error && books.length === 0 && (
-      <Text style={{ color: palette.muted, marginVertical: 12 }}>No indexed edition found. Try another title or author.</Text>
+      <Text style={{ color: palette.muted, marginVertical: 12 }}>No matching edition found. Try another title or author.</Text>
     )}
     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 16 }}>
       {books.map((book) => {
@@ -154,6 +155,9 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
           <Text style={{ color: palette.muted, fontSize: 13, marginTop: 8, marginBottom: 14 }}>
             {book.source_id.startsWith("standardebooks:") ? "Standard Ebooks" : `Gutenberg #${book.source_id.split(":")[1]}`}
           </Text>
+          {book.indexed === false && <Text style={{ color: palette.muted, marginBottom: 14 }}>
+            Read now. Audio will be available after this edition is added to the catalog.
+          </Text>}
           {active && <View style={{ marginBottom: 16 }}>
             <Text style={{ color: palette.text, fontWeight: "600" }}>
               {mode === "expressive" ? "Expressive" : "Standard"} generation {state}{state === "running" && job?.stage ? ` · ${job.stage}` : ""}
@@ -171,14 +175,14 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
             } else {
               router.push({ pathname: "/source/[id]", params: {
                 id: book.source_id, title: book.title, author: book.author,
-                job: job?.id ?? book.job_id ?? "", state,
+                job: job?.id ?? book.job_id ?? "", state, indexed: book.indexed === false ? "0" : "1",
               } });
             }
           }} style={{ backgroundColor: palette.primary, borderRadius: 9, minHeight: 48,
             alignItems: "center", justifyContent: "center", paddingHorizontal: 12 }}>
             <Text style={{ color: palette.primaryText, fontSize: 16, fontWeight: "600" }}>Read now</Text>
           </Pressable>
-          {adminToken && ((active && (job?.id ?? book.job_id)) || (failed && (job?.id ?? book.job_id)) || ready) && (
+          {adminToken && book.indexed !== false && ((active && (job?.id ?? book.job_id)) || (failed && (job?.id ?? book.job_id)) || ready) && (
             <Pressable accessibilityRole="button" disabled={!!busySource}
               onPress={() => adminAct(book, active ? "cancel" : failed ? "retry" : "regenerate")}
               style={{ minHeight: 44, justifyContent: "center", alignItems: "center", marginTop: 10,
@@ -188,7 +192,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
               </Text>
             </Pressable>
           )}
-          {adminToken && !active && !(failed && mode === "expressive") && (
+          {adminToken && book.indexed !== false && !active && !(failed && mode === "expressive") && (
             pendingExpressiveSource === book.source_id ? <View style={{ marginTop: 12, padding: 14,
               borderWidth: 1, borderColor: palette.border, borderRadius: 9 }}>
               <Text style={{ color: palette.text, lineHeight: 21 }}>

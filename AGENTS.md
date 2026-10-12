@@ -113,6 +113,8 @@ flowchart LR
     C_SEARCH --> W_SOURCE_EPUB
     C_SEARCH --> C_SOURCE
     W_SOURCE_EPUB --> C_SOURCE
+    SE_SITE[Standard Ebooks public website] -->|direct search on index miss| C_SEARCH
+    SE_SITE -->|direct EPUB on cache miss| C_SOURCE
     W_JOBS --> C_SOURCE
     C_SOURCE --> C3
     C_ADMIN --> W_ADMIN
@@ -304,7 +306,13 @@ the canonical edition path. The PC imports at most 1,000 editions per run throug
 bounded listing pages, and batches of at most 50. Each edition must have the
 official U.S. public-domain statement and an exact compatible EPUB link; future
 `not-pd` listings and ambiguous metadata are skipped. Search requests query D1,
-never the upstream website. The client labels the source of each edition.
+never the upstream website. If no indexed Standard Ebooks edition matches, the
+client queries one official Standard Ebooks search page directly for queries of
+at least three characters, using CORS,
+without credentials. It merges up to ten canonical, downloadable editions,
+excluding `not-pd` placeholders. Live suggestions are explicitly unindexed:
+they allow reading but do not start audio until the PC has verified and indexed
+the edition. The client labels the source of each edition.
 
 Reading and generation allow only HTTPS EPUB URLs matching the exact edition on
 `standardebooks.org`; redirects are bounded and revalidated. No download-cookie
@@ -318,7 +326,11 @@ then sends it to the PC-authenticated internal source-EPUB upload route. The
 Worker stores it at `source-epubs/standardebooks/{sha256(source_id)}/book.epub`.
 Uploads are bounded to 32 MiB, require EPUB ZIP magic, and are accepted only for
 an indexed Standard Ebooks ID. Inline reading streams this cache with `no-store`;
-missing caches fail explicitly. Direct download requests retain the source redirect.
+missing caches fail explicitly. On a cache miss (404/502), the reader fetches
+the exact official Standard Ebooks EPUB directly, using its canonical source ID
+and the same 32 MiB bound. Direct requests omit credentials and reject redirects;
+HTTP 403/429 is shown without retrying automatically. The D1/R2 index is a fast
+path, not a prerequisite for text reading. Direct download requests retain the source redirect.
 `--dry-run` validates metadata without downloading or uploading EPUBs. Source
 cache bytes are independent of audiobook publication and are retained on refresh.
 Imports check the cache with a HEAD request before downloading an EPUB again.

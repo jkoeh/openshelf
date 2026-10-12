@@ -102,9 +102,23 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
   listening actions; standalone EPUB download buttons are removed from the UI.
 - `useSyncEngine` computes active word/chunk inside a `requestAnimationFrame` loop and only setStates when the active word/chunk index changes. It reads `player.currentTime` and consumes inline `words` from the section response; there is no separate alignment fetch.
 - The catalog page keeps published-book browsing and adds debounced source
-  suggestions from Gutenberg and Standard Ebooks, labeled by source. Every indexed edition offers one **Read now** action that immediately
+  suggestions from Gutenberg and Standard Ebooks, labeled by source. When no
+  indexed Standard Ebooks edition matches a query of at least three characters,
+  `fetchSourceBooks(q, signal?)` merges one credential-free official HTML search
+  page (at most 2 MiB, ten canonical downloadable editions). Failures retain
+  indexed results and show fallback feedback; requests are aborted when the
+  query changes. `lib/standard-ebooks.ts` validates canonical IDs, constructs
+  exact EPUB URLs and parses live suggestions as data. `SourceBook.indexed`
+  is optional client metadata; false means live discovery, not a Worker schema
+  change. An unindexed edition opens text with an explanation that audio needs
+  a verified catalog entry, and hides owner generation actions. Every indexed edition offers one **Read now** action that immediately
   opens `source/[id]`. That reader fetches the exact EPUB through `?inline=1`
-  and independently creates a fixed Kokoro job, or resumes status for an existing
+  first. A 404/502 for Standard Ebooks falls back to the exact canonical official
+  compatible EPUB with `?source=download`, credentials omitted and redirects
+  rejected. `fetchSourceEpub(id, signal)` bounds the streamed bytes at 32 MiB.
+  Neither a missing index row nor failed audio blocks this direct text fetch.
+  Upstream 403/429 is shown with retry feedback and no automatic download retry.
+  Indexed reading independently creates a fixed Kokoro job, or resumes status for an existing
   job. Published editions open the existing reader. Failed/canceled jobs remain
   readable without public retries. Queue/start-limit failures cannot block text.
   EPUB parsing follows the OPF spine and renders text as native components, never

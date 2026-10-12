@@ -12,6 +12,7 @@ export interface CatalogBook {
 }
 
 export interface SourceBook {
+  indexed?: boolean;
   source_id: string;
   title: string;
   author: string;

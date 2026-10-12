@@ -14,7 +14,7 @@ import { useTheme } from "../../hooks/useTheme";
 import {
 	createGenerationJob,
 	fetchGenerationJob,
-	sourceEpubUrl,
+	fetchSourceEpub,
 } from "../../lib/api";
 import { audioCreation } from "../../lib/audio-creation";
 import { parseSourceEpub, type SourceSection } from "../../lib/source-epub";
@@ -27,6 +27,7 @@ export default function SourceReader() {
 		author: string;
 		job?: string;
 		state?: string;
+		indexed?: string;
 	}>();
 	const router = useRouter();
 	const { colors } = useTheme();
@@ -86,11 +87,8 @@ export default function SourceReader() {
 		const controller = new AbortController();
 		setTextError("");
 		setSections([]);
-		fetch(`${sourceEpubUrl(params.id)}?inline=1`, { signal: controller.signal })
-			.then(async (response) => {
-				if (!response.ok)
-					throw new Error("Could not load the book. Try again shortly.");
-				const bytes = new Uint8Array(await response.arrayBuffer());
+		fetchSourceEpub(params.id, controller.signal)
+			.then((bytes) => {
 				const content = parseSourceEpub(bytes);
 				if (!controller.signal.aborted) {
 					setSections(content);
@@ -132,7 +130,8 @@ export default function SourceReader() {
 					);
 			}
 		};
-		if (params.job) follow(fetchGenerationJob(params.job));
+		if (params.indexed === "0") setAudioError("Audio can be prepared after this edition is added to the catalog. You can keep reading.");
+		else if (params.job) follow(fetchGenerationJob(params.job));
 		else if (params.state === "failed" || params.state === "canceled")
 			setAudioError("Audio is unavailable. You can keep reading.");
 		else {
@@ -147,7 +146,7 @@ export default function SourceReader() {
 			alive = false;
 			if (timer) clearTimeout(timer);
 		};
-	}, [params.id, params.job, params.state]);
+	}, [params.id, params.job, params.state, params.indexed]);
 
 	const ready = job?.state === "completed" && job.author_slug && job.title_slug;
 	return (

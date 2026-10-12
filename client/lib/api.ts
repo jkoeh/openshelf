@@ -1,4 +1,5 @@
 import { API_BASE } from "../constants/config";
+import { readBoundedSource, searchStandardEbooks, standardEbooksEpubUrl } from "./standard-ebooks";
 import type {
 	BookBuildsResponse,
 	SourceBook,
@@ -58,12 +59,39 @@ export function fetchCatalog(params: CatalogParams = {}, fresh = false): Promise
 	return fetchJson<CatalogResponse>(`${API_BASE}/catalog${qs ? `?${qs}` : ""}`, fresh ? { cache: "no-store" } : undefined);
 }
 
-export function fetchSourceBooks(q: string): Promise<{ books: SourceBook[] }> {
-	return fetchJson(`${API_BASE}/source-books?q=${encodeURIComponent(q)}&limit=10`, { cache: "no-store" });
+export async function fetchSourceBooks(q: string, signal?: AbortSignal): Promise<{ books: SourceBook[]; discovery_error?: string }> {
+	const result = await fetchJson<{ books: SourceBook[] }>(`${API_BASE}/source-books?q=${encodeURIComponent(q)}&limit=10`, { cache: "no-store", ...(signal ? { signal } : {}) });
+	if (q.trim().length < 3 || result.books.some(book => book.source_id.startsWith("standardebooks:"))) return result;
+	try {
+		const live = await searchStandardEbooks(q, signal);
+		return { books: [...result.books, ...live.filter(book => !result.books.some(existing => existing.source_id === book.source_id))] };
+	} catch (error) {
+		if (signal?.aborted) throw error;
+		return { ...result, discovery_error: error instanceof Error ? error.message : "Live Standard Ebooks search is unavailable." };
+	}
 }
 
 export function sourceEpubUrl(sourceId: string): string {
 	return `${API_BASE}/source-books/${encodeURIComponent(sourceId)}/epub`;
+}
+
+export async function fetchSourceEpub(sourceId: string, signal: AbortSignal): Promise<Uint8Array> {
+	const direct = sourceId.startsWith("standardebooks:") ? standardEbooksEpubUrl(sourceId) : null;
+	let response = await fetch(`${sourceEpubUrl(sourceId)}?inline=1`, { signal });
+	if (direct && [404, 502].includes(response.status)) {
+		await response.body?.cancel();
+		response = await fetch(direct, { signal, credentials: "omit", redirect: "error" });
+	}
+	if (!response.ok) {
+		await response.body?.cancel();
+		throw new Error(response.status === 429 ? "Standard Ebooks is limiting downloads. Try again later." : "Could not load the book. Try again shortly.");
+	}
+	const type = response.headers.get("Content-Type") ?? "";
+	if (type.includes("text/html") || type.includes("application/xhtml")) {
+		await response.body?.cancel();
+		throw new Error("The source returned a web page instead of an EPUB. Try again later.");
+	}
+	return readBoundedSource(response, 32 * 1024 * 1024);
 }
 
 function ownerRequest<T>(path: string, token: string, body?: object): Promise<T> {

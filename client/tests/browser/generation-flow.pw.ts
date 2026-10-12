@@ -8,6 +8,7 @@ const edition: SourceBook = {
 };
 
 async function mockCatalog(page: import("@playwright/test").Page, books: SourceBook[] = [edition]) {
+  await page.route("https://standardebooks.org/**", route => route.fulfill({ contentType: "application/xhtml+xml", body: "<html/>" }));
   await page.route("**/api/v1/catalog**", async (route) => route.fulfill({ json: {
     version: 2, generated_at: "2026-09-29", books: [], total: 0, page: 1, limit: 20,
   } }));

@@ -9,6 +9,7 @@ import {
 	fetchCatalog,
 	fetchSection,
 	fetchSourceBooks,
+	fetchSourceEpub,
 	sourceEpubUrl,
 	createGenerationJob,
 	fetchGenerationJob,
@@ -29,6 +30,37 @@ beforeEach(() => {
 });
 
 describe("source discovery and owner jobs", () => {
+	it("discovers missing Standard Ebooks titles live without sending credentials", async () => {
+		mockFetch.mockResolvedValueOnce(jsonResponse({ books: [] })).mockResolvedValueOnce(new Response(`<li typeof="schema:Book" about="/ebooks/fyodor-dostoevsky/demons/constance-garnett"><span property="schema:name">Demons</span><span property="schema:name">Fyodor Dostoevsky</span></li>`));
+		const result = await fetchSourceBooks("demons");
+		expect(result.books).toEqual([expect.objectContaining({ title: "Demons", indexed: false, source_id: "standardebooks:fyodor-dostoevsky/demons/constance-garnett" })]);
+		expect(mockFetch.mock.calls[1][0]).toBe("https://standardebooks.org/ebooks?query=demons");
+		expect(mockFetch.mock.calls[1][1]).toMatchObject({ credentials: "omit", redirect: "error" });
+	});
+	it("preserves indexed search when live discovery is rate limited", async () => {
+		const books = [{ source_id: "gutenberg:11", title: "Alice" }];
+		mockFetch.mockResolvedValueOnce(jsonResponse({ books })).mockResolvedValueOnce(new Response("Limited", { status: 429 }));
+		expect(await fetchSourceBooks("alice")).toEqual({ books, discovery_error: expect.stringContaining("limiting requests") });
+		expect(mockFetch).toHaveBeenCalledTimes(2);
+	});
+	it("reads an unindexed exact EPUB directly after a missing cache response", async () => {
+		mockFetch.mockResolvedValueOnce(errorResponse("NOT_FOUND", "Not indexed", 404)).mockResolvedValueOnce(new Response(new Uint8Array([80, 75, 3, 4]), { headers: { "Content-Type": "application/epub+zip" } }));
+		expect(await fetchSourceEpub("standardebooks:fyodor-dostoevsky/demons/constance-garnett", new AbortController().signal)).toEqual(new Uint8Array([80, 75, 3, 4]));
+		expect(mockFetch.mock.calls[1][0]).toBe("https://standardebooks.org/ebooks/fyodor-dostoevsky/demons/constance-garnett/downloads/fyodor-dostoevsky_demons_constance-garnett.epub?source=download");
+		expect(mockFetch.mock.calls[1][1]).toMatchObject({ credentials: "omit", redirect: "error" });
+	});
+	it("keeps the cached EPUB fast path and rejects malicious edition IDs before fetching", async () => {
+		mockFetch.mockResolvedValueOnce(new Response(new Uint8Array([80, 75, 3, 4])));
+		await fetchSourceEpub("standardebooks:author/book", new AbortController().signal);
+		expect(mockFetch).toHaveBeenCalledTimes(1);
+		await expect(fetchSourceEpub("standardebooks:author/../../other", new AbortController().signal)).rejects.toThrow("Invalid");
+		expect(mockFetch).toHaveBeenCalledTimes(1);
+	});
+	it("does not retry upstream limits or fall back on our API rate limit", async () => {
+		mockFetch.mockResolvedValueOnce(new Response("Limited", { status: 429 }));
+		await expect(fetchSourceEpub("standardebooks:author/book", new AbortController().signal)).rejects.toThrow("limiting downloads");
+		expect(mockFetch).toHaveBeenCalledTimes(1);
+	});
 	it("resolves and deletes a book only with the owner bearer token and no-store", async () => {
 		mockFetch.mockImplementation(async () => jsonResponse({ deleted: true }));
 		await fetchBookManagement("jane-austen", "pride-g1342", "google-id-token");

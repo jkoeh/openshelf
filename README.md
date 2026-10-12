@@ -214,6 +214,11 @@ Read now supports both sources; each edition keeps a separate audio job/build.
 Real Standard Ebooks imports also download and verify each EPUB, then upload a
 reading copy to R2 because Standard Ebooks blocks Cloudflare's direct downloads.
 Files above the reader's 32 MiB bound or with unverifiable rights are skipped.
+When a Standard Ebooks title is missing from the index, the client searches the
+official website directly and offers Read now. Missing cached EPUBs fall back to
+the exact official compatible EPUB. Direct requests carry no owner credentials;
+source download limits still apply. Live editions can be read before indexing,
+while audio requests require a PC-verified catalog entry.
 
 For production, use `worker/.secrets/prod-pc-token` as `OPENSHELF_PC_TOKEN`
 on the PC, the
