@@ -595,9 +595,12 @@ def _build_parser() -> argparse.ArgumentParser:
     consume.add_argument("--once", action="store_true")
     consume.add_argument("--device", choices=["auto", "cuda", "mps", "cpu"], default="auto")
 
-    catalog = subparsers.add_parser("sync-catalog", help="Index official Gutenberg CSV metadata")
-    catalog.add_argument("--catalog", required=True)
-    catalog.add_argument("--rights-archive", required=True)
+    catalog = subparsers.add_parser("sync-catalog", help="Index Gutenberg or Standard Ebooks metadata")
+    catalog.add_argument("--source", choices=["gutenberg", "standard-ebooks"], default="gutenberg")
+    catalog.add_argument("--catalog")
+    catalog.add_argument("--rights-archive")
+    catalog.add_argument("--after-page", type=int, default=0)
+    catalog.add_argument("--max-pages", type=int, default=20)
     catalog.add_argument("--api-base", required=True)
     catalog.add_argument("--after-id", type=int, default=0)
     catalog.add_argument("--max-books", type=int, default=500)
@@ -624,9 +627,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             return job_consumer.main(passed)
         if args.command == "sync-catalog":
             from openshelf.pipeline import source_catalog
-            passed = ["--catalog", args.catalog, "--rights-archive", args.rights_archive,
-                      "--api-base", args.api_base,
+            passed = ["--source", args.source, "--after-page", str(args.after_page),
+                      "--max-pages", str(args.max_pages), "--api-base", args.api_base,
                       "--after-id", str(args.after_id), "--max-books", str(args.max_books)]
+            if args.catalog:
+                passed += ["--catalog", args.catalog]
+            if args.rights_archive:
+                passed += ["--rights-archive", args.rights_archive]
             if args.dry_run:
                 passed.append("--dry-run")
             return source_catalog.main(passed)

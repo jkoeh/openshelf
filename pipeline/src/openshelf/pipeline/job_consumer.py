@@ -34,6 +34,9 @@ class RightsNotVerified(ValueError):
 
 
 def validate_epub_url(url: str, source_id: str) -> str:
+    if source_id.startswith("standardebooks:"):
+        from openshelf.pipeline.standard_ebooks_source import validate_url
+        return validate_url(url, source_id)
     match = re.fullmatch(r"gutenberg:([1-9][0-9]*)", source_id)
     parsed = urllib.parse.urlparse(url)
     if not match or parsed.scheme != "https" or parsed.hostname not in GUTENBERG_HOSTS:
@@ -49,14 +52,21 @@ def validate_epub_url(url: str, source_id: str) -> str:
 class GutenbergRedirects(urllib.request.HTTPRedirectHandler):
     def __init__(self, source_id: str):
         self.source_id = source_id
+        self.redirects = 0
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         validate_epub_url(newurl, self.source_id)
+        self.redirects += 1
+        if self.redirects > 3:
+            raise ValueError("too many source EPUB redirects")
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def fetch_epub(url: str, source_id: str, destination: Path) -> None:
     validate_epub_url(url, source_id)
+    if source_id.startswith("standardebooks:"):
+        from openshelf.pipeline.standard_ebooks_source import epub_url
+        url = epub_url(source_id)
     opener = urllib.request.build_opener(GutenbergRedirects(source_id))
     req = urllib.request.Request(url, headers={"User-Agent": "OpenShelf/1.0"})
     with opener.open(req, timeout=45) as response:
@@ -101,7 +111,7 @@ def validate_local_epub(path: Path) -> None:
             raise ValueError("cached EPUB is invalid")
 
 
-def check_epub_rights(path: Path) -> None:
+def check_epub_rights(path: Path, source_id: str | None = None) -> None:
     """Confirm embedded rights and reject Gutenberg's explicit copyright banner."""
     with zipfile.ZipFile(path) as archive:
         opfs = [item for item in archive.infolist() if item.filename.lower().endswith(".opf")]
@@ -113,7 +123,16 @@ def check_epub_rights(path: Path) -> None:
             raise RightsNotVerified("invalid EPUB package rights") from exc
         rights = [node.text.strip() for node in package.iter("{http://purl.org/dc/elements/1.1/}rights")
                   if node.text]
-        if rights != ["Public domain in the USA."]:
+        if source_id and source_id.startswith("standardebooks:"):
+            from openshelf.pipeline.standard_ebooks_source import BASE, edition_path
+            identifiers = [node.text for node in package.iter("{http://purl.org/dc/elements/1.1/}identifier")]
+            if identifiers != [f"{BASE}/ebooks/{edition_path(source_id)}"]:
+                raise RightsNotVerified("EPUB identifier does not match Standard Ebooks edition")
+            if (len(rights) != 1 or "believed to be in the United States public domain" not in rights[0]
+                    or "https://creativecommons.org/publicdomain/zero/1.0/" not in rights[0]
+                    or "dedicate their contributions to the worldwide public domain" not in rights[0]):
+                raise RightsNotVerified("Standard Ebooks EPUB rights are not verified")
+        elif rights != ["Public domain in the USA."]:
             raise RightsNotVerified("EPUB is not verified public domain in the USA")
         banner = re.compile(r"this\s+is\s+a\s+copyrighted\s+project\s+gutenberg\s+ebook", re.I)
         for item in archive.infolist():
@@ -164,6 +183,13 @@ def public_domain_epub_url(data: bytes, source_id: str) -> str:
 
 def verify_public_domain(source_id: str) -> None:
     """Require the official RDF rights marker before any expensive work."""
+    if source_id.startswith("standardebooks:"):
+        from openshelf.pipeline.standard_ebooks_source import BASE, edition_path, fetch_page, parse_edition
+        try:
+            parse_edition(fetch_page(f"{BASE}/ebooks/{edition_path(source_id)}"), source_id)
+        except ValueError as exc:
+            raise RightsNotVerified("Standard Ebooks edition rights are not verified") from exc
+        return
     match = re.fullmatch(r"gutenberg:([1-9][0-9]*)", source_id)
     if not match:
         raise RightsNotVerified("invalid Gutenberg ID")
@@ -212,6 +238,18 @@ class JobAPI:
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.load(response)
 
+    def upload_source_epub(self, source_id: str, path: Path) -> dict:
+        if path.stat().st_size > 32 * 1024 * 1024:
+            raise ValueError("source EPUB exceeds reader size limit")
+        request = urllib.request.Request(
+            self.base + "/internal/source-books/" + urllib.parse.quote(source_id, safe="") + "/epub",
+            data=path.read_bytes(), method="POST",
+            headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/epub+zip",
+                     "User-Agent": "OpenShelf/1.0 (+https://github.com/jkoeh/openshelf)"},
+        )
+        with urllib.request.urlopen(request, timeout=90) as response:
+            return json.load(response)
+
 
 def sync_gutenberg(api: JobAPI, pages: int) -> int:
     url = "https://gutendex.com/books/"
@@ -250,8 +288,10 @@ def sync_gutenberg(api: JobAPI, pages: int) -> int:
 def process_job(api: JobAPI, job: dict, *, download_root: Path, audio_root: Path, device: str) -> None:
     source_id = job["source_id"]
     author_slug = sanitize(job["author"]) or "unknown"
-    title_slug = (sanitize(job["title"]) or "untitled") + "-g" + source_id.split(":")[1]
-    epub = download_root / "gutenberg" / author_slug / f"{title_slug}.epub"
+    from openshelf.pipeline.standard_ebooks_source import title_slug as edition_title_slug
+    title_slug = edition_title_slug(job["title"], source_id)
+    source = "standard-ebooks" if source_id.startswith("standardebooks:") else "gutenberg"
+    epub = download_root / source / author_slug / f"{title_slug}.epub"
     lease = job["lease_token"]
     route = f"/internal/generation-jobs/{job['id']}"
     try:
@@ -259,7 +299,10 @@ def process_job(api: JobAPI, job: dict, *, download_root: Path, audio_root: Path
         if not epub.exists():
             fetch_epub(job["epub_url"], source_id, epub)
         validate_local_epub(epub)
-        check_epub_rights(epub)
+        if source == "standard-ebooks":
+            check_epub_rights(epub, source_id)
+        else:
+            check_epub_rights(epub)
         mode = job.get("mode", "standard")
         check_spoken_text(epub)
         if mode == "standard":

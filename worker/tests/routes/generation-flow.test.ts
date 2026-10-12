@@ -2,6 +2,7 @@ import { env, fetchMock } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import app from "../../src/index";
 import type { Env } from "../../src/types";
+import { sourceTitleSlug } from "../../src/utils/source-editions";
 
 const ownerToken = "test-owner-token-longer-than-twenty-four";
 const pcToken = "test-consumer-token-longer-than-twenty-four";
@@ -55,6 +56,46 @@ beforeEach(async () => {
 });
 
 describe("source search and generation API", () => {
+	it("indexes, reads, claims and publishes an exact Standard Ebooks edition", async () => {
+		const sourceId = "standardebooks:lewis-carroll/alice/john-tenniel";
+		const epubUrl = "https://standardebooks.org/ebooks/lewis-carroll/alice/john-tenniel/downloads/lewis-carroll_alice_john-tenniel.epub?source=download";
+		expect((await sync([{ source_id: sourceId, title: "Alice", author: "Lewis Carroll", epub_url: epubUrl }])).status).toBe(200);
+		const found = await (await request("/source-books?q=alice")).json<{ books: { source_id: string }[] }>();
+		expect(found.books[0].source_id).toBe(sourceId);
+		const route = `/source-books/${encodeURIComponent(sourceId)}/epub`;
+		expect((await request(route)).headers.get("Location")).toBe(epubUrl);
+		expect((await request(route + "?inline=1")).status).toBe(502);
+		const upload = (body: string, token = pcToken, length = body.length) => app.request(
+			`${origin}/api/v1/internal/source-books/${encodeURIComponent(sourceId)}/epub`, {
+				method: "POST", body, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/epub+zip", "Content-Length": String(length) },
+			}, { R2_BUCKET: env.R2_BUCKET, JOB_DB: env.JOB_DB, PC_TOKEN: pcToken, AUTH_RATE_LIMITER: limiter },
+		);
+		expect((await upload("PK\x03\x04epub-bytes", "wrong-token")).status).toBe(401);
+		expect((await upload("<html>interstitial</html>")).status).toBe(400);
+		expect((await upload("PK\x03\x04", pcToken, 32 * 1024 * 1024 + 1)).status).toBe(413);
+		expect((await upload("PK\x03\x04epub-bytes")).status).toBe(200);
+		const response = await request(route + "?inline=1");
+		expect(response.status).toBe(200);
+		expect(await response.text()).toBe("PK\x03\x04epub-bytes");
+		expect(response.headers.get("Cache-Control")).toBe("no-store");
+		for (const invalid of [epubUrl.replace("/alice/", "/other/"), epubUrl + "&evil=1", epubUrl.replace("standardebooks.org", "evil.example")]) {
+			expect((await sync([{ source_id: sourceId, title: "Alice", author: "Lewis Carroll", epub_url: invalid }])).status).toBe(400);
+		}
+		expect((await request("/generation-jobs", "POST", { source_id: sourceId })).status).toBe(200);
+		const job = (await (await claim()).json<{ job: { id: string; source_id: string; build_id: string; lease_token: string } }>()).job;
+		expect(job.source_id).toBe(sourceId);
+		const title = await sourceTitleSlug("alice", sourceId);
+		const root = `books/lewis-carroll/${title}`;
+		const prefix = `${root}/audio/kokoro-af-heart/builds/${job.build_id}`;
+		await env.R2_BUCKET.put(`${root}/manifest.json`, JSON.stringify({ source: "standard-ebooks", renditions: { "kokoro-af-heart": { current_build: job.build_id } } }));
+		await env.R2_BUCKET.put(`${prefix}/rendition-manifest.json`, JSON.stringify({ version: 2, build: job.build_id, sections: [{ sequence: 1 }] }));
+		await env.R2_BUCKET.put(`${prefix}/section_data.json`, "{}");
+		await env.R2_BUCKET.put(`${prefix}/section-01.m4a`, "audio");
+		await env.R2_BUCKET.put("catalog.json", JSON.stringify({ books: [{ author_slug: "lewis-carroll", title_slug: title, current_build: job.build_id }] }));
+		const done = { lease_token: job.lease_token, success: true, author_slug: "lewis-carroll", title_slug: title };
+		expect((await request(`/internal/generation-jobs/${job.id}/finish`, "POST", { ...done, title_slug: "alice-g11" }, pcToken)).status).toBe(409);
+		expect((await request(`/internal/generation-jobs/${job.id}/finish`, "POST", done, pcToken)).status).toBe(200);
+	});
 	it("streams source EPUB for immediate reading and validates upstream redirects", async () => {
 		await sync([source(11, "Alice")]);
 		fetchMock.activate();

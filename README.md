@@ -200,6 +200,21 @@ on the PC, the
 Standard and expressive jobs have no word-count limit. The `--max-words`
 option is removed. Older `BOOK_TOO_LONG` failures can be retried as owner using
 the updated consumer without a word-count override.
+Standard Ebooks editions can be added to the same source search without patron
+feeds. With `OPENSHELF_PC_TOKEN` set for the target environment, run:
+
+```powershell
+.\.venv\Scripts\python.exe pipeline/scripts/openshelf-pipeline.py books sync-catalog --source standard-ebooks --api-base https://openshelf-api.johnkoeh.workers.dev/api/v1 --max-books 500
+```
+
+The import checks official edition rights and exact EPUB links, waits two seconds
+between upstream requests, and writes batches of 50. `--dry-run` checks metadata
+without writes; `--after-page` resumes pagination and `--max-pages` bounds it.
+Read now supports both sources; each edition keeps a separate audio job/build.
+Real Standard Ebooks imports also download and verify each EPUB, then upload a
+reading copy to R2 because Standard Ebooks blocks Cloudflare's direct downloads.
+Files above the reader's 32 MiB bound or with unverifiable rights are skipped.
+
 Rights, archive, and empty-text checks still apply.
 
 ### Windows job monitor

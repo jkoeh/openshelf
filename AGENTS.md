@@ -42,6 +42,7 @@ flowchart LR
         R_M4A[audio/{rendition}/builds/{build}/<br/>section-NN.m4a]
         R_CD[audio/{rendition}/builds/{build}/<br/>section_data.json]
         R_CAT[catalog.json]
+        R_SOURCE[source-epubs/standardebooks/{source-hash}/book.epub<br/>verified reading cache]
     end
 
     R_JOBS[(D1 source index + generation jobs)]
@@ -86,6 +87,7 @@ flowchart LR
     R_JOBS --> W_SEARCH
     R_JOBS --> W_SOURCE_EPUB
     R_JOBS --> W_JOBS
+    R_SOURCE --> W_SOURCE_EPUB
     W_JOBS --> R_JOBS
 
     subgraph Client[Client — Expo]
@@ -122,8 +124,8 @@ flowchart LR
 
     subgraph PC[Owner PC — outbound consumer]
         J_MON[Windows Studio · embedded local dashboard<br/>owns server + consumer process tree<br/>priority + cancel + retry + consumer status]
-        J1[Poll + lease job] --> J2[Exact Gutenberg EPUB]
-        J2 --> J2R[Verify RDF + EPUB public-domain rights]
+        J1[Poll + lease job] --> J2[Exact Gutenberg or Standard Ebooks EPUB]
+        J2 --> J2R[Verify source-specific public-domain rights + EPUB identity]
         J2R --> J3[Standard: Kokoro<br/>Expressive: OpenAI direction + Chatterbox<br/>both: WhisperX + R2]
     end
     J1 <--> W_JOBS
@@ -151,7 +153,7 @@ Notes:
 - When section audio finishes, the reader advances to the next section in the
   same selected rendition/build and starts playback only after the next
   section's audio source has loaded.
-- The owner PC consumer checks Gutenberg EPUB ZIP metadata, expanded size,
+- The owner PC consumer checks source EPUB ZIP metadata, expanded size,
   entry count, and parsed source spoken words before starting LLM or synthesis.
   Standard and expressive jobs have no word-count limit or `--max-words` option.
   Parsed spoken text must still be nonempty, including spoken headings.
@@ -274,10 +276,40 @@ npm run typecheck    # Type-check worker + client
   sections; source title pages are not playback sections.
 - `sanitize()` in `pipeline/src/openshelf/scrapers/http.py` is the single source of truth for slug generation
 - Idempotent at every level: file exists -> skip, R2 key exists -> skip
-- Automatic Gutenberg catalog import and PC job generation require verified
+- Automatic source catalog import and PC job generation require verified
   U.S. public-domain status. Public reading remains available globally. Manual
   `books process` and `dag run` uploads are operator-controlled; the operator
   is responsible for checking rights before publishing a local EPUB.
+
+### Standard Ebooks source discovery
+
+Source search includes indexed Gutenberg and Standard Ebooks editions. Standard
+Ebooks IDs are `standardebooks:<author>/<title>[/<contributors>...]`, preserving
+the canonical edition path. The PC imports at most 1,000 editions per run through
+`books sync-catalog --source standard-ebooks`, with a two-second request delay,
+bounded listing pages, and batches of at most 50. Each edition must have the
+official U.S. public-domain statement and an exact compatible EPUB link; future
+`not-pd` listings and ambiguous metadata are skipped. Search requests query D1,
+never the upstream website. The client labels the source of each edition.
+
+Reading and generation allow only HTTPS EPUB URLs matching the exact edition on
+`standardebooks.org`; redirects are bounded and revalidated. No download-cookie
+gate is bypassed. The official exact-file `?source=download` continuation is
+allowed; other query strings are rejected. An upstream HTML response fails explicitly. Before synthesis,
+the PC rechecks the edition page, verifies the EPUB OPF identifier matches that
+edition and its rights dedicate the edition to the public domain via CC0.
+Standard Ebooks rejects direct Cloudflare fetches with HTTP 403. During a real
+catalog import the PC downloads and verifies each exact EPUB before indexing it,
+then sends it to the PC-authenticated internal source-EPUB upload route. The
+Worker stores it at `source-epubs/standardebooks/{sha256(source_id)}/book.epub`.
+Uploads are bounded to 32 MiB, require EPUB ZIP magic, and are accepted only for
+an indexed Standard Ebooks ID. Inline reading streams this cache with `no-store`;
+missing caches fail explicitly. Direct download requests retain the source redirect.
+`--dry-run` validates metadata without downloading or uploading EPUBs. Source
+cache bytes are independent of audiobook publication and are retained on refresh.
+Standard Ebooks publication slugs append `-se-` plus the first 12 hex characters
+of SHA-256 of the source ID; Gutenberg retains `-g<id>`. Both generation modes
+share existing limits, leases, resume behavior, and publication checks.
 
 ## Docs-First Workflow (mandatory)
 

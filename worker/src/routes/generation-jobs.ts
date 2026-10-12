@@ -6,6 +6,7 @@ import { JobErrorCode, publicJobError } from "../utils/generation-errors";
 import { adminCredentialStatus } from "../utils/google-admin";
 import { createOpenAPIApp } from "../utils/openapi-app";
 import { r2Key } from "../utils/r2-keys";
+import { SourceIdSchema, sourceTitleSlug } from "../utils/source-editions";
 
 const Id = z.object({
 	id: z
@@ -40,7 +41,7 @@ const ManagedList = z.object({
 });
 const Priority = z.object({ priority: z.enum(["normal", "high"]) });
 const Create = z.object({
-	source_id: z.string().regex(/^gutenberg:[1-9][0-9]*$/),
+	source_id: SourceIdSchema,
 	mode: z.enum(["standard", "expressive"]).default("standard"),
 	regenerate: z.boolean().default(false),
 });
@@ -312,7 +313,7 @@ async function verifyPublished(
 		source?: string;
 		renditions?: Record<string, { current_build?: string }>;
 	};
-	if (book.source !== "gutenberg") return false;
+	if (book.source !== (row.source_id.startsWith("standardebooks:") ? "standard-ebooks" : "gutenberg")) return false;
 	if (book.renditions?.[selectedRendition]?.current_build !== row.build_id) return false;
 	const rendition = await env.R2_BUCKET.get(
 		r2Key.renditionManifest(author, title, selectedRendition, row.build_id),
@@ -712,7 +713,7 @@ internal.openapi(finish, async (c) => {
 		if (
 			!source ||
 			body.author_slug !== (slug(source.author) || "unknown") ||
-			body.title_slug !== `${slug(source.title) || "untitled"}-g${row.source_id.slice(10)}`
+			body.title_slug !== await sourceTitleSlug(slug(source.title) || "untitled", row.source_id)
 		)
 			return c.json(
 				{

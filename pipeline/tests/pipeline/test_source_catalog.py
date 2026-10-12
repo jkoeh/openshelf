@@ -10,9 +10,42 @@ from pathlib import Path
 from unittest.mock import patch
 
 from openshelf.pipeline import source_catalog
+from openshelf.pipeline import standard_ebooks_source as se
 
 
 class CatalogTests(unittest.TestCase):
+    def test_standard_ebooks_metadata_rights_and_bounded_import(self):
+        source_id = "standardebooks:lewis-carroll/alices-adventures-in-wonderland/john-tenniel"
+        path = "/ebooks/" + se.edition_path(source_id)
+        page = (f'<link rel="canonical" href="{se.BASE}{path}"/>'
+                '<h1 property="schema:name">Alice’s Adventures in Wonderland</h1>'
+                '<a property="schema:author"><span property="schema:name">Lewis Carroll</span></a>'
+                '<p class="us-pd-warning">This ebook is thought to be free of copyright restrictions in the United States.</p>'
+                f'<a href="{se.epub_url(source_id).split(se.BASE)[1].split("?")[0]}">EPUB</a>')
+        book = se.parse_edition(page, source_id)
+        self.assertEqual(book["title"], "Alice’s Adventures in Wonderland")
+        for invalid in (page.replace("us-pd-warning", "footer"),
+                        page.replace("rel=\"canonical\"", "rel=\"other\""),
+                        page.replace(".epub", ".azw3")):
+            with self.assertRaises(ValueError):
+                se.parse_edition(invalid, source_id)
+        listing = f'<li about="{path}"></li><li class="not-pd" about="/ebooks/a/future"></li>'
+        with patch.object(se, "fetch_page", side_effect=[listing, page]) as fetch:
+            self.assertEqual(list(se.catalog_books(max_books=1)), [book])
+            self.assertEqual(fetch.call_count, 2)
+        posts = []
+        with patch.object(se, "catalog_books", return_value=[book]), \
+                patch.object(source_catalog.JobAPI, "__init__", return_value=None), \
+                patch.object(source_catalog.JobAPI, "post", side_effect=lambda route, body: posts.append((route, body))), \
+                patch("openshelf.pipeline.job_consumer.fetch_epub", side_effect=lambda url, sid, path: path.write_bytes(b"PK\x03\x04")), \
+                patch("openshelf.pipeline.job_consumer.check_epub_rights"), \
+                patch("openshelf.pipeline.job_consumer.check_spoken_text", return_value=100), \
+                patch.object(source_catalog.JobAPI, "upload_source_epub") as upload:
+            self.assertEqual(source_catalog.main(["--source", "standard-ebooks", "--api-base", "https://example.com/api/v1"]), 0)
+            self.assertEqual(upload.call_args.args[0], source_id)
+        self.assertEqual(posts[0][0], "/internal/source-books/sync")
+        self.assertEqual(posts[0][1]["books"], [book])
+
     @staticmethod
     def rdf(number, rights, epub_url=None):
         file = (f'<pgterms:file rdf:about="{epub_url}"><dcterms:format>'

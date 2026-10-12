@@ -17,28 +17,32 @@ existing Python pipeline, and publishes to R2. A stopped PC leaves jobs queued.
 
 The first vertical slice uses Gutenberg, Kokoro with an explicit `af_heart`
 voice, one concurrent job, and the existing root `.venv` with CUDA. Standard
-Ebooks, other engines, and additional workers follow through the same contracts.
+Ebooks follows through the same contracts, using the source identity and rights
+rules in root AGENTS.md. Other engines and additional workers follow later.
 Normal catalog browsing and playback continue to use the existing R2 routes.
 
 ### Independent EPUB retrieval and audio failure visibility
 
-Each indexed search result offers **Download EPUB** alongside its audio status.
+Each indexed search result offers **Read now** alongside its audio status.
 This is a separate fast request: the Worker looks up the exact source ID,
-validates its stored HTTPS Gutenberg EPUB URL (host, source ID, credentials,
-port, query, and fragment), and redirects to Gutenberg's original EPUB.
+validates its stored HTTPS source EPUB URL (host, source ID, credentials,
+port, query, and fragment), and streams it with `inline=1` for the source reader.
+The default endpoint redirects for direct downloads. Standard Ebooks permits
+only the official same-edition `?source=download` continuation; no fabricated
+cookie is required. The reader follows the OPF spine and independently starts
+or follows an audio job, showing stage milestones and Start Listening on completion.
 It works with the PC offline and while any audio job is queued, running, failed,
 or canceled; it neither queues GPU work nor consumes a generation start.
 The original source EPUB is not an annotated audiobook artifact and is not
-added to the audiobook catalog. Existing completed-book downloads continue to
+added to the audiobook catalog. The completed-book EPUB API continues to
 use the annotated R2 EPUB route. Missing IDs, invalid stored URLs, and public
 request limits return explicit errors, with no redirect on failure.
 
 Search results include the latest job's public error code alongside its state.
 Reopening search must preserve the specific word-budget or rights failure
-message, without needing an active-job poll. Audio preflight retains its
-100,000-word default; a larger owner-reviewed book uses an explicit CLI
-`--max-words` override on its retry. Local consumer logs include the measured
-word count and limit when rejecting an oversized book.
+message, without needing an active-job poll. Standard and expressive audio jobs
+have no word-count ceiling or `--max-words` option. Archive bounds, source-specific
+rights verification, and nonempty spoken text remain required before synthesis.
 
 ```mermaid
 flowchart LR
@@ -185,7 +189,7 @@ are the current baseline and near-term hardening rules:
    never in the public client bundle or logs. Apply a separate rate limit to
    authentication failures. Enforce, with atomic
    D1 writes, one active job per source, at most three queued jobs,
-   an initial owner budget of two generation starts per day including retries,
+   a budget of 300 generation starts per UTC day including retries,
    and at most three attempts per job. Return the existing job for duplicate
    requests. Only accept known source IDs and allowed engine/voice choices.
    The D1 quota is the authoritative GPU cost cap. Canceled reservations stay

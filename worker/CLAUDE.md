@@ -42,6 +42,7 @@ src/
     r2-keys.ts          # R2 key builders
     response.ts         # Error response helpers (used by global onError/notFound)
     validation.ts       # Param regexes (kept; lifted into schemas/params.ts for routes)
+    source-editions.ts  # Shared source ID, exact EPUB URL and publication slug validation
 
 docs/
   openapi.md            # How to add/modify routes — read before editing routes/
@@ -104,7 +105,7 @@ npm run seed
 
 ## Search and generation v1
 
-Gutenberg-only source suggestions come from a bounded, indexed D1 table. The
+Gutenberg and Standard Ebooks source suggestions come from a bounded, indexed D1 table. The
 PC can fill that table from Gutenberg's weekly CSV feed in capped batches.
 The PC checks catalog candidates against Gutenberg's rights-bearing RDF
 archive before syncing; the Worker still validates source IDs and URL hosts.
@@ -112,7 +113,7 @@ Search uses the longest typed query token as the indexed prefix at three or more
 characters, then tries indexed adjacent-transposition candidates, then a
 two-character indexed sample; each lookup is limited to 80 candidates. The
 visitor can request a fixed Kokoro `af_heart` job with an exact `gutenberg:<id>`
-source ID under a dedicated create rate limit. The owner may instead request
+source ID, or a canonical `standardebooks:<edition path>` ID, under a dedicated create rate limit. The owner may instead request
 `expressive`, a fixed Chatterbox `af_heart` rendition whose PC pipeline uses
 batched OpenAI emotion direction; public callers cannot select that mode. The
 request accepts no model, key, prompt, or arbitrary engine setting. The mode is
@@ -122,7 +123,7 @@ publication availability and the relevant job mode, state, ID, and update time
 separately, with a public failure code that survives reopening search, so
 regeneration progress or failure never hides the playable book.
 An independent source EPUB route performs a rate-limited indexed lookup,
-validates the stored HTTPS Gutenberg EPUB URL against the exact source ID,
+validates the stored HTTPS Gutenberg or Standard Ebooks EPUB URL against the exact source ID,
 and redirects to the original EPUB by default. With `inline=1`, it streams the
 validated EPUB through the API for the immediate source reader, without forwarding
 credentials; up to three upstream redirects are revalidated against the exact source ID. Upstream errors return 502.
@@ -139,6 +140,12 @@ also accepts a Google Identity Services ID token after the Worker verifies its G
 signature, issuer, configured OAuth client audience, expiry, verified email,
 and exact `johnkoeh@gmail.com` address. An unconfigured Google client ID fails
 closed; the existing owner token remains valid for local CLI administration.
+For Standard Ebooks, inline reading streams the PC-verified R2 source cache;
+Cloudflare fetches are blocked upstream with 403. The internal PC-authenticated
+source-EPUB upload accepts only indexed Standard Ebooks IDs, EPUB ZIP magic and
+at most 32 MiB. Cache keys use SHA-256 of the source ID under
+`source-epubs/standardebooks/`; responses use `no-store`. Missing cached files
+return 502 without contacting upstream. Direct downloads still redirect.
 The public `GOOGLE_CLIENT_ID` is declared as a plain-text variable in
 `wrangler.toml` for each development/deployment environment and matches the
 client's build-time `EXPO_PUBLIC_GOOGLE_CLIENT_ID`. It is not a client secret.
@@ -149,7 +156,7 @@ binding list or publishing local code. Source deployments use the declared `vars
 controls; local owner tokens do not authenticate this browser identity route.
 The OpenAI key stays on the PC and never enters a Worker binding. A separate PC
 credential synchronizes source metadata and claims a
-job with a renewable lease. The PC downloads only allowlisted Gutenberg EPUB
+job with a renewable lease. The PC downloads only allowlisted Gutenberg or Standard Ebooks EPUB
 URLs and runs the exact-EPUB pipeline for the job's fixed rendition. The
 consumer runs OpenAI direction only for expressive jobs and will not claim them
 without a locally configured OpenAI key. Completion checks the R2 book

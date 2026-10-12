@@ -23,6 +23,14 @@ books/{author}/{title}/
 Every build object is immutable. `rendition-manifest.json` is uploaded last.
 `manifest.json` remains the short-cached mutable pointer.
 
+Source reading also uses `source-epubs/standardebooks/{sha256(source_id)}/book.epub`.
+This cache is uploaded through the PC-authenticated internal Worker route during
+Standard Ebooks catalog import, after archive, OPF identity/rights and spoken-text
+validation. It is separate from audiobook builds and annotated `books/.../book.epub`.
+The Worker limits copies to 32 MiB and streams them with `no-store` for Read now,
+because Standard Ebooks returns 403 to Cloudflare's direct downloads. Source
+cache refreshes are operator-run through the existing catalog import command.
+
 ## `section_data.json`
 
 ```json

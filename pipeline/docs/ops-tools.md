@@ -51,7 +51,7 @@ from the PC environment and polls the Worker over HTTPS. `--sync-pages N` first
 indexes up to N Gutendex pages through the authenticated source-sync route;
 N is capped at 10 per invocation to bound D1 writes. Use `books sync-catalog`
 for a broader rights-checked import.
-One job runs at a time. A claimed job names an exact Gutenberg ID and EPUB URL;
+One job runs at a time. A claimed job names an exact Gutenberg or Standard Ebooks ID and EPUB URL;
 the consumer validates its host and EPUB archive, rejects ZIP files above
 2 MiB central-directory metadata, 256 MiB expanded size, or 5,000 entries,
 parses the EPUB locally and rejects empty spoken text before any LLM or TTS call.
@@ -166,6 +166,23 @@ Manual `--upload` accepts local EPUBs without the job consumer's automatic
 Gutenberg rights check. The operator verifies rights before publishing.
 
 ## `books sync-catalog`
+
+`books sync-catalog --source standard-ebooks --api-base <Worker /api/v1 URL>`
+indexes the public Standard Ebooks HTML catalog without patron feeds. It checks
+canonical edition paths, exact compatible EPUB links, and the official U.S.
+public-domain statement, skips future releases, delays requests by two seconds,
+and imports at most 500 editions by default (1,000 maximum), in batches of 50.
+`--after-page` resumes listing pagination; `--max-pages` bounds pages (20 default,
+50 maximum). `--dry-run` checks live metadata without API writes. The consumer
+rechecks page rights and EPUB OPF edition identity/CC0 rights before synthesis.
+Downloads follow only the official exact-file `?source=download` continuation,
+never a fabricated cookie. IDs and publication slugs follow
+the root AGENTS.md Standard Ebooks source contract.
+Real imports download the exact EPUB, check archive limits, OPF rights/identity,
+and nonempty text before indexing, then upload the reading copy through the
+PC-authenticated source-EPUB route (32 MiB maximum). This allows reading despite
+Standard Ebooks blocking Cloudflare upstream fetches. Dry runs check metadata
+without EPUB downloads or API writes. Failed EPUB validations are skipped.
 
 The operator downloads Gutenberg's weekly CSV.gz and RDF tar.bz2 feeds into
 `download/`, then runs `books sync-catalog --catalog <csv.gz> --rights-archive

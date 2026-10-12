@@ -51,6 +51,38 @@ class FakeChild:
 
 
 class ConsumerTests(unittest.TestCase):
+    def test_standard_ebooks_url_and_edition_isolation(self):
+        from openshelf.pipeline import standard_ebooks_source as se
+        source_id = "standardebooks:lewis-carroll/alice/john-tenniel"
+        good = se.epub_url(source_id)
+        self.assertEqual(consumer.validate_epub_url(good, source_id), good)
+        for bad in (good.replace("standardebooks.org", "evil.example"),
+                    good.replace("john-tenniel", "other"), good + "&evil=1",
+                    good.replace("https:", "http:"), good + "#fragment"):
+            with self.assertRaises(ValueError):
+                consumer.validate_epub_url(bad, source_id)
+        self.assertNotEqual(se.title_slug("Alice", source_id), se.title_slug("Alice", "standardebooks:lewis-carroll/alice"))
+        self.assertEqual(se.title_slug("Alice", "gutenberg:11"), "alice-g11")
+
+    def test_standard_ebooks_consumer_preserves_source_and_publication_slug(self):
+        from openshelf.pipeline import standard_ebooks_source as se
+        source_id = "standardebooks:lewis-carroll/alice/john-tenniel"
+        job = {"id": "job-se", "source_id": source_id, "title": "Alice", "author": "Lewis Carroll",
+               "epub_url": se.epub_url(source_id), "build_id": "1234567890abcdef", "lease_token": "lease"}
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            api = FakeAPI()
+            with patch.object(consumer, "fetch_epub") as fetch, \
+                    patch.object(consumer, "validate_local_epub"), \
+                    patch.object(consumer, "check_spoken_text", return_value=100), \
+                    patch.object(consumer.subprocess, "Popen", return_value=FakeChild()), \
+                    patch.object(consumer.time, "sleep"):
+                consumer.process_job(api, job, download_root=root / "download", audio_root=root / "audio", device="cuda")
+            epub = fetch.call_args.args[2]
+            self.assertIn("standard-ebooks", epub.parts)
+            self.epub_rights.assert_called_once_with(epub, source_id)
+            self.assertEqual(api.posts[-1][1]["title_slug"], se.title_slug("Alice", source_id))
+
     def setUp(self):
         patcher = patch.object(consumer, "verify_public_domain")
         self.rights = patcher.start()
@@ -268,6 +300,26 @@ class ConsumerTests(unittest.TestCase):
 
 
 class RightsTests(unittest.TestCase):
+    def test_standard_ebooks_embedded_rights_require_exact_edition(self):
+        source_id = "standardebooks:lewis-carroll/alice/john-tenniel"
+        identity = "https://standardebooks.org/ebooks/lewis-carroll/alice/john-tenniel"
+        rights = ("The source text and artwork in this ebook are believed to be in the United States public domain; "
+                  "the creators dedicate their contributions to the worldwide public domain via "
+                  "https://creativecommons.org/publicdomain/zero/1.0/.")
+        with tempfile.TemporaryDirectory() as folder:
+            epub = Path(folder) / "book.epub"
+            def write(identifier, statement):
+                with zipfile.ZipFile(epub, "w") as archive:
+                    archive.writestr("content.opf", '<package xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                                     f'<dc:identifier>{identifier}</dc:identifier><dc:rights>{statement}</dc:rights></package>')
+            write(identity, rights)
+            consumer.check_epub_rights(epub, source_id)
+            for identifier, statement in ((identity.replace("/alice/", "/other/"), rights),
+                                          (identity, "CC0"), (identity, "Public domain in the USA.")):
+                write(identifier, statement)
+                with self.assertRaises(consumer.RightsNotVerified):
+                    consumer.check_epub_rights(epub, source_id)
+
     def test_embedded_epub_rights_and_copyright_banner(self):
         package = ('<package xmlns:dc="http://purl.org/dc/elements/1.1/">'
                    '<dc:rights>{}</dc:rights></package>')

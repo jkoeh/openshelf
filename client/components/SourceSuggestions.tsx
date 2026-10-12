@@ -121,7 +121,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
 
   return <View style={{ marginTop: 34 }}>
     <Text accessibilityRole="header" style={{ color: palette.text, fontFamily: "Georgia", fontSize: width < 500 ? 25 : 32, fontWeight: "700" }}>
-      Project Gutenberg editions
+      Gutenberg & Standard Ebooks editions
     </Text>
     <Text style={{ color: palette.muted, fontSize: 15, lineHeight: 22, marginTop: 5, marginBottom: 18 }}>
       Read immediately. We will prepare the audio while you turn the pages. Search includes indexed editions only.
@@ -152,7 +152,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
           </Text>
           <Text style={{ color: palette.text, fontSize: 15, marginTop: 6 }}>{book.author}</Text>
           <Text style={{ color: palette.muted, fontSize: 13, marginTop: 8, marginBottom: 14 }}>
-            Gutenberg #{book.source_id.split(":")[1]}
+            {book.source_id.startsWith("standardebooks:") ? "Standard Ebooks" : `Gutenberg #${book.source_id.split(":")[1]}`}
           </Text>
           {active && <View style={{ marginBottom: 16 }}>
             <Text style={{ color: palette.text, fontWeight: "600" }}>

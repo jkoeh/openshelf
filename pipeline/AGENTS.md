@@ -49,7 +49,7 @@ under `pipeline/src/openshelf/pipeline/engines/`.
 
 - `openshelf-pipeline` is the canonical command surface.
 - `openshelf-pipeline books consume-jobs` polls outward to the Worker, downloads
-  an exact Gutenberg EPUB after host and EPUB validation, renews its lease, and
+  an exact Gutenberg or Standard Ebooks EPUB after host and EPUB validation, renews its lease, and
   invokes the existing exact-EPUB DAG runner with a fixed build ID. Before any
   LLM or synthesis work, it rejects archives above 2 MiB central-directory
   metadata, 256 MiB expanded size, or 5,000 entries. Standard and expressive
@@ -64,7 +64,7 @@ under `pipeline/src/openshelf/pipeline/engines/`.
   `LLM_PROVIDER=openai` for that child process only. It advertises expressive
   claim capability only when a local `OPENAI_API_KEY` is configured. The key is
   never sent to the Worker, logged, or stored in a job. Both modes use the same
-  Gutenberg rights, EPUB, spoken-text validation, lease, and publication checks.
+  source-specific rights, EPUB, spoken-text validation, lease, and publication checks.
 - `pipeline/scripts/job-monitor.pyw` launches Windows OpenShelf Studio, a pywebview
   WebView2 window hosting the local dashboard. It reads the
   ignored production owner token for owner-only queue/priority/cancel calls and
@@ -99,7 +99,7 @@ under `pipeline/src/openshelf/pipeline/engines/`.
   Its owner API client uses a fixed HTTPS origin and rejects redirects. It never
   embeds or prints credentials. Canceling a selected task uses the Worker lease-revocation
   route; the consumer terminates its child at its next heartbeat.
-- Before launching TTS, the PC consumer reads official per-book Gutenberg RDF
+- Before launching TTS for Gutenberg, the PC consumer reads official per-book Gutenberg RDF
   for the exact source ID and requires `Public domain in the USA.`. Missing or
   ambiguous rights fail closed, including for already indexed jobs. It also
   requires the downloaded EPUB's OPF `dc:rights` to say the same and rejects
@@ -112,6 +112,17 @@ under `pipeline/src/openshelf/pipeline/engines/`.
   record says `Public domain in the USA.` and names a valid EPUB.
   `--after-id` resumes a later numeric range. Import never
   claims or starts an audio job.
+- `books sync-catalog --source standard-ebooks` imports the bounded public HTML
+  catalog with two-second delays and exact canonical edition metadata. The
+  official edition page must state U.S. public-domain status and link its exact
+  compatible EPUB. Before synthesis the consumer rechecks that page and requires
+  matching OPF edition identity plus the Standard Ebooks CC0 rights statement.
+  See the root Standard Ebooks source contract for IDs and publication slugs.
+  `pipeline/standard_ebooks_source.py` owns bounded page fetching, canonical
+  metadata parsing, exact URL validation and source-specific publication slugs.
+  Real imports validate each downloaded EPUB and its OPF rights/identity before
+  indexing and uploading a bounded 32 MiB reading copy to the Worker/R2 cache.
+  Dry runs validate metadata only. Failed downloads are not added to the index.
 - `openshelf-pipeline books ...` owns user-facing book workflows: search,
   download, process local EPUBs, upload, and catalog refresh. Manual uploads
   do not run the PC job consumer's Gutenberg rights check; the operator checks

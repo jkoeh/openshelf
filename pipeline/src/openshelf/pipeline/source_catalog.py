@@ -1,4 +1,4 @@
-"""Bounded import of Project Gutenberg's official CSV and rights-bearing RDF."""
+"""Bounded import of rights-verified Gutenberg and Standard Ebooks editions."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import gzip
 import os
 import re
 import tarfile
+import tempfile
 from pathlib import Path
 
 from openshelf.pipeline.job_consumer import (JobAPI, MAX_RIGHTS_BYTES,
@@ -100,8 +101,11 @@ def verified_books(candidates, archive_path: Path):
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="openshelf-pipeline books sync-catalog")
-    parser.add_argument("--catalog", required=True, type=Path)
-    parser.add_argument("--rights-archive", required=True, type=Path)
+    parser.add_argument("--source", choices=["gutenberg", "standard-ebooks"], default="gutenberg")
+    parser.add_argument("--catalog", type=Path)
+    parser.add_argument("--rights-archive", type=Path)
+    parser.add_argument("--after-page", type=int, default=0)
+    parser.add_argument("--max-pages", type=int, default=20)
     parser.add_argument("--api-base", required=True)
     parser.add_argument("--after-id", type=int, default=0)
     parser.add_argument("--max-books", type=int, default=500)
@@ -109,25 +113,52 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     if args.after_id < 0 or not 1 <= args.max_books <= MAX_BOOKS_PER_RUN:
         parser.error("--after-id must be nonnegative and --max-books must be 1..1000")
+    if args.after_page < 0 or not 1 <= args.max_pages <= 50:
+        parser.error("--after-page must be nonnegative and --max-pages must be 1..50")
+    if args.source == "gutenberg" and (not args.catalog or not args.rights_archive):
+        parser.error("Gutenberg requires --catalog and --rights-archive")
+    if args.source == "standard-ebooks":
+        from openshelf.pipeline.standard_ebooks_source import catalog_books as se_books
+        candidates = se_books(max_books=args.max_books, after_page=args.after_page, max_pages=args.max_pages)
+    else:
+        candidates = verified_books(catalog_books(args.catalog, after_id=args.after_id,
+                                                 max_books=args.max_books), args.rights_archive)
     api = None if args.dry_run else JobAPI(args.api_base, os.environ.get("OPENSHELF_PC_TOKEN", ""))
     batch = []
     total = 0
-    for book in verified_books(catalog_books(args.catalog, after_id=args.after_id,
-                                             max_books=args.max_books), args.rights_archive):
+    for book in candidates:
+        if args.source == "standard-ebooks" and api:
+            from openshelf.pipeline.job_consumer import fetch_epub, check_epub_rights, check_spoken_text
+            with tempfile.TemporaryDirectory() as directory:
+                epub = Path(directory) / "book.epub"
+                try:
+                    fetch_epub(book["epub_url"], book["source_id"], epub)
+                    if epub.stat().st_size > 32 * 1024 * 1024:
+                        raise ValueError("EPUB exceeds reader size limit")
+                    check_epub_rights(epub, book["source_id"])
+                    check_spoken_text(epub)
+                except (ValueError, OSError) as exc:
+                    print(f"Skipped {book['source_id']}: {type(exc).__name__}")
+                    continue
+                api.post("/internal/source-books/sync", {"books": [book]})
+                api.upload_source_epub(book["source_id"], epub)
+                total += 1
+                print(f"Indexed and cached {total}; source ID {book['source_id']}")
+            continue
         batch.append(book)
         if len(batch) == BATCH_SIZE:
             if api:
                 api.post("/internal/source-books/sync", {"books": batch})
             total += len(batch)
             verb = "Would index" if args.dry_run else "Indexed"
-            print(f"{verb} {total}; last Gutenberg ID {batch[-1]['source_id'].split(':')[1]}")
+            print(f"{verb} {total}; last source ID {batch[-1]['source_id']}")
             batch = []
     if batch:
         if api:
             api.post("/internal/source-books/sync", {"books": batch})
         total += len(batch)
         verb = "Would index" if args.dry_run else "Indexed"
-        print(f"{verb} {total}; last Gutenberg ID {batch[-1]['source_id'].split(':')[1]}")
+        print(f"{verb} {total}; last source ID {batch[-1]['source_id']}")
     if not total:
         print("No rights-verified EPUBs in the selected catalog range")
     return 0

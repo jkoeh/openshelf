@@ -4,6 +4,7 @@ import type { Env } from "../types";
 import { credentialStatus, noStore } from "../utils/job-auth";
 import { JobErrorCode, publicJobError } from "../utils/generation-errors";
 import { createOpenAPIApp } from "../utils/openapi-app";
+import { SourceIdSchema, validSourceEpub, sourceEpubKey } from "../utils/source-editions";
 
 const BookSchema = z
 	.object({
@@ -27,7 +28,7 @@ const SearchQuery = z.object({
 	limit: z.coerce.number().int().min(1).max(10).default(10),
 });
 const SyncBook = z.object({
-	source_id: z.string().regex(/^gutenberg:[1-9][0-9]*$/),
+	source_id: SourceIdSchema,
 	title: z.string().min(1).max(300),
 	author: z.string().min(1).max(200),
 	epub_url: z.string().url().max(500),
@@ -39,7 +40,7 @@ const searchRoute = createRoute({
 	method: "get",
 	path: "/",
 	tags: ["sources"],
-	summary: "Find Gutenberg editions by title or author",
+	summary: "Find Gutenberg and Standard Ebooks editions by title or author",
 	request: { query: SearchQuery },
 	responses: {
 		200: {
@@ -71,14 +72,14 @@ const downloadRoute = createRoute({
 	tags: ["sources"],
 	summary: "Download the source EPUB independently of audio generation",
 	request: {
-		params: z.object({ source_id: z.string().regex(/^gutenberg:[1-9][0-9]*$/) }),
+		params: z.object({ source_id: SourceIdSchema }),
 		query: z.object({ inline: z.enum(["1"]).optional() }),
 	},
 	responses: {
 		200: { description: "Inline source EPUB", content: { "application/epub+zip": { schema: { type: "string", format: "binary" } } } },
 		502: error,
 		302: {
-			description: "Original Gutenberg EPUB download",
+			description: "Original source EPUB download",
 			headers: { Location: { schema: { type: "string", format: "uri" } } },
 		},
 		400: error,
@@ -90,6 +91,18 @@ const downloadRoute = createRoute({
 
 const app = createOpenAPIApp<{ Bindings: Env }>();
 const internal = createOpenAPIApp<{ Bindings: Env }>();
+const uploadRoute = createRoute({
+	method: "post", path: "/{source_id}/epub", tags: ["sources"],
+	summary: "PC upload of a verified Standard Ebooks reading copy (maximum 32 MiB)",
+	request: {
+		params: z.object({ source_id: SourceIdSchema }),
+		body: { content: { "application/epub+zip": { schema: { type: "string", format: "binary" } } } },
+	},
+	responses: {
+		200: { description: "Cached", content: { "application/json": { schema: z.object({ cached: z.literal(true) }) } } },
+		400: error, 401: error, 404: error, 413: error, 429: error, 503: error,
+	},
+});
 const clean = (s: string) =>
 	s
 		.toLowerCase()
@@ -223,26 +236,34 @@ app.openapi(downloadRoute, async (c) => {
 	} catch {
 		return c.json({ error: { code: "INVALID_SOURCE", message: "Source EPUB URL is invalid" } }, 400, noStore);
 	}
-	const number = source_id.slice(10);
-	const path = new RegExp(`^/(?:ebooks/${number}\\.epub(?:3)?(?:\\.(?:images|noimages))?|cache/epub/${number}/pg${number}(?:-images)?(?:-3)?\\.epub)$`);
-	if (url.protocol !== "https:" || url.hostname !== "www.gutenberg.org" ||
-		url.username || url.password || url.port || url.search || url.hash || !path.test(url.pathname))
-		return c.json({ error: { code: "INVALID_SOURCE", message: "Source EPUB URL must match the Gutenberg ID" } }, 400, noStore);
+	if (!validSourceEpub(url, source_id))
+		return c.json({ error: { code: "INVALID_SOURCE", message: "Source EPUB URL must match the edition ID" } }, 400, noStore);
+	if (source_id.startsWith("standardebooks:")) url.search = "?source=download";
 	if (c.req.valid("query").inline === "1") {
+		if (source_id.startsWith("standardebooks:")) {
+			const cached = await c.env.R2_BUCKET.get(await sourceEpubKey(source_id));
+			if (!cached) return c.json({ error: { code: "SOURCE_UNAVAILABLE", message: "This EPUB has not been cached yet. Try again shortly." } }, 502, noStore);
+			return new Response(cached.body, { headers: { ...noStore, "Content-Type": "application/epub+zip" } });
+		}
 		try {
 			let upstream: Response | undefined;
 			for (let redirects = 0; redirects <= 3; redirects++) {
-				upstream = await fetch(url.href, { redirect: "manual", signal: AbortSignal.timeout(30_000) });
+				upstream = await fetch(url.href, { redirect: "manual", signal: AbortSignal.timeout(30_000),
+					headers: { "User-Agent": "OpenShelf/1.0 (+https://github.com/jkoeh/openshelf)", Accept: "application/epub+zip" } });
 				if (![301, 302, 303, 307, 308].includes(upstream.status)) break;
 				const location = upstream.headers.get("Location");
 				await upstream.body?.cancel();
 				if (!location) throw new Error("Invalid redirect");
 				url = new URL(location, url);
-				if (url.protocol !== "https:" || url.hostname !== "www.gutenberg.org" || url.username || url.password || url.port || url.search || url.hash || !path.test(url.pathname)) throw new Error("Invalid redirect");
+				if (!validSourceEpub(url, source_id)) throw new Error("Invalid redirect");
 			}
-			if (!upstream?.ok || !upstream.body) throw new Error("Source unavailable");
+			if (!upstream?.ok || !upstream.body) {
+				await upstream?.body?.cancel();
+				throw new Error(`Source unavailable: ${upstream?.status}`);
+			}
 			return new Response(upstream.body, { headers: { ...noStore, "Content-Type": "application/epub+zip" } });
-		} catch {
+		} catch (error) {
+			console.warn(JSON.stringify({ event: "source_epub_unavailable", source_id, reason: error instanceof Error ? error.message : "Unknown upstream error" }));
 			return c.json({ error: { code: "SOURCE_UNAVAILABLE", message: "Could not load this EPUB. Try again shortly." } }, 502, noStore);
 		}
 	}
@@ -269,18 +290,9 @@ internal.openapi(syncRoute, async (c) => {
 	const { books } = c.req.valid("json");
 	for (const book of books) {
 		const url = new URL(book.epub_url);
-		const sourceNumber = book.source_id.slice(10);
-		const path = new RegExp(`^/(?:ebooks|cache/epub)/${sourceNumber}(?:[./-]|$)`);
-		if (
-			url.protocol !== "https:" ||
-			url.hostname !== "www.gutenberg.org" ||
-			url.username ||
-			url.password ||
-			url.port ||
-			!path.test(url.pathname)
-		)
+		if (!validSourceEpub(url, book.source_id))
 			return c.json(
-				{ error: { code: "INVALID_SOURCE", message: "EPUB URL must match the Gutenberg ID" } },
+				{ error: { code: "INVALID_SOURCE", message: "EPUB URL must match the edition ID" } },
 				400,
 			);
 	}
@@ -306,3 +318,39 @@ internal.openapi(syncRoute, async (c) => {
 });
 export { internal };
 export default app;
+
+internal.openapi(uploadRoute, async (c) => {
+	if (!c.env.JOB_DB || !c.env.PC_TOKEN || !c.env.AUTH_RATE_LIMITER)
+		return c.json({ error: { code: "UNAVAILABLE", message: "Source cache is not configured" } }, 503, noStore);
+	const auth = await credentialStatus(c.req.raw, c.env, c.env.PC_TOKEN);
+	if (auth) return c.json({ error: { code: auth === 429 ? "RATE_LIMITED" : "UNAUTHORIZED", message: "Invalid credential or too many attempts" } }, auth, noStore);
+	const { source_id } = c.req.valid("param");
+	if (!source_id.startsWith("standardebooks:"))
+		return c.json({ error: { code: "INVALID_SOURCE", message: "Only Standard Ebooks reading copies are accepted" } }, 400, noStore);
+	if (!await c.env.JOB_DB.prepare("SELECT 1 FROM source_books WHERE source_id=?").bind(source_id).first())
+		return c.json({ error: { code: "NOT_FOUND", message: "Source edition not indexed" } }, 404, noStore);
+	const length = Number(c.req.header("Content-Length"));
+	if (!Number.isInteger(length) || length < 4 || length > 32 * 1024 * 1024)
+		return c.json({ error: { code: "INVALID_SIZE", message: "EPUB must be between 4 bytes and 32 MiB" } }, 413, noStore);
+	if (c.req.header("Content-Type") !== "application/epub+zip" || !c.req.raw.body)
+		return c.json({ error: { code: "INVALID_EPUB", message: "An EPUB body is required" } }, 400, noStore);
+	const reader = c.req.raw.body.getReader();
+	const bytes = new Uint8Array(length);
+	let size = 0;
+	try {
+		while (true) {
+			const { value, done } = await reader.read();
+			if (done) break;
+			if (size + value.length > length) {
+				await reader.cancel();
+				return c.json({ error: { code: "INVALID_SIZE", message: "EPUB exceeds declared length" } }, 413, noStore);
+			}
+			bytes.set(value, size);
+			size += value.length;
+		}
+	} finally { reader.releaseLock(); }
+	if (size !== length || bytes[0] !== 80 || bytes[1] !== 75 || bytes[2] !== 3 || bytes[3] !== 4)
+		return c.json({ error: { code: "INVALID_EPUB", message: "EPUB ZIP data is required" } }, 400, noStore);
+	await c.env.R2_BUCKET.put(await sourceEpubKey(source_id), bytes, { httpMetadata: { contentType: "application/epub+zip" } });
+	return c.json({ cached: true as const }, 200, noStore);
+});

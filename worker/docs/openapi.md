@@ -54,6 +54,13 @@ export default app;
 
 ## Shared schemas
 
+`utils/source-editions.ts` provides the shared source ID schema for Gutenberg
+and canonical Standard Ebooks editions, exact EPUB URL validation and source
+publication slugs. Source search, sync, reading and generation use this contract.
+The internal source-EPUB upload route uses a binary EPUB body, an indexed Standard
+Ebooks ID and the existing PC credential; its Zod route documents size/type/auth
+errors. Inline source reading uses the verified R2 cache for Standard Ebooks.
+
 For generation routes, each request/response stays in `createRoute` Zod schemas.
 Owner and PC bearer tokens are distinct Worker secrets. Browser admin actions
 may instead use a Google-signed ID token validated against the configured

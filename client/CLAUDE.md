@@ -58,6 +58,8 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
 
 - Biome enforced: tabs, 100 char line width
 - Route files in `app/` are thin — delegate to components
+- `tests/browser/standard-ebooks.pw.ts` checks Standard Ebooks source labels,
+  encoded edition-path navigation, immediate EPUB reading and exact job identity.
 - Business logic lives in `lib/` (pure TS, no React imports)
 - Hooks in `hooks/` bridge lib logic to React components
 - API base URL via `EXPO_PUBLIC_API_BASE` env var (defaults to localhost:8787)
@@ -88,7 +90,7 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
   listening actions; standalone EPUB download buttons are removed from the UI.
 - `useSyncEngine` computes active word/chunk inside a `requestAnimationFrame` loop and only setStates when the active word/chunk index changes. It reads `player.currentTime` and consumes inline `words` from the section response; there is no separate alignment fetch.
 - The catalog page keeps published-book browsing and adds debounced source
-  suggestions. Every indexed edition offers one **Read now** action that immediately
+  suggestions from Gutenberg and Standard Ebooks, labeled by source. Every indexed edition offers one **Read now** action that immediately
   opens `source/[id]`. That reader fetches the exact EPUB through `?inline=1`
   and independently creates a fixed Kokoro job, or resumes status for an existing
   job. Published editions open the existing reader. Failed/canceled jobs remain
