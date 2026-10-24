@@ -1777,6 +1777,7 @@ def run_book(args) -> dict:
                 keep_wav=getattr(args, "keep_wav", False),
                 force=getattr(args, "force", False),
                 heading_text=ch_data["heading"]["spoken_text"],
+                resume=getattr(args, "resume", False),
             )
 
         chapter_durations[ch_num] = duration
@@ -1806,6 +1807,8 @@ def run_book(args) -> dict:
     if total_skipped:
         print(f"Warning: {total_skipped} chunks failed TTS and were skipped.")
         logger.warning("%d chunks failed TTS and were skipped", total_skipped)
+        if os.environ.get("OPENSHELF_REQUIRE_COMPLETE_AUDIO") == "1":
+            raise RuntimeError("Incomplete audio: skipped chunks prevent publication")
     print(f"Output: {os.path.abspath(build_dir)}/")
     logger.info(
         "Audio generation complete duration=%.2fs elapsed=%.2fs output=%s",

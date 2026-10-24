@@ -65,7 +65,9 @@ for (const edition of [chinese, english]) {
       if (request.url().includes("/sections/") && request.url().includes("/audio?")) audioRequests.push(request.url());
     });
     await page.goto("/");
-    await page.getByRole("textbox", { name: "Search books" }).fill(edition.title);
+    // Search the Traditional fixture using Simplified characters; returned and
+    // rendered source metadata/text must keep the original script.
+    await page.getByRole("textbox", { name: "Search books" }).fill(edition.language === "zh" ? "古书测试" : edition.title);
     await expect(page.getByRole("button", { name: "Read now" })).toBeVisible();
     const created = page.waitForResponse(response => response.url() === `${apiBase}/generation-jobs` && response.request().method() === "POST");
     await page.getByRole("button", { name: "Read now" }).click();

@@ -5,6 +5,7 @@ transformers>=4.46,<5
 numpy
 soundfile
 ebooklib
+pypdf>=6.21.2,<7
 beautifulsoup4
 boto3
 python-dotenv

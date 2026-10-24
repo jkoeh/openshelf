@@ -42,6 +42,7 @@ export function validSourceEpub(url: URL, sourceId: string): boolean {
 export async function sourceTitleSlug(titleSlug: string, sourceId: string): Promise<string> {
 	titleSlug ||= "untitled";
 	if (sourceId.startsWith("gutenberg:")) return `${titleSlug}-g${sourceId.slice(10)}`;
+	if (sourceId.startsWith("ownerupload:")) return `${titleSlug}-upload-${sourceId.slice(12).replaceAll("-", "")}`;
 	return `${titleSlug}-${sourceId.startsWith("wikisource:") ? "ws" : "se"}-${(await sourceDigest(sourceId)).slice(0, 12)}`;
 }
 

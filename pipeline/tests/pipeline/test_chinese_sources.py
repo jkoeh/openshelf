@@ -167,6 +167,8 @@ class ChineseSourcesTests(unittest.TestCase):
             job = {**book, "id": "job", "lease_token": "lease", "build_id": "1234567890abcdef",
                    "epub_sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
             class API:
+                base = "https://example.com/api/v1"
+                token = "test-pc-token-longer-than-twenty-four"
                 def download_source_epub(self, source_id, destination):
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     destination.write_bytes(path.read_bytes())

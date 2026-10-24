@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 import numpy as np
@@ -736,6 +736,33 @@ def _synthesize_segments(
     return chunk_audio, all_words
 
 
+def _section_synthesis_fingerprint(engine, aligner, chunks, narrator_voice, heading_text, sample_rate):
+    import importlib.metadata
+    from openshelf.config import AAC_BITRATE
+    from openshelf.pipeline.synthesis_checkpoints import input_fingerprint
+
+    try:
+        whisperx_version = importlib.metadata.version("whisperx")
+    except importlib.metadata.PackageNotFoundError:
+        whisperx_version = "uninstalled"
+    settings = getattr(engine, "synthesis_settings", {})
+    post_config = engine.post_processing_config() if callable(getattr(engine, "post_processing_config", None)) else None
+    return input_fingerprint({
+        "version": 1, "engine": getattr(engine, "name", type(engine).__qualname__),
+        "settings": settings if isinstance(settings, dict) else {},
+        "language": getattr(engine, "language", None),
+        "post_processing": asdict(post_config) if isinstance(post_config, PostProcessingConfig) else None,
+        "aligner": f"{type(aligner).__module__}.{type(aligner).__qualname__}",
+        "alignment_language": getattr(aligner, "language", None), "whisperx": whisperx_version,
+        "chunks": [asdict(chunk) for chunk in chunks],
+        "narrator": asdict(narrator_voice) if narrator_voice else None,
+        "heading": heading_text, "sample_rate": sample_rate, "aac_bitrate": AAC_BITRATE,
+        "lead_in_ms": LEAD_IN_SILENCE_MS, "heading_gap_ms": HEADING_TO_BODY_SILENCE_MS,
+        "pause_policy": PausePolicy.name, "pauses": PausePolicy.durations_ms,
+        "rolling_context": os.environ.get("OPENSHELF_TTS_ROLLING_CONTEXT") == "1",
+    })
+
+
 def synthesize_chapter(
     pipeline: Any,
     chunks: list[ChunkInfo],
@@ -744,6 +771,7 @@ def synthesize_chapter(
     sample_rate: int = TTS_SAMPLE_RATE,
     aligner: WordAligner | None = None,
     heading_text: str = "",
+    checkpoint_dir: str | None = None,
 ) -> SynthesisResult:
     if not chunks and not heading_text.strip():
         raise ValueError("section has no heading or body chunks")
@@ -775,6 +803,39 @@ def synthesize_chapter(
         narrator_voice = VoiceSpec(id=TTS_VOICE, preset_name=TTS_VOICE)
     rolling_context = [""]
 
+    checkpoint_cache = None
+    section_fingerprint = ""
+    if checkpoint_dir:
+        from openshelf.pipeline.synthesis_checkpoints import SynthesisCheckpoints
+        checkpoint_cache = SynthesisCheckpoints(checkpoint_dir, sample_rate)
+        section_fingerprint = _section_synthesis_fingerprint(
+            engine, aligner, chunks, narrator_voice, heading_text, sample_rate,
+        )
+
+    def render_region(segments, start_frame, chunk_index):
+        from openshelf.pipeline.synthesis_checkpoints import input_fingerprint
+        key = "heading" if chunk_index == -1 else f"chunk-{chunk_index:04d}"
+        fingerprint = input_fingerprint({
+            "section": section_fingerprint, "start_frame": start_frame,
+            "chunk_index": chunk_index, "rolling_context": rolling_context[0],
+        }) if checkpoint_cache else ""
+        cached = checkpoint_cache.load(key, fingerprint) if checkpoint_cache else None
+        if cached:
+            logger.info("Reusing completed synthesis region %s", key)
+            if chunk_index != -1:
+                rolling_context[0] = cached.context_after
+            return cached.audio, cached.words, cached.audit
+        rendered = _synthesize_segments(
+            engine=engine, aligner=aligner, segments=segments, post_cfg=post_cfg,
+            sample_rate=sample_rate, prior_audio_frames=start_frame,
+            rolling_context=[""] if chunk_index == -1 else rolling_context,
+            chunk_index=chunk_index, return_audit=True,
+        )
+        if checkpoint_cache:
+            checkpoint_cache.save(key, fingerprint, *rendered, context_after=rolling_context[0])
+            logger.info("Checkpointed synthesis region %s (%d frames)", key, len(rendered[0]))
+        return rendered
+
     heading_words: list[WordTimestamp] = []
     if heading_text.strip():
         heading_segment = DirectedSegment(
@@ -783,17 +844,7 @@ def synthesize_chapter(
             speaker="narrator",
             original_text=heading_text,
         )
-        heading_audio, raw_heading_words, heading_audit = _synthesize_segments(
-            engine=engine,
-            aligner=aligner,
-            segments=[heading_segment],
-            post_cfg=post_cfg,
-            sample_rate=sample_rate,
-            prior_audio_frames=frames_so_far,
-            rolling_context=[""],
-            chunk_index=-1,
-            return_audit=True,
-        )
+        heading_audio, raw_heading_words, heading_audit = render_region([heading_segment], frames_so_far, -1)
         heading_words = _enforce_monotonic_word_order(raw_heading_words)
         audio_segments.append(heading_audio)
         frames_so_far += len(heading_audio)
@@ -841,17 +892,7 @@ def synthesize_chapter(
                     speaker="narrator",
                 )]
 
-            chunk_audio, words, chunk_audit = _synthesize_segments(
-                engine=engine,
-                aligner=aligner,
-                segments=segments,
-                post_cfg=post_cfg,
-                sample_rate=sample_rate,
-                prior_audio_frames=chunk_start_frames,
-                rolling_context=rolling_context,
-                chunk_index=i,
-                return_audit=True,
-            )
+            chunk_audio, words, chunk_audit = render_region(segments, chunk_start_frames, i)
 
             if pending_gap is not None:
                 if pending_gap_seam is not None and synthesis_units:
@@ -939,6 +980,7 @@ def synthesize_chapter_to_files(
     keep_wav: bool = False,
     force: bool = False,
     heading_text: str = "",
+    resume: bool = False,
 ) -> tuple[SynthesisResult, float]:
     """Synthesize one section to its m4a + sync artifacts.
 
@@ -950,6 +992,39 @@ def synthesize_chapter_to_files(
     from openshelf.pipeline.encoder import encode_to_aac
     from openshelf.pipeline.seams import write_synthesis_units_artifact
     from openshelf.pipeline.word_aligner import write_section_sync_artifact
+    import subprocess
+    from openshelf.pipeline.synthesis_checkpoints import (
+        SynthesisCheckpoints, read_completion, write_completion,
+    )
+
+    fingerprint = _section_synthesis_fingerprint(
+        engine, aligner, chunk_infos, narrator_voice, heading_text, TTS_SAMPLE_RATE,
+    )
+    receipt_path = os.path.splitext(m4a_path)[0] + ".complete.json"
+    completed_files = [m4a_path, sync_path] + ([synthesis_units_path] if synthesis_units_path else [])
+    completed = read_completion(receipt_path, fingerprint, completed_files) if resume and not force else None
+    if completed:
+        try:
+            from openshelf.pipeline.encoder import audio_duration
+            measured_duration = audio_duration(m4a_path)
+            if abs(measured_duration - completed["duration"]) > 0.1:
+                raise ValueError("Completed section duration mismatch")
+            saved = completed["result"]
+            if (len(saved["chunk_words"]) != len(chunk_infos)
+                    or len(saved["chunk_audio_starts"]) != len(chunk_infos)
+                    or any(start < 0 for start in saved["chunk_audio_starts"])):
+                raise ValueError("Completed section chunk mismatch")
+            result = SynthesisResult(
+                duration_seconds=saved["duration_seconds"], skipped_chunks=0,
+                chunk_audio_starts=saved["chunk_audio_starts"],
+                chunk_words=[[WordTimestamp(**word) for word in words] for words in saved["chunk_words"]],
+                synthesis_units=[SynthesisCheckpoints._audit(audit) for audit in saved["synthesis_units"]],
+                heading_words=[WordTimestamp(**word) for word in saved["heading_words"]],
+            )
+            logger.info("Reusing validated completed section %s", m4a_path)
+            return result, completed["duration"]
+        except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+            logger.warning("Completed section validation failed; resynthesizing %s", m4a_path)
 
     # Any existing m4a is leftover from an aborted attempt; regenerate cleanly so
     # stale audio is never paired with freshly-generated word timestamps.
@@ -960,6 +1035,7 @@ def synthesize_chapter_to_files(
         "aligner": aligner,
         "heading_text": heading_text,
         "narrator_voice": narrator_voice,
+        "checkpoint_dir": None if force else os.path.splitext(m4a_path)[0] + ".checkpoints",
     }
     result = synthesize_chapter(engine, chunk_infos, wav_path, **synth_kwargs)
     duration = encode_to_aac(wav_path, m4a_path, delete_wav=not keep_wav)
@@ -972,7 +1048,7 @@ def synthesize_chapter_to_files(
         result.chunk_words,
         chunk_texts=chunk_texts,
         heading_words=result.heading_words,
-        force=force,
+        force=force or resume,
     )
     if synthesis_units_path is not None:
         write_synthesis_units_artifact(
@@ -981,6 +1057,8 @@ def synthesize_chapter_to_files(
             os.path.basename(m4a_path),
             TTS_SAMPLE_RATE,
             result.synthesis_units,
-            force=force,
+            force=force or resume,
         )
+    if result.skipped_chunks == 0:
+        write_completion(receipt_path, fingerprint, completed_files, asdict(result), duration)
     return result, duration

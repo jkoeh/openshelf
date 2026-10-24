@@ -48,22 +48,21 @@ books/{author-slug}/{title-slug}/
     rendition-manifest.json         # ordered sections; uploaded last
 ```
 
-Build files use immutable cache headers. The book manifest and catalog use a short cache; the rendition manifest signals that a complete build has been uploaded. Audit files and `run.json` are uploaded when present.
+Build files use immutable cache headers. The book manifest uses a short cache; catalog discovery reads current D1 publications with `no-store`. The R2 catalog is a publication/audit artifact. The rendition manifest signals that a complete build has been uploaded. Audit files and `run.json` are uploaded when present.
 
 ### Worker API
 
-Under `/api/v1`, the Worker serves `GET /catalog`, `/books/:author/:title`, `/books/:author/:title/builds`, `/books/:author/:title/sections/:sequence`, `/books/:author/:title/sections/:sequence/audio`, and book cover and EPUB routes. Section and audio requests identify a rendition and build. The catalog contains already-published audiobooks and its `q` search is a case-insensitive title/author substring filter. The API contract is generated from route schemas at `/api/v1/openapi.json`, with interactive docs at `/api/v1/docs`.
+Under `/api/v1`, the Worker serves `GET /catalog`, `/books/:author/:title`, `/books/:author/:title/builds`, `/books/:author/:title/sections/:sequence`, `/books/:author/:title/sections/:sequence/audio`, and book cover and EPUB routes. Section and audio requests identify a rendition and build. The catalog contains already-published audiobooks and its `q` search reads the current D1 title/author index with Chinese script normalization and no result caching. The API contract is generated from route schemas at `/api/v1/openapi.json`, with interactive docs at `/api/v1/docs`.
 
 The additive job API has public `GET /source-books` suggestions, capped public
 job creation and status reads, owner-authenticated cancel/retry/regeneration
 and expressive requests,
 and PC-only source sync, claim, heartbeat, progress, and finish routes. D1 stores the source index and leases. The Worker
-checks the R2 book pointer, section objects, and catalog before completion.
-Rate-limit bindings protect public search and authentication attempts. A bounded
-15-second cache within each Worker instance can save D1 reads for repeated
-suggestions after rate limiting; it is best effort because instances do not
-share memory. Clients receive `no-store` and may see job availability lag by up
-to 15 seconds. D1 caps queued jobs, daily starts, and job attempts. Generation
+checks the R2 book pointer and section objects, then updates the D1 publication
+index before completion. Rate-limit bindings protect public search and
+authentication attempts. Source and published-book searches query current D1
+data on every request and return `no-store`; neither uses an in-isolate result
+cache or upstream search. D1 caps queued jobs, daily starts, and job attempts. Generation
 is public for the fixed Kokoro voice; once configured, Google sign-in for
 `johnkoeh@gmail.com` allows browser cancel, retry, regeneration, and expressive
 requests. The expressive job uses Chatterbox `af_heart` and batched OpenAI
@@ -77,7 +76,7 @@ sign-out. Successful sign-in closes the modal and enables job actions in search.
 
 ## Development
 
-Prerequisites: Node.js, Python 3.11+, `uv`, and `ffmpeg`. A CUDA or MPS GPU is recommended for generation; CPU synthesis is slow. From the repository root:
+Prerequisites: Node.js, Python 3.12+, `uv`, and `ffmpeg`. A CUDA or MPS GPU is recommended for generation; CPU synthesis is slow. From the repository root:
 
 ```bash
 npm install
@@ -214,11 +213,14 @@ Read now supports both sources; each edition keeps a separate audio job/build.
 Real Standard Ebooks imports also download and verify each EPUB, then upload a
 reading copy to R2 because Standard Ebooks blocks Cloudflare's direct downloads.
 Files above the reader's 32 MiB bound or with unverifiable rights are skipped.
-When a Standard Ebooks title is missing from the index, the client searches the
-official website directly and offers Read now. Missing cached EPUBs fall back to
-the exact official compatible EPUB. Direct requests carry no owner credentials;
-source download limits still apply. Live editions can be read before indexing,
-while audio requests require a PC-verified catalog entry.
+Search always queries our D1 index and never contacts an upstream website.
+There is no suggestion-result cache: new imports, reading-cache availability and
+audio job states appear on the next request. Simplified and traditional Chinese
+queries match the same editions while results and book text retain the source
+script. Missing editions need a PC import; discovery is independent of upstream
+request limits. Legacy Standard Ebooks reading links with a missing cached EPUB
+still fall back to the exact official compatible EPUB without owner credentials;
+source download limits apply only to that reading fallback and catalog import.
 
 For production, use `worker/.secrets/prod-pc-token` as `OPENSHELF_PC_TOKEN`
 on the PC, the

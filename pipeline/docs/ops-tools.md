@@ -1,6 +1,58 @@
 # Pipeline Ops Tools
 
+For supervised recovery, the PC-authenticated claim request accepts an optional
+`job_id` UUID. It leases only that queued or eligible expired job and never
+claims an unrelated edition. Capability checks, ordering-independent attempt
+limits, start caps and normal lease/finish validation still apply. Ordinary
+consumers omit it and retain priority/FIFO selection.
+
 ## Mandarin production runtime
+
+For standard English, `OPENSHELF_ENGLISH_PYTHON` optionally selects an isolated
+Python >=3.12 with Kokoro/Misaki English and WhisperX >=3.8.4. The consumer probes
+it before claiming standard-English work. Validate a short real CPU synthesis
+and alignment before changing this setting; a failed configured probe leaves
+standard-English jobs queued. The default current interpreter is preserved when
+the variable is absent. This does not redirect expressive jobs or change voices.
+The runtime needs Kokoro/Misaki English dependencies and the official small
+English spaCy model (`en_core_web_sm`) in that exact interpreter. Its probe checks
+the model is already installed so jobs do not trigger implicit model setup.
+
+### Recovering a long Mandarin job locally
+
+`ops recover-source-job` supervises one standard Mandarin source using ignored
+local owner/PC credentials and a persisted state file under `audio/`. It never
+resets attempts, decrements quotas or changes a historical failed job. It may
+create at most three ordinary fresh jobs (configurable up to five), uses the
+normal capped owner retry when allowed, claims only its exact job ID, and runs
+the normal consumer validation, heartbeat, upload and finish path. Network
+failures pause retry attempts; canceled jobs stop recovery.
+
+For a legacy orphan that holds hours of uncheckpointed work, `--wait-pid` and
+`--after-section` wait for a stable completed section, verify the exact process
+command/build identity, decode the AAC and validate original chunks, sync and
+seam bounds. A separate isolated-runtime certification creates a local hashed
+completion receipt before the old process tree is stopped at that boundary.
+An idle existing production consumer is stopped only after confirming it has no
+active job or synthesis child, preventing a second GPU producer. Compatible
+work is adopted into the fresh build with `build_recovery.py`. No publication
+manifests are copied; the entire new job must finish normally.
+
+Example (the PID is checked against the build command, never trusted alone):
+
+```text
+openshelf-pipeline ops recover-source-job --source-id gutenberg:24264 --source-build audio/cao-xueqin-1717-1763/untitled-g24264/audio/qwen3-serena/builds/2db4b630693c46a7 --wait-pid 55024 --after-section 2 --state-file audio/hongloumeng-recovery.json
+```
+
+Re-run the exact command after a reboot; its state records the current job/build
+without credentials or lease tokens. Region checkpoints survive interruption.
+The supervisor sets `OPENSHELF_REQUIRE_COMPLETE_AUDIO=1` for its child: any skipped
+body chunk fails before manifest publication, while completed regions remain
+resumable. This opt-in guard preserves the existing manual pipeline's diagnostic
+partial-output behavior. Keep the PC awake and allow about 100 GPU hours for
+this edition at the measured single-item Qwen throughput. Short forced alignment
+coverage checks do not certify pronunciation. This command starts no paid cloud
+GPU resources.
 
 Mandarin standard jobs use Qwen3 CustomVoice Serena and an isolated Python 3.12
 environment. Install CUDA PyTorch 2.8 first as in the benchmark setup below,
@@ -259,6 +311,19 @@ Behavior:
 EPUB conversion path, and individual `dag` stages remain the repair path.
 Manual `--upload` accepts local EPUBs without the job consumer's automatic
 Gutenberg rights check. The operator verifies rights before publishing.
+
+## `ops catalog`
+
+Rebuild the R2 publication/audit `catalog.json` and synchronize the D1 public
+catalog from verified current R2 manifests. Supply `--api-base <Worker /api/v1 URL>`
+or `OPENSHELF_API_BASE`, and set `OPENSHELF_PC_TOKEN`. Non-dry runs require both;
+API errors propagate and must be repaired/retried. The sync uses batches of at
+most 10 keys, also indexing manually published books without source-index rows.
+After upserts it reconciles all existing D1 rows in pages of 10, including when
+the R2 scan is empty. The Worker verifies R2 object ETags and D1 revisions before
+pruning missing/incompatible publications; active jobs and deletions are retained.
+`--dry-run` has no API or R2 writes. After applying migrations 0009/0010 and
+deploying the Worker, run this once to backfill existing books before client rollout.
 
 ## `books sync-catalog`
 

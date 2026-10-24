@@ -1,7 +1,18 @@
 import { expect, test } from "@playwright/test";
 import { strToU8, zipSync } from "fflate";
 
-test("missing Demons edition is discovered live and read without a catalog entry", async ({ page }) => {
+test("missing editions use only our database without upstream discovery requests", async ({ page }) => {
+  await page.route("**/api/v1/catalog**", route => route.fulfill({ json: { version: 2, books: [], total: 0, page: 1, limit: 20 } }));
+  await page.route("**/api/v1/source-books?*", route => route.fulfill({ json: { books: [] } }));
+  const upstream: string[] = [];
+  await page.route("https://standardebooks.org/**", route => { upstream.push(route.request().url()); return route.abort(); });
+  await page.goto("/");
+  await page.getByRole("textbox", { name: "Search books" }).fill("demons");
+  await expect(page.getByText("No matching edition found. Try another title or author.")).toBeVisible();
+  expect(upstream).toEqual([]);
+});
+
+test("legacy unindexed Standard Ebooks reading links still use the exact EPUB fallback", async ({ page }) => {
   const sourceId = "standardebooks:fyodor-dostoevsky/demons/constance-garnett";
   await page.route("**/api/v1/catalog**", route => route.fulfill({ json: { version: 2, books: [], total: 0, page: 1, limit: 20 } }));
   await page.route("**/api/v1/source-books?*", route => route.fulfill({ json: { books: [] } }));
@@ -22,10 +33,7 @@ test("missing Demons edition is discovered live and read without a catalog entry
   });
   let jobs = 0;
   await page.route("**/api/v1/generation-jobs**", route => { jobs++; return route.abort(); });
-  await page.goto("/");
-  await page.getByRole("textbox", { name: "Search books" }).fill("demons");
-  await expect(page.getByText("Demons", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Read now" }).click();
+  await page.goto(`/source/${encodeURIComponent(sourceId)}?title=Demons&author=Fyodor%20Dostoevsky&indexed=0`);
   expect(decodeURIComponent(page.url())).toContain(`/source/${sourceId}`);
   await expect(page.getByText("Read Demons directly from Standard Ebooks.")).toBeVisible();
   await expect(page.getByText(/Audio can be prepared after this edition/)).toBeVisible();

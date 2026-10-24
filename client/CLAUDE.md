@@ -102,15 +102,14 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
   listening actions; standalone EPUB download buttons are removed from the UI.
 - `useSyncEngine` computes active word/chunk inside a `requestAnimationFrame` loop and only setStates when the active word/chunk index changes. It reads `player.currentTime` and consumes inline `words` from the section response; there is no separate alignment fetch.
 - The catalog page keeps published-book browsing and adds debounced source
-  suggestions from Gutenberg and Standard Ebooks, labeled by source. When no
-  indexed Standard Ebooks edition matches a query of at least three characters,
-  `fetchSourceBooks(q, signal?)` merges one credential-free official HTML search
-  page (at most 2 MiB, ten canonical downloadable editions). Failures retain
-  indexed results and show fallback feedback; requests are aborted when the
-  query changes. `lib/standard-ebooks.ts` validates canonical IDs, constructs
-  exact EPUB URLs and parses live suggestions as data. `SourceBook.indexed`
-  is optional client metadata; false means live discovery, not a Worker schema
-  change. An unindexed edition opens text with an explanation that audio needs
+  suggestions from indexed Gutenberg, Standard Ebooks and Wikisource, labeled
+  by source. Source and published searches read current D1 data with `no-store`,
+  without upstream discovery or result caches. Chinese queries match simplified
+  and traditional script while results and reading retain the original source.
+  Requests are aborted when the query changes. `lib/standard-ebooks.ts` validates
+  canonical IDs and constructs exact EPUB URLs for legacy reading links.
+  `SourceBook.indexed` is optional client metadata retained for those links.
+  An unindexed edition opens text with an explanation that audio needs
   a verified catalog entry, and hides owner generation actions. Every indexed edition offers one **Read now** action that immediately
   opens `source/[id]`. That reader fetches the exact EPUB through `?inline=1`
   first. A 404/502 for Standard Ebooks falls back to the exact canonical official
@@ -150,10 +149,11 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
   is visible only after owner sign-in and clearly identifies the paid OpenAI
   step and that each accepted start uses one of 300 daily starts;
   it sends no API key, arbitrary prompt, model, engine, or voice. Public
-  requests continue to use fixed Kokoro. Job status identifies the selected
+  English requests continue to use fixed Kokoro; Mandarin standard requests use
+  Qwen3 Serena. Job status identifies the selected
   mode so progress remains understandable on mobile, tablet, and desktop. A
   newly completed polled job counts as published when the owner starts an
-  expressive regeneration, even if the cached suggestion still says unbuilt.
+  expressive regeneration, even if an earlier result snapshot still says unbuilt.
   A published edition stays playable while its latest regeneration job is
   queued, running, or failed; latest job state drives progress and admin controls
   independently of publication availability.
@@ -164,7 +164,7 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
   retry.
   The PC rechecks rights before synthesis on every attempt, so retry cannot
   override the gate. For the matching edition, the action follows the latest
-  relevant job update time: a locally returned job wins over a stale cached suggestion,
+  relevant job update time: a locally returned job wins over an older result snapshot,
   while a fresher suggestion replaces an older local job ID or state.
   Active public job status may be polled while the catalog remains open; show
   the job ID so the owner can cancel it with the local CLI. Public visitors do

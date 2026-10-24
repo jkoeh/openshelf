@@ -4,6 +4,7 @@ whisperx==3.8.4
 torch==2.8.0
 torchaudio==2.8.0
 ebooklib
+pypdf>=6.21.2,<7
 beautifulsoup4
 soundfile
 numpy

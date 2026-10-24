@@ -86,8 +86,8 @@ export async function startHarness() {
       });
       if (!response.ok) throw new Error(`Cache upload: ${response.status} ${await response.text()}`);
     },
-    async claim(mandarin = false): Promise<ClaimedJob | null> {
-      const response = await api("/internal/generation-jobs/claim", { mandarin, expressive: false }, pcToken) as { job: ClaimedJob | null };
+    async claim(mandarin = false, documents = false): Promise<ClaimedJob | null> {
+      const response = await api("/internal/generation-jobs/claim", { mandarin, expressive: false, documents }, pcToken) as { job: ClaimedJob | null };
       return response.job;
     },
     async fail(job: ClaimedJob) {
@@ -124,16 +124,17 @@ export async function startHarness() {
         total_duration_seconds: 24, section_count: sections.length, sections,
       }));
       await proxy.env.R2_BUCKET.put(`${root}/manifest.json`, JSON.stringify({ title: edition.title,
-        author: edition.author, source: edition.source_id.startsWith("wikisource:") ? "wikisource" : "gutenberg",
+        author: edition.author, source: edition.source_id.startsWith("ownerupload:") ? "local" : edition.source_id.startsWith("wikisource:") ? "wikisource" : "gutenberg",
         renditions: { [rendition]: { voice: edition.language === "zh" ? "qwen3-serena" : "af_heart",
           engine: edition.language === "zh" ? "qwen3" : "kokoro", display: edition.language === "zh" ? "Serena" : "Heart",
           current_build: build, available_builds: [build, ...retained] } },
       }));
       await proxy.env.R2_BUCKET.put("catalog.json", JSON.stringify({ version: 2, books: [{
         author: edition.author, author_slug: "openshelf", title: edition.title, title_slug: title,
-        source: edition.source_id.startsWith("wikisource:") ? "wikisource" : "gutenberg",
+        source: edition.source_id.startsWith("ownerupload:") ? "local" : edition.source_id.startsWith("wikisource:") ? "wikisource" : "gutenberg",
         rendition, current_build: build, total_duration_seconds: 24, section_count: 2,
       }] }));
+      await api("/internal/catalog/sync", { books: [{ author_slug: "openshelf", title_slug: title }] }, pcToken);
       if (build === job.build_id) await api(`/internal/generation-jobs/${job.id}/finish`, {
         lease_token: job.lease_token, success: true, author_slug: "openshelf", title_slug: title,
       }, pcToken);

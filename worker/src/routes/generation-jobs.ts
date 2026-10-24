@@ -7,6 +7,7 @@ import { adminCredentialStatus } from "../utils/google-admin";
 import { createOpenAPIApp } from "../utils/openapi-app";
 import { r2Key } from "../utils/r2-keys";
 import { SourceIdSchema, sourceTitleSlug } from "../utils/source-editions";
+import { syncPublishedBook } from "../utils/published-catalog";
 
 const Id = z.object({
 	id: z
@@ -41,11 +42,20 @@ const ManagedList = z.object({
 });
 const Priority = z.object({ priority: z.enum(["normal", "high"]) });
 const Create = z.object({
-	source_id: SourceIdSchema,
+	source_id: z.union([
+		SourceIdSchema,
+		z.string().regex(/^ownerupload:[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/),
+	]),
 	mode: z.enum(["standard", "expressive"]).default("standard"),
 	regenerate: z.boolean().default(false),
 });
-const Claim = z.object({ expressive: z.boolean().default(false), mandarin: z.boolean().default(false) });
+const Claim = z.object({
+	job_id: z.string().uuid().optional(),
+	english: z.boolean().default(true),
+	expressive: z.boolean().default(false),
+	mandarin: z.boolean().default(false),
+	documents: z.boolean().default(false),
+});
 const Lease = z.object({ lease_token: z.string().uuid() });
 const Progress = Lease.extend({
 	stage: z.enum(["download", "parse", "direction", "synthesis", "alignment", "encode", "upload"]),
@@ -100,7 +110,7 @@ const status = createRoute({
 	tags: ["generation"],
 	summary: "Read generation job status",
 	request: { params: Id },
-	responses: { 200: jobResponse, 400: error, 404: error, 429: error, 503: error },
+	responses: { 200: jobResponse, 400: error, 401: error, 404: error, 429: error, 503: error },
 });
 const cancel = createRoute({
 	method: "post",
@@ -140,7 +150,10 @@ const listManaged = createRoute({
 	tags: ["generation-owner"],
 	summary: "List active and recent generation jobs for the owner",
 	responses: {
-		200: { description: "Bounded owner queue", content: { "application/json": { schema: ManagedList } } },
+		200: {
+			description: "Bounded owner queue",
+			content: { "application/json": { schema: ManagedList } },
+		},
 		401: error,
 		429: error,
 		503: error,
@@ -253,7 +266,10 @@ function publicJob(row: Row): z.infer<typeof Job> {
 }
 const fields =
 	"id,source_id,mode,build_id,state,stage,attempts,author_slug,title_slug,error_code,created_at,updated_at";
-const managedFields = `${fields.split(",").map((field) => `j.${field}`).join(",")},j.priority,j.lease_until,b.title,b.author`;
+const managedFields = `${fields
+	.split(",")
+	.map((field) => `j.${field}`)
+	.join(",")},j.priority,j.lease_until,b.title,b.author`;
 function managedJob(row: ManagedRow): z.infer<typeof ManagedJob> {
 	return {
 		...publicJob(row),
@@ -275,8 +291,12 @@ async function get(db: D1Database, id: string) {
 	return db.prepare(`SELECT ${fields} FROM generation_jobs WHERE id=?`).bind(id).first<Row>();
 }
 async function getManaged(db: D1Database, id: string) {
-	return db.prepare(`SELECT ${managedFields} FROM generation_jobs j JOIN source_books b ON b.source_id=j.source_id WHERE j.id=?`)
-		.bind(id).first<ManagedRow>();
+	return db
+		.prepare(
+			`SELECT ${managedFields} FROM generation_jobs j JOIN source_books b ON b.source_id=j.source_id WHERE j.id=?`,
+		)
+		.bind(id)
+		.first<ManagedRow>();
 }
 async function auth(req: Request, env: Env, pc = false) {
 	return pc ? credentialStatus(req, env, env.PC_TOKEN) : adminCredentialStatus(req, env);
@@ -309,15 +329,33 @@ async function verifyPublished(
 	author: string,
 	title: string,
 ): Promise<boolean> {
-	const language = await env.JOB_DB!.prepare("SELECT language FROM source_books WHERE source_id=?").bind(row.source_id).first<string>("language");
-const selectedRendition = row.mode === "expressive" ? "chatterbox-af-heart" : language === "zh" ? "qwen3-serena" : "kokoro-af-heart";
+	const language = await env
+		.JOB_DB!.prepare("SELECT language FROM source_books WHERE source_id=?")
+		.bind(row.source_id)
+		.first<string>("language");
+	const selectedRendition =
+		row.mode === "expressive"
+			? "chatterbox-af-heart"
+			: language === "zh"
+				? "qwen3-serena"
+				: "kokoro-af-heart";
 	const manifest = await env.R2_BUCKET.get(r2Key.bookManifest(author, title));
 	if (!manifest) return false;
 	const book = (await manifest.json()) as {
 		source?: string;
 		renditions?: Record<string, { current_build?: string }>;
 	};
-	if (book.source !== (row.source_id.startsWith("standardebooks:") ? "standard-ebooks" : row.source_id.startsWith("wikisource:") ? "wikisource" : "gutenberg")) return false;
+	if (
+		book.source !==
+		(row.source_id.startsWith("ownerupload:")
+			? "local"
+			: row.source_id.startsWith("standardebooks:")
+				? "standard-ebooks"
+				: row.source_id.startsWith("wikisource:")
+					? "wikisource"
+					: "gutenberg")
+	)
+		return false;
 	if (book.renditions?.[selectedRendition]?.current_build !== row.build_id) return false;
 	const rendition = await env.R2_BUCKET.get(
 		r2Key.renditionManifest(author, title, selectedRendition, row.build_id),
@@ -348,15 +386,7 @@ const selectedRendition = row.mode === "expressive" ? "chatterbox-af-heart" : la
 			))
 		)
 			return false;
-	const catalog = await env.R2_BUCKET.get("catalog.json");
-	if (!catalog) return false;
-	const listing = (await catalog.json()) as {
-		books?: { author_slug: string; title_slug: string; current_build: string }[];
-	};
-	return !!listing.books?.some(
-		(b) => b.author_slug === author && b.title_slug === title &&
-			(row.mode === "expressive" || b.current_build === row.build_id),
-	);
+	return true;
 }
 
 const owner = createOpenAPIApp<{ Bindings: Env }>();
@@ -367,9 +397,13 @@ owner.openapi(create, async (c) => {
 	if (!(await c.env.CREATE_RATE_LIMITER!.limit({ key: `create:${ip}` })).success)
 		return c.json({ error: { code: "RATE_LIMITED", message: "Try again later" } }, 429);
 	const { source_id, regenerate, mode } = c.req.valid("json");
-	const authStatus = mode === "expressive" || regenerate || c.req.header("Authorization")
-		? await auth(c.req.raw, c.env)
-		: 0;
+	const authStatus =
+		source_id.startsWith("ownerupload:") ||
+		mode === "expressive" ||
+		regenerate ||
+		c.req.header("Authorization")
+			? await auth(c.req.raw, c.env)
+			: 0;
 	if (authStatus)
 		return c.json(
 			{
@@ -384,24 +418,58 @@ owner.openapi(create, async (c) => {
 	const source = await db
 		.prepare("SELECT source_id,author_slug,title_slug,language FROM source_books WHERE source_id=?")
 		.bind(source_id)
-		.first<{ source_id: string; author_slug: string | null; title_slug: string | null; language: string }>();
+		.first<{
+			source_id: string;
+			author_slug: string | null;
+			title_slug: string | null;
+			language: string;
+		}>();
 	if (!source)
 		return c.json({ error: { code: "NOT_FOUND", message: "Source edition not indexed" } }, 404);
-	if (!["en", "zh"].includes(source.language) || (mode === "expressive" && source.language !== "en"))
-		return c.json({ error: { code: "UNSUPPORTED_LANGUAGE", message: "Expressive audio is currently available for English editions only" } }, 400, noStore);
-	if (await db.prepare(`SELECT 1 FROM book_deletions d JOIN source_books s
+	if (
+		!["en", "zh"].includes(source.language) ||
+		(mode === "expressive" && source.language !== "en")
+	)
+		return c.json(
+			{
+				error: {
+					code: "UNSUPPORTED_LANGUAGE",
+					message: "Expressive audio is currently available for English editions only",
+				},
+			},
+			400,
+			noStore,
+		);
+	if (
+		await db
+			.prepare(`SELECT 1 FROM book_deletions d JOIN source_books s
 		ON s.author_slug=d.author_slug AND s.title_slug=d.title_slug WHERE s.source_id=?`)
-		.bind(source_id).first())
-		return c.json({ error: { code: "BOOK_DELETING", message: "Finish deleting this book before generating audio" } }, 409, noStore);
+			.bind(source_id)
+			.first()
+	)
+		return c.json(
+			{
+				error: {
+					code: "BOOK_DELETING",
+					message: "Finish deleting this book before generating audio",
+				},
+			},
+			409,
+			noStore,
+		);
 	const existing = await db
 		.prepare(
 			`SELECT ${fields} FROM generation_jobs WHERE source_id=? AND state IN ('queued','running') LIMIT 1`,
 		)
 		.bind(source_id)
 		.first<Row>();
-	if (existing) return existing.mode === mode
-		? c.json(publicJob(existing), 200, noStore)
-		: c.json({ error: { code: "ACTIVE_JOB", message: "This edition already has an active job" } }, 409);
+	if (existing)
+		return existing.mode === mode
+			? c.json(publicJob(existing), 200, noStore)
+			: c.json(
+					{ error: { code: "ACTIVE_JOB", message: "This edition already has an active job" } },
+					409,
+				);
 	if (source.author_slug && !regenerate)
 		return c.json(
 			{ error: { code: "ALREADY_AVAILABLE", message: "This edition is already available" } },
@@ -433,9 +501,13 @@ owner.openapi(create, async (c) => {
 			)
 			.bind(source_id)
 			.first<Row>();
-		if (duplicate) return duplicate.mode === mode
-			? c.json(publicJob(duplicate), 200, noStore)
-			: c.json({ error: { code: "ACTIVE_JOB", message: "This edition already has an active job" } }, 409);
+		if (duplicate)
+			return duplicate.mode === mode
+				? c.json(publicJob(duplicate), 200, noStore)
+				: c.json(
+						{ error: { code: "ACTIVE_JOB", message: "This edition already has an active job" } },
+						409,
+					);
 		return c.json({ error: { code: "LIMIT_REACHED", message: "Generation quota reached" } }, 429);
 	}
 	const job = await get(db, id);
@@ -446,9 +518,13 @@ owner.openapi(create, async (c) => {
 			)
 			.bind(source_id)
 			.first<Row>();
-		if (duplicate) return duplicate.mode === mode
-			? c.json(publicJob(duplicate), 200, noStore)
-			: c.json({ error: { code: "ACTIVE_JOB", message: "This edition already has an active job" } }, 409);
+		if (duplicate)
+			return duplicate.mode === mode
+				? c.json(publicJob(duplicate), 200, noStore)
+				: c.json(
+						{ error: { code: "ACTIVE_JOB", message: "This edition already has an active job" } },
+						409,
+					);
 		return c.json({ error: { code: "LIMIT_REACHED", message: "Generation quota reached" } }, 429);
 	}
 	return c.json(publicJob(job), 200, noStore);
@@ -460,6 +536,14 @@ owner.openapi(status, async (c) => {
 	if (!(await c.env.SEARCH_RATE_LIMITER!.limit({ key: `job-status:${ip}` })).success)
 		return c.json({ error: { code: "RATE_LIMITED", message: "Try again later" } }, 429);
 	const job = await get(c.env.JOB_DB!, c.req.valid("param").id);
+	if (job?.source_id.startsWith("ownerupload:")) {
+		const authStatus = await auth(c.req.raw, c.env);
+		if (authStatus)
+			return c.json(
+				{ error: { code: "UNAUTHORIZED", message: "Owner sign-in required" } },
+				authStatus,
+			);
+	}
 	return job
 		? c.json(publicJob(job), 200, noStore)
 		: c.json({ error: { code: "NOT_FOUND", message: "Job not found" } }, 404);
@@ -470,17 +554,26 @@ owner.openapi(cancel, async (c) => {
 	const authStatus = await auth(c.req.raw, c.env);
 	if (authStatus)
 		return c.json(
-			{ error: { code: authStatus === 429 ? "RATE_LIMITED" : "UNAUTHORIZED", message: "Invalid credential or too many attempts" } },
+			{
+				error: {
+					code: authStatus === 429 ? "RATE_LIMITED" : "UNAUTHORIZED",
+					message: "Invalid credential or too many attempts",
+				},
+			},
 			authStatus,
 		);
-	const db = c.env.JOB_DB!, id = c.req.valid("param").id;
+	const db = c.env.JOB_DB!,
+		id = c.req.valid("param").id;
 	const existing = await get(db, id);
 	if (!existing) return c.json({ error: { code: "NOT_FOUND", message: "Job not found" } }, 404);
 	if (existing.state === "canceled") return c.json(publicJob(existing), 200, noStore);
 	if (existing.state !== "queued" && existing.state !== "running")
 		return c.json({ error: { code: "NOT_CANCELABLE", message: "Job has already finished" } }, 409);
-	await db.prepare(`UPDATE generation_jobs SET state='canceled',stage='canceled',lease_token=NULL,lease_until=NULL,updated_at=?
-		WHERE id=? AND state IN ('queued','running')`).bind(now(), id).run();
+	await db
+		.prepare(`UPDATE generation_jobs SET state='canceled',stage='canceled',lease_token=NULL,lease_until=NULL,updated_at=?
+		WHERE id=? AND state IN ('queued','running')`)
+		.bind(now(), id)
+		.run();
 	const updated = await get(db, id);
 	return updated?.state === "canceled"
 		? c.json(publicJob(updated), 200, noStore)
@@ -504,10 +597,23 @@ owner.openapi(retry, async (c) => {
 		id = c.req.valid("param").id,
 		job = await get(db, id);
 	if (!job) return c.json({ error: { code: "NOT_FOUND", message: "Job not found" } }, 404);
-	if (await db.prepare(`SELECT 1 FROM book_deletions d JOIN source_books s
+	if (
+		await db
+			.prepare(`SELECT 1 FROM book_deletions d JOIN source_books s
 		ON s.author_slug=d.author_slug AND s.title_slug=d.title_slug WHERE s.source_id=?`)
-		.bind(job.source_id).first())
-		return c.json({ error: { code: "BOOK_DELETING", message: "Finish deleting this book before retrying audio" } }, 409, noStore);
+			.bind(job.source_id)
+			.first()
+	)
+		return c.json(
+			{
+				error: {
+					code: "BOOK_DELETING",
+					message: "Finish deleting this book before retrying audio",
+				},
+			},
+			409,
+			noStore,
+		);
 	if (!["failed", "canceled"].includes(job.state) || job.attempts >= 3)
 		return c.json({ error: { code: "NOT_RETRYABLE", message: "Job cannot be retried" } }, 409);
 	const start = crypto.randomUUID(),
@@ -538,38 +644,69 @@ management.openapi(listManaged, async (c) => {
 		return c.json({ error: { code: "UNAVAILABLE", message: "Generation is not configured" } }, 503);
 	const authStatus = await auth(c.req.raw, c.env);
 	if (authStatus)
-		return c.json({ error: { code: authStatus === 429 ? "RATE_LIMITED" : "UNAUTHORIZED", message: "Invalid credential or too many attempts" } }, authStatus);
+		return c.json(
+			{
+				error: {
+					code: authStatus === 429 ? "RATE_LIMITED" : "UNAUTHORIZED",
+					message: "Invalid credential or too many attempts",
+				},
+			},
+			authStatus,
+		);
 	const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
 	if (!(await c.env.SEARCH_RATE_LIMITER!.limit({ key: `owner-queue:${ip}` })).success)
 		return c.json({ error: { code: "RATE_LIMITED", message: "Try again later" } }, 429);
 	const db = c.env.JOB_DB!;
 	const [active, recent] = await Promise.all([
-		db.prepare(`SELECT ${managedFields} FROM generation_jobs j JOIN source_books b ON b.source_id=j.source_id
+		db
+			.prepare(`SELECT ${managedFields} FROM generation_jobs j JOIN source_books b ON b.source_id=j.source_id
 			WHERE j.state IN ('queued','running')
 			ORDER BY CASE WHEN j.state='running' THEN 0 ELSE 1 END,j.priority DESC,j.created_at LIMIT 20`)
 			.all<ManagedRow>(),
-		db.prepare(`SELECT ${managedFields} FROM generation_jobs j JOIN source_books b ON b.source_id=j.source_id
+		db
+			.prepare(`SELECT ${managedFields} FROM generation_jobs j JOIN source_books b ON b.source_id=j.source_id
 			WHERE j.state IN ('completed','failed','canceled') ORDER BY j.updated_at DESC LIMIT 20`)
 			.all<ManagedRow>(),
 	]);
-	return c.json({ active: active.results.map(managedJob), recent: recent.results.map(managedJob) }, 200, noStore);
+	return c.json(
+		{ active: active.results.map(managedJob), recent: recent.results.map(managedJob) },
+		200,
+		noStore,
+	);
 });
 management.openapi(setPriority, async (c) => {
 	if (!ready(c.env))
 		return c.json({ error: { code: "UNAVAILABLE", message: "Generation is not configured" } }, 503);
 	const authStatus = await auth(c.req.raw, c.env);
 	if (authStatus)
-		return c.json({ error: { code: authStatus === 429 ? "RATE_LIMITED" : "UNAUTHORIZED", message: "Invalid credential or too many attempts" } }, authStatus);
-	const db = c.env.JOB_DB!, id = c.req.valid("param").id;
+		return c.json(
+			{
+				error: {
+					code: authStatus === 429 ? "RATE_LIMITED" : "UNAUTHORIZED",
+					message: "Invalid credential or too many attempts",
+				},
+			},
+			authStatus,
+		);
+	const db = c.env.JOB_DB!,
+		id = c.req.valid("param").id;
 	const existing = await getManaged(db, id);
 	if (!existing) return c.json({ error: { code: "NOT_FOUND", message: "Job not found" } }, 404);
 	if (existing.state !== "queued")
-		return c.json({ error: { code: "NOT_QUEUED", message: "Only queued jobs can be prioritized" } }, 409);
+		return c.json(
+			{ error: { code: "NOT_QUEUED", message: "Only queued jobs can be prioritized" } },
+			409,
+		);
 	const priority = c.req.valid("json").priority === "high" ? 1 : 0;
-	const result = await db.prepare("UPDATE generation_jobs SET priority=?,updated_at=? WHERE id=? AND state='queued'")
-		.bind(priority, now(), id).run();
+	const result = await db
+		.prepare("UPDATE generation_jobs SET priority=?,updated_at=? WHERE id=? AND state='queued'")
+		.bind(priority, now(), id)
+		.run();
 	if (!result.meta.changes)
-		return c.json({ error: { code: "NOT_QUEUED", message: "Only queued jobs can be prioritized" } }, 409);
+		return c.json(
+			{ error: { code: "NOT_QUEUED", message: "Only queued jobs can be prioritized" } },
+			409,
+		);
 	return c.json(managedJob((await getManaged(db, id))!), 200, noStore);
 });
 
@@ -590,7 +727,7 @@ internal.openapi(claim, async (c) => {
 		);
 	const db = c.env.JOB_DB!,
 		timestamp = now();
-	const { expressive, mandarin } = c.req.valid("json");
+	const { expressive, mandarin, documents, english, job_id } = c.req.valid("json");
 	await db
 		.prepare(`UPDATE generation_jobs SET state='failed',stage='failed',error_code='LEASE_EXHAUSTED',lease_token=NULL,lease_until=NULL,updated_at=?
 		WHERE state='running' AND lease_until<? AND attempts>=3`)
@@ -600,8 +737,19 @@ internal.openapi(claim, async (c) => {
 		.prepare(`SELECT j.id,j.state FROM generation_jobs j JOIN source_books b ON b.source_id=j.source_id
 		WHERE (j.state='queued' OR (j.state='running' AND j.lease_until<? AND j.attempts<3))
 		AND (j.mode='standard' OR ?=1) AND (b.language='en' OR ?=1)
+		AND (j.source_id NOT LIKE 'ownerupload:%' OR ?=1)
+		AND (j.mode='expressive' OR b.language<>'en' OR ?=1)
+		AND (? IS NULL OR j.id=?)
 		ORDER BY CASE WHEN j.state='queued' THEN 0 ELSE 1 END,j.priority DESC,j.created_at LIMIT 1`)
-		.bind(timestamp, expressive ? 1 : 0, mandarin ? 1 : 0)
+		.bind(
+			timestamp,
+			expressive ? 1 : 0,
+			mandarin ? 1 : 0,
+			documents ? 1 : 0,
+			english ? 1 : 0,
+			job_id ?? null,
+			job_id ?? null,
+		)
 		.first<{ id: string; state: string }>();
 	if (!candidate) return c.json({ job: null }, 200, noStore);
 	const lease = crypto.randomUUID(),
@@ -633,8 +781,29 @@ internal.openapi(claim, async (c) => {
 			`SELECT j.${fields.replaceAll(",", ",j.")},b.epub_url,b.title,b.author,b.language,b.provenance,b.epub_sha256 FROM generation_jobs j JOIN source_books b ON b.source_id=j.source_id WHERE j.id=? AND j.lease_token=?`,
 		)
 		.bind(candidate.id, lease)
-		.first<Row & { epub_url: string; title: string; author: string; language: "en" | "zh"; provenance: string; epub_sha256: string | null }>();
-	return c.json({ job: job ? { ...job, provenance: JSON.parse(job.provenance) as Record<string, unknown>, lease_token: lease } : null }, 200, noStore);
+		.first<
+			Row & {
+				epub_url: string;
+				title: string;
+				author: string;
+				language: "en" | "zh";
+				provenance: string;
+				epub_sha256: string | null;
+			}
+		>();
+	return c.json(
+		{
+			job: job
+				? {
+						...job,
+						provenance: JSON.parse(job.provenance) as Record<string, unknown>,
+						lease_token: lease,
+					}
+				: null,
+		},
+		200,
+		noStore,
+	);
 });
 internal.openapi(heartbeat, async (c) => {
 	if (!ready(c.env))
@@ -728,7 +897,7 @@ internal.openapi(finish, async (c) => {
 		if (
 			!source ||
 			body.author_slug !== (slug(source.author) || "unknown") ||
-			body.title_slug !== await sourceTitleSlug(slug(source.title) || "untitled", row.source_id)
+			body.title_slug !== (await sourceTitleSlug(slug(source.title) || "untitled", row.source_id))
 		)
 			return c.json(
 				{
@@ -749,6 +918,13 @@ internal.openapi(finish, async (c) => {
 		);
 	const timestamp = now(),
 		state = body.success ? "completed" : "failed";
+	if (body.success && !(await syncPublishedBook(c.env, body.author_slug!, body.title_slug!)))
+		return c.json(
+			{
+				error: { code: "NOT_PUBLISHED", message: "Book could not be added to the published index" },
+			},
+			409,
+		);
 	const update = await db
 		.prepare(`UPDATE generation_jobs SET state=?,stage=?,author_slug=?,title_slug=?,error_code=?,lease_token=NULL,lease_until=NULL,updated_at=?
 		WHERE id=? AND state='running' AND lease_token=? AND lease_until>?`)

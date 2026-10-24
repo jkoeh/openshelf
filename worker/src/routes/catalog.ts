@@ -1,15 +1,12 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import {
-	CACHE_SHORT,
-	CATALOG_PAGE_SIZE_DEFAULT,
-	CATALOG_PAGE_SIZE_MAX,
-	R2_DEFAULT_RENDITION,
-	R2_PREFIX_BOOKS,
-} from "../constants";
+import { CATALOG_PAGE_SIZE_DEFAULT, CATALOG_PAGE_SIZE_MAX } from "../constants";
 import { ErrorSchema } from "../schemas/error";
+import { SlugSchema } from "../schemas/params";
 import type { Env } from "../types";
+import { credentialStatus, noStore } from "../utils/job-auth";
 import { createOpenAPIApp } from "../utils/openapi-app";
-import { r2Key } from "../utils/r2-keys";
+import { reconcilePublishedBooks, syncPublishedBook } from "../utils/published-catalog";
+import { canonicalSearch } from "../utils/source-search";
 
 const CatalogBookSchema = z
 	.object({
@@ -25,7 +22,6 @@ const CatalogBookSchema = z
 		has_cover: z.boolean(),
 	})
 	.openapi("CatalogBook");
-
 const CatalogResponseSchema = z
 	.object({
 		version: z.number().int().positive(),
@@ -36,245 +32,230 @@ const CatalogResponseSchema = z
 		limit: z.number().int().positive(),
 	})
 	.openapi("Catalog");
-
 const QuerySchema = z.object({
-	q: z
-		.string()
-		.optional()
-		.openapi({ description: "Case-insensitive substring filter on title + author" }),
-	author: z
-		.string()
-		.optional()
-		.openapi({ description: "Case-insensitive substring filter on author" }),
+	q: z.string().max(80).optional().openapi({
+		description: "Current D1 title/author substring search, including equivalent Chinese scripts",
+	}),
+	author: z.string().max(200).optional(),
 	page: z.string().optional().openapi({ example: "1" }),
 	limit: z.string().optional().openapi({ example: "20" }),
 });
-
-interface CatalogBook extends z.infer<typeof CatalogBookSchema> {}
-
-type CatalogFileBook = Omit<CatalogBook, "current_build"> & { current_build?: string };
-
-interface CatalogFile {
-	version?: number;
-	generated_at?: string;
-	books?: CatalogFileBook[];
-}
-
-interface BookManifestRendition {
-	current_build?: string;
-}
-
-interface BookManifestFile {
-	title?: string;
-	author?: string;
-	source?: string;
-	renditions?: Record<string, BookManifestRendition>;
-}
-
-interface RenditionManifestFile {
-	version?: number;
-	total_duration_seconds?: number;
-	sections?: unknown[];
-}
-
-function parseBookManifestKey(key: string): { authorSlug: string; titleSlug: string } | null {
-	const parts = key.split("/");
-	if (parts.length !== 4 || parts[0] !== R2_PREFIX_BOOKS || parts[3] !== "manifest.json") {
-		return null;
-	}
-	return { authorSlug: parts[1], titleSlug: parts[2] };
-}
-
-function chooseCatalogRendition(renditions: Record<string, BookManifestRendition>): string | null {
-	const keys = Object.keys(renditions);
-	if (keys.length === 0) {
-		return null;
-	}
-	if (R2_DEFAULT_RENDITION in renditions) {
-		return R2_DEFAULT_RENDITION;
-	}
-	return keys.sort()[0];
-}
-
-async function listBookManifestKeys(bucket: R2Bucket): Promise<string[]> {
-	const keys: string[] = [];
-	let cursor: string | undefined;
-
-	do {
-		const listed = await bucket.list({ prefix: `${R2_PREFIX_BOOKS}/`, cursor });
-		for (const obj of listed.objects) {
-			if (parseBookManifestKey(obj.key)) {
-				keys.push(obj.key);
-			}
-		}
-		cursor = listed.truncated ? listed.cursor : undefined;
-	} while (cursor);
-
-	return keys.sort();
-}
-
-async function keyExists(bucket: R2Bucket, key: string): Promise<boolean> {
-	return (await bucket.head(key)) !== null;
-}
-
-async function deriveCatalog(bucket: R2Bucket): Promise<Required<CatalogFile>> {
-	const books: CatalogFileBook[] = [];
-
-	for (const key of await listBookManifestKeys(bucket)) {
-		const meta = parseBookManifestKey(key);
-		if (!meta) {
-			continue;
-		}
-
-		const manifestObj = await bucket.get(key);
-		if (!manifestObj) {
-			continue;
-		}
-		const manifest = (await manifestObj.json()) as BookManifestFile;
-		const renditions = manifest.renditions ?? {};
-		const rendition = chooseCatalogRendition(renditions);
-		if (!rendition) {
-			continue;
-		}
-
-		const currentBuild = renditions[rendition]?.current_build;
-		if (!currentBuild) {
-			continue;
-		}
-
-		const renditionManifestObj = await bucket.get(
-			r2Key.renditionManifest(meta.authorSlug, meta.titleSlug, rendition, currentBuild),
-		);
-		if (!renditionManifestObj) {
-			continue;
-		}
-		const renditionManifest = (await renditionManifestObj.json()) as RenditionManifestFile;
-		if (renditionManifest.version !== 2) {
-			continue;
-		}
-		const sections = renditionManifest.sections ?? [];
-		const hasCover =
-			(await keyExists(bucket, r2Key.cover(meta.authorSlug, meta.titleSlug, "jpg"))) ||
-			(await keyExists(bucket, r2Key.cover(meta.authorSlug, meta.titleSlug, "png")));
-
-		books.push({
-			author: manifest.author ?? meta.authorSlug,
-			author_slug: meta.authorSlug,
-			title: manifest.title ?? meta.titleSlug,
-			title_slug: meta.titleSlug,
-			source: manifest.source ?? "unknown",
-			rendition,
-			current_build: currentBuild,
-			total_duration_seconds: renditionManifest.total_duration_seconds ?? 0,
-			section_count: sections.length,
-			has_cover: hasCover,
-		});
-	}
-
-	return {
-		version: 2,
-		generated_at: new Date().toISOString(),
-		books,
-	};
-}
-
-async function readCatalog(bucket: R2Bucket): Promise<Required<CatalogFile>> {
-	const obj = await bucket.get("catalog.json");
-	if (!obj) {
-		return deriveCatalog(bucket);
-	}
-	const catalog = (await obj.json()) as CatalogFile;
-	if (catalog.version !== 2) {
-		return deriveCatalog(bucket);
-	}
-	return {
-		version: 2,
-		generated_at: catalog.generated_at ?? "",
-		books: catalog.books ?? [],
-	};
-}
-
-async function withCurrentBuilds(
-	bucket: R2Bucket,
-	books: CatalogFileBook[],
-): Promise<CatalogBook[]> {
-	const enriched: CatalogBook[] = [];
-	for (const book of books) {
-		if (book.current_build) {
-			enriched.push({ ...book, current_build: book.current_build });
-			continue;
-		}
-
-		const manifestObj = await bucket.get(r2Key.bookManifest(book.author_slug, book.title_slug));
-		if (!manifestObj) {
-			enriched.push({ ...book, current_build: "" });
-			continue;
-		}
-		const manifest = (await manifestObj.json()) as BookManifestFile;
-		const currentBuild = manifest.renditions?.[book.rendition]?.current_build ?? "";
-		enriched.push({ ...book, current_build: currentBuild });
-	}
-	return enriched;
-}
-
+const error = { description: "Error", content: { "application/json": { schema: ErrorSchema } } };
 const route = createRoute({
 	method: "get",
 	path: "/",
 	tags: ["catalog"],
-	summary: "List all available books",
+	summary: "List the current public D1 publication catalog without result caching",
 	request: { query: QuerySchema },
 	responses: {
 		200: {
-			description: "Filtered + paginated catalog",
+			description: "Filtered and paginated current publications",
 			content: { "application/json": { schema: CatalogResponseSchema } },
 		},
-		400: {
-			description: "Invalid query params",
-			content: { "application/json": { schema: ErrorSchema } },
+		400: error,
+		503: error,
+	},
+});
+const syncRoute = createRoute({
+	method: "post",
+	path: "/sync",
+	tags: ["catalog-internal"],
+	summary: "PC indexes up to 10 publications from their actual current R2 manifests",
+	request: {
+		body: {
+			content: {
+				"application/json": {
+					schema: z.object({
+						books: z
+							.array(z.object({ author_slug: SlugSchema, title_slug: SlugSchema }))
+							.min(1)
+							.max(10),
+					}),
+				},
+			},
 		},
+	},
+	responses: {
+		200: {
+			description: "Publication keys processed",
+			content: {
+				"application/json": { schema: z.object({ synced: z.number().int().nonnegative() }) },
+			},
+		},
+		400: error,
+		401: error,
+		409: error,
+		429: error,
+		503: error,
+	},
+});
+const PublicationKey = z.object({ author_slug: SlugSchema, title_slug: SlugSchema });
+const reconcileRoute = createRoute({
+	method: "post",
+	path: "/reconcile",
+	tags: ["catalog-internal"],
+	summary: "PC reconciles at most 10 publication rows against current R2 manifests",
+	request: {
+		body: {
+			content: { "application/json": { schema: z.object({ after: PublicationKey.optional() }) } },
+		},
+	},
+	responses: {
+		200: {
+			description: "Publication rows examined",
+			content: {
+				"application/json": {
+					schema: z.object({
+						checked: z.number().int().nonnegative(),
+						removed: z.number().int().nonnegative(),
+						after: PublicationKey.nullable(),
+					}),
+				},
+			},
+		},
+		400: error,
+		401: error,
+		429: error,
+		503: error,
 	},
 });
 
 const app = createOpenAPIApp<{ Bindings: Env }>();
+const internal = createOpenAPIApp<{ Bindings: Env }>();
+app.use("*", async (c, next) => {
+	c.header("Cache-Control", "no-store");
+	await next();
+});
+internal.use("*", async (c, next) => {
+	c.header("Cache-Control", "no-store");
+	await next();
+});
+type Row = Omit<z.infer<typeof CatalogBookSchema>, "has_cover"> & { has_cover: number };
 
 app.openapi(route, async (c) => {
-	const { q, author: authorFilter, page: pageStr, limit: limitStr } = c.req.valid("query");
-	const catalog = await readCatalog(c.env.R2_BUCKET);
-	let books = catalog.books;
-
-	if (q) {
-		const ql = q.toLowerCase();
-		books = books.filter(
-			(b) => b.title.toLowerCase().includes(ql) || b.author.toLowerCase().includes(ql),
+	if (!c.env.JOB_DB)
+		return c.json(
+			{ error: { code: "UNAVAILABLE", message: "Publication catalog is not configured" } },
+			503,
+			noStore,
 		);
-	}
-
-	if (authorFilter) {
-		const al = authorFilter.toLowerCase();
-		books = books.filter((b) => b.author.toLowerCase().includes(al));
-	}
-
-	const page = Math.max(1, Number(pageStr) || 1);
+	const { q, author, page: pageStr, limit: limitStr } = c.req.valid("query");
+	const page = Math.min(1_000_000, Math.max(1, Math.floor(Number(pageStr) || 1)));
 	const limit = Math.min(
 		CATALOG_PAGE_SIZE_MAX,
-		Math.max(1, Number(limitStr) || CATALOG_PAGE_SIZE_DEFAULT),
+		Math.max(1, Math.floor(Number(limitStr) || CATALOG_PAGE_SIZE_DEFAULT)),
 	);
-	const start = (page - 1) * limit;
-	const paged = books.slice(start, start + limit);
-	const pagedWithBuilds = await withCurrentBuilds(c.env.R2_BUCKET, paged);
-
+	const clauses = [
+		"NOT EXISTS(SELECT 1 FROM book_deletions d WHERE d.author_slug=b.author_slug AND d.title_slug=b.title_slug)",
+	];
+	const values: string[] = [];
+	if (q) {
+		clauses.push("(instr(b.title_search,?)>0 OR instr(b.author_search,?)>0)");
+		values.push(canonicalSearch(q), canonicalSearch(q));
+	}
+	if (author) {
+		clauses.push("instr(b.author_search,?)>0");
+		values.push(canonicalSearch(author));
+	}
+	const where = `WHERE ${clauses.join(" AND ")}`;
+	const results = await c.env.JOB_DB.batch([
+		c.env.JOB_DB.prepare(
+			`SELECT author,author_slug,title,title_slug,source,rendition,current_build,total_duration_seconds,section_count,has_cover FROM published_books b ${where} ORDER BY b.author_search,b.title_search,b.author_slug,b.title_slug LIMIT ? OFFSET ?`,
+		).bind(...values, limit, (page - 1) * limit),
+		c.env.JOB_DB.prepare(`SELECT COUNT(*) total FROM published_books b ${where}`).bind(...values),
+	]);
+	const books = (results[0].results as unknown as Row[]).map((row) => ({
+		...row,
+		has_cover: !!row.has_cover,
+	}));
+	const count = results[1].results as unknown as { total: number }[];
 	return c.json(
 		{
-			version: catalog.version,
-			generated_at: catalog.generated_at,
-			books: pagedWithBuilds,
-			total: books.length,
+			version: 2,
+			generated_at: new Date().toISOString(),
+			books,
+			total: Number(count[0]?.total ?? 0),
 			page,
 			limit,
 		},
 		200,
-		{ "Cache-Control": CACHE_SHORT },
+		noStore,
 	);
 });
 
+internal.openapi(syncRoute, async (c) => {
+	if (!c.env.JOB_DB)
+		return c.json(
+			{ error: { code: "UNAVAILABLE", message: "Publication catalog is not configured" } },
+			503,
+			noStore,
+		);
+	const auth = await credentialStatus(c.req.raw, c.env, c.env.PC_TOKEN);
+	if (auth)
+		return c.json(
+			{
+				error: {
+					code: auth === 429 ? "RATE_LIMITED" : "UNAUTHORIZED",
+					message: "PC credential required",
+				},
+			},
+			auth,
+			noStore,
+		);
+	let synced = 0;
+	try {
+		for (const book of c.req.valid("json").books)
+			if (await syncPublishedBook(c.env, book.author_slug, book.title_slug)) synced++;
+	} catch {
+		return c.json(
+			{
+				error: {
+					code: "INVALID_PUBLICATION",
+					message:
+						"A publication has missing or incompatible R2 manifests; repair it and retry indexing",
+				},
+			},
+			409,
+			noStore,
+		);
+	}
+	return c.json({ synced }, 200, noStore);
+});
+
+internal.openapi(reconcileRoute, async (c) => {
+	if (!c.env.JOB_DB)
+		return c.json(
+			{ error: { code: "UNAVAILABLE", message: "Publication catalog is not configured" } },
+			503,
+			noStore,
+		);
+	const auth = await credentialStatus(c.req.raw, c.env, c.env.PC_TOKEN);
+	if (auth)
+		return c.json(
+			{
+				error: {
+					code: auth === 429 ? "RATE_LIMITED" : "UNAUTHORIZED",
+					message: "PC credential required",
+				},
+			},
+			auth,
+			noStore,
+		);
+	try {
+		return c.json(await reconcilePublishedBooks(c.env, c.req.valid("json").after), 200, noStore);
+	} catch {
+		return c.json(
+			{
+				error: {
+					code: "STORAGE_UNAVAILABLE",
+					message: "Catalog reconciliation could not verify storage; retry later",
+				},
+			},
+			503,
+			noStore,
+		);
+	}
+});
+
+export { internal };
 export default app;

@@ -41,11 +41,12 @@ flowchart LR
         R_RMAN[audio/{rendition}/builds/{build}/<br/>rendition-manifest.json]
         R_M4A[audio/{rendition}/builds/{build}/<br/>section-NN.m4a]
         R_CD[audio/{rendition}/builds/{build}/<br/>section_data.json]
-        R_CAT[catalog.json]
+        R_CAT[catalog.json<br/>publication audit + backfill artifact]
         R_SOURCE[source-epubs/{provider}/{source-hash}/book.epub<br/>validated reading cache + provenance/hash]
+        R_UPLOAD[owner-uploads/{uuid}/original.{format}<br/>authenticated owner originals]
     end
 
-    R_JOBS[(D1 source index + generation jobs)]
+    R_JOBS[(D1 source index + publication catalog + generation jobs)]
 
     P5 --> R_M4A
     P6 --> R_CD
@@ -60,7 +61,8 @@ flowchart LR
 
     subgraph Worker[Worker — Cloudflare/Hono + zod-openapi]
         direction TB
-        W_CAT[GET /catalog<br/>catalog.json fast path<br/>book + default rendition/build]
+        W_CAT[GET /catalog<br/>current D1 publication rows · no-store<br/>book + default rendition/build]
+        W_CAT_SYNC[PC-authenticated catalog sync<br/>derive publication rows from R2 manifests]
         W_BOOK[GET /books/:a/:t<br/>→ book manifest with current_build per rendition]
         W_MANAGE[Owner book management<br/>regenerate source + delete publication]
         W_BUILDS[GET /books/:a/:t/builds<br/>-> available renditions/build uploads]
@@ -72,12 +74,14 @@ flowchart LR
         W_SEARCH[GET /source-books<br/>bounded autocomplete]
         W_SOURCE_EPUB[GET /source-books/:source_id/epub<br/>R2 reading copy independent of upstream/audio]
         W_ADMIN[GET /admin/me<br/>verify Google owner]
+        W_UPLOAD[Owner document upload/list<br/>PC authenticated original download]
         W_JOBS[Public standard audio requests/status<br/>Owner cancel/retry/regenerate/priority<br/>Owner bounded queue and recent history<br/>Owner OpenAI-directed Chatterbox requests<br/>PC claim/heartbeat/finish]
     end
 
-    R_CAT --> W_CAT
-    R_BOOKMAN -. fallback .-> W_CAT
-    R_RMAN -. fallback .-> W_CAT
+    R_JOBS --> W_CAT
+    R_BOOKMAN --> W_CAT_SYNC
+    R_RMAN --> W_CAT_SYNC
+    W_CAT_SYNC --> R_JOBS
     R_BOOKMAN --> W_BOOK
     R_BOOKMAN --> W_BUILDS
     R_RMAN --> W_BUILDS
@@ -88,6 +92,7 @@ flowchart LR
     R_JOBS --> W_SEARCH
     R_JOBS --> W_SOURCE_EPUB
     R_SOURCE --> W_SOURCE_EPUB
+    R_UPLOAD --> W_UPLOAD
     R_JOBS --> W_JOBS
     W_JOBS --> R_JOBS
 
@@ -113,11 +118,11 @@ flowchart LR
     C_SEARCH --> W_SOURCE_EPUB
     C_SEARCH --> C_SOURCE
     W_SOURCE_EPUB --> C_SOURCE
-    SE_SITE[Standard Ebooks public website] -->|direct search on index miss| C_SEARCH
-    SE_SITE -->|direct EPUB on cache miss| C_SOURCE
+    SE_SITE[Standard Ebooks public website] -->|legacy exact EPUB fallback on cache miss| C_SOURCE
     W_JOBS --> C_SOURCE
     C_SOURCE --> C3
     C_ADMIN --> W_ADMIN
+    C_ADMIN --> W_UPLOAD
     C_ADMIN --> W_JOBS
     C_ADMIN --> W_MANAGE
     W_BOOK --> C2
@@ -132,12 +137,14 @@ flowchart LR
         J_IMPORT --> R_JOBS
         J1[Poll + lease job] --> J2[Cached exact EPUB or approved source access]
         J2 --> J2R[Verify source-specific public-domain rights + EPUB identity]
+        J_DOC[Owner PDF/DOCX/TXT extraction<br/>rights acknowledgement + ordered EPUB] --> J3
         J2R --> J3[Standard: English Kokoro / Mandarin Qwen3 Serena<br/>Expressive: English OpenAI + Chatterbox<br/>language-aware WhisperX + R2]
     end
     J1 <--> W_JOBS
     J_MON <--> W_JOBS
     J3 --> R_M4A
     J3 --> R_CD
+    W_UPLOAD --> J_DOC
 ```
 
 
@@ -150,7 +157,7 @@ Notes:
   fetch on the happy path.
 - Voice direction writes auditable per-build artifacts to R2. `character_registry.json` carries the narrator, character aliases, descriptions, and assigned voices for future client features. `voice_direction.json` carries the cast mode plus speaker/performance plan used for synthesis. TTS also writes `section-NN.synthesis_units.json` as a per-section seam audit with internal unit boundaries and inserted pause metadata for repair tooling. The reader consumes `section_data.json` for heading display/spoken text, body text, and word sync.
 - The default cast mode is **solo narrator**: the LLM may choose the narrator and build/expand the character registry, but synthesis keeps one narrator voice for the whole audiobook. Character data is used for audit and future style guidance rather than hard voice switching. **Multicast** is opt-in via config/CLI and may switch voices by character; it is experimental because prose dialogue tags can sound stitched when rendered as separate synthetic actors. WhisperX is the canonical word-timestamp source for every engine; Kokoro native token timestamps are not used for the final sync contract.
-- `catalog.json` is the preferred fast path for `GET /catalog`; when it is missing, the worker may derive the same catalog rows from root book manifests plus each selected rendition's current `rendition-manifest.json`. Catalog rows include the backend default rendition and current build so the client can open a book on a coherent default build.
+- `GET /catalog` queries the D1 publication index and returns `no-store` for browsing and search. PC-authenticated publication sync derives metadata from actual R2 root/rendition manifests; normal job completion and publication deletion update this index. `catalog.json` remains a publication audit/backfill artifact. Existing manual publications are backfilled before client rollout. Source and published searches normalize simplified/traditional Chinese while returning original metadata. Catalog rows include the default rendition and current build so the client can open a coherent snapshot.
 - `GET /books/:a/:t/builds` is the no-cache discovery API for build selection. It reads the book manifest's retained `available_builds`, enriches each retained build from its own `rendition-manifest.json`, and returns `uploaded_at` from the R2 object's upload timestamp. Omitting `build` in client URLs still means use the rendition's `current_build`.
 - The client stores the user's preferred build per book locally and uses that preference on the next book-detail load when the retained build still exists. Reading progress is keyed by book, rendition, and build so progress from one build cannot leak into another. The book-detail selector is collapsed by default, always shows the selected engine, groups choices by engine then voice, and lists builds by upload time while keeping raw build IDs internal.
 - The client does not poll status for sync; `useSyncEngine` reads `player.currentTime` directly inside `requestAnimationFrame` and only re-renders when the active word index changes.
@@ -299,6 +306,14 @@ so browser checks operate the same controls as readers.
 
 ## Conventions
 
+- Pipeline code requires Python 3.12 or newer. CI uses Python 3.12; the isolated
+  Mandarin runtime also uses 3.12.
+- Owner-only document ingestion accepts text PDF, DOCX, UTF-8 TXT and pasted
+  text, with explicit rights/publication acknowledgement. Originals are private
+  authenticated R2 objects; completed audio/annotated EPUBs are public. Hidden
+  owner source rows never enter source discovery. See `pipeline/docs/source-access.md`
+  for supported inputs, extraction bounds and operator-controlled rights.
+
 - Each component owns its dependency file (`pipeline/requirements.txt`, `worker/package.json`, `client/package.json`)
 - Shared data contract: pipeline writes JSON (manifest, section_data,
   character_registry, voice_direction) to R2. `section_data.json` carries
@@ -324,14 +339,13 @@ the canonical edition path. The PC imports at most 1,000 editions per run throug
 `books sync-catalog --source standard-ebooks`, with a two-second request delay,
 bounded listing pages, and batches of at most 50. Each edition must have the
 official U.S. public-domain statement and an exact compatible EPUB link; future
-`not-pd` listings and ambiguous metadata are skipped. Search requests query D1,
-never the upstream website. If no indexed Standard Ebooks edition matches, the
-client queries one official Standard Ebooks search page directly for queries of
-at least three characters, using CORS,
-without credentials. It merges up to ten canonical, downloadable editions,
-excluding `not-pd` placeholders. Live suggestions are explicitly unindexed:
-they allow reading but do not start audio until the PC has verified and indexed
-the edition. The client labels the source of each edition.
+`not-pd` listings and ambiguous metadata are skipped. Every source search queries
+our own D1 index with no response cache or upstream search fallback. Simplified
+and traditional Chinese queries match the same indexed editions while returned
+metadata and reading text retain the source script. Imports populate the index;
+unimported books are not invented as search results. Our abuse limiter remains,
+but upstream search availability and upstream rate limits cannot affect queries.
+The client labels the source of each edition.
 
 Reading and generation allow only HTTPS EPUB URLs matching the exact edition on
 `standardebooks.org`; redirects are bounded and revalidated. No download-cookie
@@ -349,8 +363,9 @@ Reading streams this cache with `no-store` independently of upstream availabilit
 missing caches fail explicitly. On a cache miss (404/502), the reader fetches
 the exact official Standard Ebooks EPUB directly, using its canonical source ID
 and the same 32 MiB bound. Direct requests omit credentials and reject redirects;
-HTTP 403/429 is shown without retrying automatically. The D1/R2 index is a fast
-path, not a prerequisite for text reading of live Standard Ebooks suggestions.
+HTTP 403/429 is shown without retrying automatically. Legacy exact Standard
+Ebooks links remain readable through this fallback; search does not query the
+public website to discover them.
 Direct downloads serve cached copies first and redirect only on a legacy cache miss.
 `--dry-run` validates metadata without downloading or uploading EPUBs. Source
 cache bytes are independent of audiobook publication and are retained on refresh.

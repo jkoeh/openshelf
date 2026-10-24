@@ -269,6 +269,17 @@ class JobAPI:
         self.base = base.rstrip("/")
         self.token = token
 
+    def download_owner_document(self, upload_id: str) -> bytes:
+        if not re.fullmatch(r"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}", upload_id):
+            raise ValueError("invalid owner upload ID")
+        request = urllib.request.Request(self.base + "/internal/uploads/" + upload_id,
+            headers={"Authorization": f"Bearer {self.token}", "User-Agent": "OpenShelf/1.0 (+https://github.com/jkoeh/openshelf)"})
+        with urllib.request.build_opener(NoRedirects()).open(request, timeout=45) as response:
+            data = response.read(16 * 1024 * 1024 + 1)
+        if len(data) > 16 * 1024 * 1024:
+            raise ValueError("owner document exceeds limit")
+        return data
+
     def post(self, path: str, payload: dict | None = None) -> dict:
         body = json.dumps(payload or {}).encode("utf-8")
         request = urllib.request.Request(
@@ -385,18 +396,26 @@ def mandarin_runtime(device: str) -> str | None:
 
 
 def process_job(api: JobAPI, job: dict, *, download_root: Path, audio_root: Path, device: str,
-                mandarin_python: str | None = None) -> None:
+                mandarin_python: str | None = None, english_python: str | None = None) -> None:
     source_id = job["source_id"]
     author_slug = sanitize(job["author"]) or "unknown"
     from openshelf.pipeline.standard_ebooks_source import title_slug as edition_title_slug
     title_slug = edition_title_slug(job["title"], source_id)
-    source = "standard-ebooks" if source_id.startswith("standardebooks:") else "wikisource" if source_id.startswith("wikisource:") else "gutenberg"
+    owner_document = source_id.startswith("ownerupload:")
+    source = "local" if owner_document else "standard-ebooks" if source_id.startswith("standardebooks:") else "wikisource" if source_id.startswith("wikisource:") else "gutenberg"
     epub = download_root / source / author_slug / f"{title_slug}.epub"
     lease = job["lease_token"]
     route = f"/internal/generation-jobs/{job['id']}"
     try:
+        if owner_document:
+            proof = job.get("provenance", {})
+            if (proof.get("rights_acknowledged") is not True or proof.get("public_publication_acknowledged") is not True
+                    or proof.get("upload_id") != source_id.split(":")[1]):
+                raise ValueError("owner document lacks rights/publication acknowledgement")
+            if not epub.exists():
+                prepare_owner_epub(api, job, epub)
         cached_proof = job.get("epub_sha256")
-        if not cached_proof:
+        if not cached_proof and not owner_document:
             verify_public_domain(source_id)
         if not epub.exists():
             cached = api.download_source_epub(source_id, epub) if hasattr(api, "download_source_epub") else False
@@ -405,12 +424,17 @@ def process_job(api: JobAPI, job: dict, *, download_root: Path, audio_root: Path
                     raise ValueError("validated reading copy is unavailable")
                 fetch_epub(job["epub_url"], source_id, epub)
         validate_local_epub(epub)
+        if owner_document:
+            from openshelf.pipeline.owner_documents import validate_owner_epub
+            validate_owner_epub(epub, source_id, proof.get("sha256", ""),
+                                title=job["title"], author=job["author"], language=job.get("language", "en"))
         if cached_proof:
             if hashlib.sha256(epub.read_bytes()).hexdigest() != cached_proof:
                 raise ValueError("source cache hash does not match edition")
             if job.get("provenance", {}).get("rights_statement") != "Public domain in the USA.":
                 raise RightsNotVerified("source cache lacks verified U.S. rights evidence")
-        check_epub_rights(epub, source_id)
+        if not owner_document:
+            check_epub_rights(epub, source_id)
         language = normalize_language(job.get("language", "en"))
         from openshelf.pipeline.epub_parser import read_book_metadata
         if normalize_language(read_book_metadata(str(epub)).get("language", "en")) != language:
@@ -435,15 +459,24 @@ def process_job(api: JobAPI, job: dict, *, download_root: Path, audio_root: Path
         else:
             raise ValueError("unsupported generation mode")
         build_dir = audio_root / author_slug / title_slug / "audio" / rendition / "builds" / job["build_id"]
-        command = [mandarin_python if language == "zh" else sys.executable, "-m", "openshelf.pipeline.cli", "books", "process", "--epub", str(epub),
+        interpreter = mandarin_python if language == "zh" else english_python if mode == "standard" and english_python else sys.executable
+        command = [interpreter, "-m", "openshelf.pipeline.cli", "books", "process", "--epub", str(epub),
                    "--output", str(audio_root), "--engine", engine, "--voice", voice,
                    "--rendition", rendition, "--build-id", job["build_id"], "--device", device, "--upload"]
+        if owner_document:
+            # Explicit local provenance; filenames/authors cannot accidentally
+            # trigger the manual command's provider-directory inference.
+            command[2:5] = ["openshelf.pipeline.dag.cli", "run"]
+            command += ["--source", "local"]
         if mode == "expressive":
             command += ["--performance-direction", "batched"]
         if (build_dir / "run.json").exists():
             command.append("--resume")
         api.post(route + "/progress", {"lease_token": lease, "stage": "synthesis"})
         env = os.environ.copy()
+        env["OPENSHELF_API_BASE"] = api.base
+        env["OPENSHELF_PC_TOKEN"] = api.token
+        env["OPENSHELF_REQUIRE_COMPLETE_AUDIO"] = "1"
         env["PYTHONPATH"] = str(PROJECT_ROOT / "pipeline" / "src") + os.pathsep + env.get("PYTHONPATH", "")
         if mode == "expressive":
             env["LLM_PROVIDER"] = "openai"
@@ -462,18 +495,17 @@ def process_job(api: JobAPI, job: dict, *, download_root: Path, audio_root: Path
                         last_renewal = time.monotonic()
                     except urllib.error.HTTPError as exc:
                         # A rejected lease is definitive, unlike a dropped connection.
-                        child.terminate()
+                        terminate_child_tree(child)
                         raise RuntimeError("lease rejected") from exc
                     except (urllib.error.URLError, OSError):
                         if time.monotonic() - last_renewal > 90:
-                            child.terminate()
+                            terminate_child_tree(child)
                             raise RuntimeError("lease renewal failed")
             if child.returncode:
                 raise RuntimeError(f"pipeline exited {child.returncode}")
         except BaseException:
             if child.poll() is None:
-                child.terminate()
-                child.wait(timeout=20)
+                terminate_child_tree(child)
             raise
         api.post(route + "/finish", {"lease_token": lease, "success": True,
                                       "author_slug": author_slug, "title_slug": title_slug})
@@ -487,6 +519,109 @@ def process_job(api: JobAPI, job: dict, *, download_root: Path, audio_root: Path
         raise
 
 
+def terminate_child_tree(child) -> None:
+    """Stop virtualenv launchers and their base-Python/DAG descendants together."""
+    import psutil
+    # Small fake children used by offline tests model only one process.
+    if not hasattr(child, "pid"):
+        child.terminate()
+        child.wait(timeout=20)
+        return
+    try:
+        root = psutil.Process(child.pid)
+        processes = root.children(recursive=True) + [root]
+    except psutil.NoSuchProcess:
+        child.wait(timeout=20)
+        return
+    for process in reversed(processes):
+        try:
+            process.terminate()
+        except psutil.NoSuchProcess:
+            pass
+    _, alive = psutil.wait_procs(processes, timeout=10)
+    for process in alive:
+        try:
+            process.kill()
+        except psutil.NoSuchProcess:
+            pass
+    _, alive = psutil.wait_procs(alive, timeout=10)
+    if alive:
+        raise RuntimeError("synthesis process tree could not be stopped")
+    child.wait(timeout=20)
+
+
+def prepare_owner_epub(api: JobAPI, job: dict, epub: Path) -> None:
+    """Extract in a bounded subprocess so parsers cannot stall the consumer lease."""
+    from openshelf.pipeline.owner_documents import InvalidOwnerDocument
+    proof = job["provenance"]
+    route = f"/internal/generation-jobs/{job['id']}/heartbeat"
+    api.post(route, {"lease_token": job["lease_token"]})
+    data = api.download_owner_document(proof["upload_id"])
+    if hashlib.sha256(data).hexdigest() != proof.get("sha256"):
+        raise InvalidOwnerDocument("uploaded document hash mismatch")
+    epub.parent.mkdir(parents=True, exist_ok=True)
+    original = epub.with_suffix(".original")
+    pending = epub.with_suffix(".pending.epub")
+    original.write_bytes(data)
+    metadata = {"format": proof["format"], "source_id": job["source_id"], "title": job["title"],
+                "author": job["author"], "language": normalize_language(job.get("language", "en")),
+                "sha256": proof["sha256"]}
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(PROJECT_ROOT / "pipeline" / "src") + os.pathsep + env.get("PYTHONPATH", "")
+    try:
+        api.post(route, {"lease_token": job["lease_token"]})
+        child = subprocess.Popen([sys.executable, "-m", "openshelf.pipeline.owner_documents", str(original), str(pending)],
+                                 stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
+                                 cwd=PROJECT_ROOT)
+        try:
+            child.communicate(json.dumps(metadata).encode(), timeout=60)
+        except subprocess.TimeoutExpired as exc:
+            terminate_child_tree(child)
+            raise InvalidOwnerDocument("document extraction exceeded 60 seconds") from exc
+        except BaseException:
+            terminate_child_tree(child)
+            raise
+        if child.returncode != 0:
+            raise InvalidOwnerDocument("document could not be extracted within supported limits")
+        pending.replace(epub)
+    finally:
+        original.unlink(missing_ok=True)
+        pending.unlink(missing_ok=True)
+    api.post(route, {"lease_token": job["lease_token"]})
+
+
+def document_runtime_ready() -> bool:
+    try:
+        import ebooklib
+        import pypdf
+        return bool(ebooklib and hasattr(pypdf, "apply_configuration"))
+    except (ImportError, OSError):
+        return False
+
+
+def english_runtime() -> str | None:
+    """Validate an explicit standard-English runtime without loading any model."""
+    configured = os.environ.get("OPENSHELF_ENGLISH_PYTHON", "")
+    if not configured:
+        return None
+    if not Path(configured).is_file():
+        raise ValueError("configured English runtime does not exist")
+    probe = (
+        "import sys,importlib.metadata as m; assert sys.version_info >= (3,12); "
+        "import kokoro,misaki.en,whisperx.alignment,ebooklib,bs4,boto3,dotenv,openai,anthropic,psutil,spacy; "
+        "assert tuple(map(int,m.version('whisperx').split('.')[:3])) >= (3,8,4); "
+        "assert spacy.util.is_package('en_core_web_sm')"
+    )
+    try:
+        result = subprocess.run([configured, "-c", probe], stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, timeout=30, check=False, cwd=PROJECT_ROOT)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError("configured English runtime did not pass readiness checks") from exc
+    if result.returncode:
+        raise ValueError("configured English runtime did not pass readiness checks")
+    return configured
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="openshelf-pipeline books consume-jobs")
     parser.add_argument("--api-base", required=True, help="Worker URL including /api/v1")
@@ -498,17 +633,25 @@ def main(argv=None) -> int:
         parser.error("--sync-pages must be 0..10")
     api = JobAPI(args.api_base, os.environ.get("OPENSHELF_PC_TOKEN", ""))
     mandarin_python = mandarin_runtime(args.device)
+    documents_ready = document_runtime_ready()
+    english_python = None
+    english_ready = True
+    try:
+        english_python = english_runtime()
+    except ValueError:
+        english_ready = False
+        print("Configured English runtime is unavailable; standard English jobs remain queued", file=sys.stderr)
     if args.sync_pages:
         print(f"Indexed {sync_gutenberg(api, args.sync_pages)} Gutenberg editions")
     while True:
         try:
             job = api.post("/internal/generation-jobs/claim", {
-                "expressive": bool(OPENAI_API_KEY), "mandarin": bool(mandarin_python)})["job"]
+                "expressive": bool(OPENAI_API_KEY), "mandarin": bool(mandarin_python), "documents": documents_ready, "english": english_ready})["job"]
             if job:
                 print(f"Processing {job['source_id']} ({job['id']})")
                 process_job(api, job, download_root=PROJECT_ROOT / "download" / "books",
                             audio_root=PROJECT_ROOT / "audio", device=args.device,
-                            mandarin_python=mandarin_python)
+                            mandarin_python=mandarin_python, english_python=english_python)
             elif args.once:
                 return 0
             else:

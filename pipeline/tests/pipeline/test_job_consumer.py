@@ -23,6 +23,8 @@ class FakeResponse(io.BytesIO):
 
 
 class FakeAPI:
+    base = "https://example.com/api/v1"
+    token = "test-pc-token-longer-than-twenty-four"
     def __init__(self):
         self.posts = []
 
@@ -257,10 +259,12 @@ class ConsumerTests(unittest.TestCase):
         for key, expected in [("", False), ("test-local-key", True)]:
             with self.subTest(configured=expected), patch.object(consumer, "OPENAI_API_KEY", key), \
                     patch.object(consumer, "JobAPI", return_value=EmptyQueue()) as connect, \
+                    patch.object(consumer, "document_runtime_ready", return_value=True), \
+                    patch.object(consumer, "english_runtime", return_value=None), \
                     patch.object(consumer, "mandarin_runtime", return_value=None):
                 self.assertEqual(consumer.main(["--api-base", "https://example.com/api/v1", "--once"]), 0)
                 request = connect.return_value.posts[0]
-                self.assertEqual(request, ("/internal/generation-jobs/claim", {"expressive": expected, "mandarin": False}))
+                self.assertEqual(request, ("/internal/generation-jobs/claim", {"expressive": expected, "mandarin": False, "documents": True, "english": True}))
                 self.assertNotIn(key or "unconfigured", str(request))
 
     def test_rejected_heartbeat_stops_pipeline_immediately(self):

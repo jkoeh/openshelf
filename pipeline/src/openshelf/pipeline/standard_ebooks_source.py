@@ -42,6 +42,8 @@ def title_slug(title, source_id):
     title = sanitize(title) or "untitled"
     if source_id.startswith("gutenberg:"):
         return title + "-g" + source_id.split(":")[1]
+    if re.fullmatch(r"ownerupload:[a-f0-9-]{36}", source_id):
+        return title + "-upload-" + source_id.split(":")[1].replace("-", "")
     if re.fullmatch(r"wikisource:(en|zh):[1-9][0-9]*:[1-9][0-9]*:[a-f0-9]{16}", source_id):
         return title + "-ws-" + hashlib.sha256(source_id.encode()).hexdigest()[:12]
     edition_path(source_id)

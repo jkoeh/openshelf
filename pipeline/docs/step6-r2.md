@@ -23,6 +23,22 @@ books/{author}/{title}/
 Every build object is immutable. `rendition-manifest.json` is uploaded last.
 `manifest.json` remains the short-cached mutable pointer.
 
+`catalog.json` is retained as a publication/audit artifact. Public catalog and
+title/author search read D1 `published_books` with `no-store`. After writing the
+R2 catalog, `ops catalog` submits publication keys in batches of at most 10 to
+the PC-authenticated `/internal/catalog/sync`; the Worker reads and validates
+the current R2 book/rendition manifests before indexing metadata/default builds.
+Index synchronization requires `--api-base` or `OPENSHELF_API_BASE` plus
+`OPENSHELF_PC_TOKEN`; failure propagates to the caller. Generation completion
+also upserts its publication, and deletion removes its D1 catalog row.
+Full catalog refresh also reconciles existing rows through a bounded
+PC-authenticated cursor API. Missing/incompatible R2 publications are pruned only
+after ETag and D1 revision checks, while active jobs/deletions remain protected.
+An empty R2 scan still reconciles D1. Storage errors fail without pruning.
+Rollout must backfill existing manual and imported publications after migration
+`0009_published_catalog.sql`, `0010_catalog_revision.sql` and Worker deployment,
+before client rollout.
+
 Source reading uses `source-epubs/{provider}/{sha256(source_id)}/book.epub`, for
 `gutenberg`, `standardebooks`, `wikisource`. See `source-access.md` for validation,
 hash/provenance metadata and conditional-write rules.
@@ -32,6 +48,12 @@ validation. It is separate from audiobook builds and annotated `books/.../book.e
 The Worker limits copies to 32 MiB and streams them with `no-store` for Read now,
 so reading does not depend on upstream availability or audio generation. Source
 cache refreshes are operator-run through the existing catalog import command.
+
+Owner documents use `owner-uploads/{uuid}/original.{pdf|docx|txt}`. These raw
+objects have only authenticated owner/PC API access; they are not catalog or
+source EPUB objects. After owner acknowledgement and PC extraction, generated
+audio and annotated EPUBs use the normal public `books/...` layout with source
+`local`, a stable upload-specific title suffix, and the existing build contract.
 
 ## `section_data.json`
 

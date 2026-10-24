@@ -61,19 +61,25 @@ deletion. Its D1 guard remains after interruption until an owner retries cleanup
 generation cannot bypass the guard. Apply migration `0006_book_deletions.sql`
 before deploying the updated Worker.
 
-`utils/source-editions.ts` provides the shared source ID schema for Gutenberg
-and canonical Standard Ebooks editions, exact EPUB URL validation and source
-publication slugs. Source search, sync, reading and generation use this contract.
-The internal source-EPUB upload route uses a binary EPUB body, an indexed Standard
-Ebooks ID and the existing PC credential; its Zod route documents size/type/auth
-errors. Inline source reading uses the verified R2 cache for Standard Ebooks.
+`utils/source-editions.ts` provides the shared source ID schema for Gutenberg,
+canonical Standard Ebooks editions and revision-pinned Wikisource editions,
+exact EPUB URL validation and source publication slugs. Source search, sync,
+reading and generation use this contract. The internal source-EPUB upload route
+uses a binary EPUB body, an indexed provider ID and the existing PC credential;
+its Zod route documents size/type/auth errors. Inline source reading uses the
+validated R2 cache independently of upstream access and audio generation.
+Owner document IDs are accepted only in owner/internal generation contexts;
+they cannot enter public source search or source-EPUB download routes.
 
 For generation routes, each request/response stays in `createRoute` Zod schemas.
 Owner and PC bearer tokens are distinct Worker secrets. Browser admin actions
 may instead use a Google-signed ID token validated against the configured
 OAuth client ID and exact verified owner email. No job route is cached.
 The PC may finish only while its lease token matches; completion validates the
-published R2 build and catalog before returning success. The database can be
+published R2 build and current D1 publication row before returning success.
+Public source and publication searches query D1 with no-store responses. The
+PC-authenticated catalog sync/reconciliation routes derive metadata from R2
+manifests; the public catalog never scans R2 or reads catalog.json. The database can be
 absent in an environment, in which case discovery and job routes return 503.
 
 - `schemas/error.ts` — `ErrorSchema` for `{ error: { code, message } }`. Use for all error responses.

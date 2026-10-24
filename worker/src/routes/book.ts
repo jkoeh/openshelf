@@ -414,6 +414,7 @@ app.openapi(deleteRoute, async (c) => {
 		if (!empty) throw new Error("Deletion batch limit reached");
 		await removeCatalogEntry(bucket, author, title);
 		await db.batch([
+			db.prepare("DELETE FROM published_books WHERE author_slug=? AND title_slug=?").bind(author, title),
 			db
 				.prepare(`UPDATE generation_jobs SET state='canceled',stage='deleted',attempts=3,author_slug=NULL,title_slug=NULL,updated_at=?
 				WHERE source_id IN (SELECT source_id FROM source_books WHERE author_slug=? AND title_slug=?)`)

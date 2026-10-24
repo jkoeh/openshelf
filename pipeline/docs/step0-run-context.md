@@ -25,6 +25,9 @@ openshelf-pipeline dag run --epub book.epub --build-id 2a4f9c1b3d8e7f60 --force
 - No `--build-id`: mint a fresh random build as before.
 - `--build-id`: use the caller-provided 16-hex build ID.
 - `--resume`: reuse an existing `run.json` only if immutable inputs match.
+  Reuse completed section audio only when the local completion receipt validates
+  all audio/sync/audit hashes and exact synthesis inputs. Otherwise continue
+  from matching durable heading/body checkpoints. See `step3-tts.md`.
 - `--force`: overwrite `run.json` and downstream artifacts in the selected
   build prefix.
 
@@ -105,3 +108,19 @@ version 2 because existing empty-setting contexts preserve their compatibility.
 
 Mutable upload state is not part of `run.json`; R2 upload idempotency remains
 gated by `rendition-manifest.json`.
+
+## Recovery into an ordinary fresh job
+
+`build_recovery.py` can adopt validated local work into a fresh build issued by
+an ordinary owner generation request. It compares all resume fields except the
+build ID, requires an empty target directory, writes the new `run.json`, and
+copies only hash-validated completed sections or individually validated region
+checkpoints. Direction artifacts retain their original directed text/voices but
+record the new build ID. A local `recovery.json` records the source/target build
+and adopted artifact hashes. Public manifests and publication pointers are never
+copied. The normal consumer must finish every remaining section, publish, and
+pass the Worker's existing lease/publication verification.
+
+This local operation neither changes prior job history nor resets attempts,
+leases, queue limits or daily starts. A running synthesis process must be stopped
+at a durable section boundary before adoption; concurrent writers are prohibited.

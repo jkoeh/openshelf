@@ -30,6 +30,14 @@ the relevant docs first:
 Source access and language rules follow `docs/source-access.md`. All providers
 validate/cache reading EPUBs before audio. Chinese standard jobs use Mandarin
 Qwen3 CustomVoice Serena, shared text units and WhisperX `zh`; expressive jobs remain English-only.
+Owner documents use `pipeline/owner_documents.py` for bounded PDF/DOCX/TXT
+extraction and deterministic EPUB construction. The consumer authenticates raw
+downloads, verifies SHA-256 and the explicit rights/publication acknowledgement,
+then runs the normal local EPUB pipeline. Uploaded originals never become public
+source reading copies. `pypdf` is the only additional extraction dependency;
+DOCX uses standard-library ZIP/XML parsing, rejects DTD/entities in supported XML
+encodings, and executes no macros or external resources. Extraction runs in a
+60-second subprocess; pypdf configuration limits decoded stream sizes and parsing.
 
 For any TTS engine work, start with
 `pipeline/docs/engine-knowledge-base.md`, then open only the relevant adapter
@@ -76,6 +84,17 @@ under `pipeline/src/openshelf/pipeline/engines/`.
   claim capability only when a local `OPENAI_API_KEY` is configured. The key is
   never sent to the Worker, logged, or stored in a job. Both modes use the same
   source-specific rights, EPUB, spoken-text validation, lease, and publication checks.
+  `OPENSHELF_ENGLISH_PYTHON` optionally selects an isolated Python >=3.12 for
+  standard English Kokoro jobs. A bounded probe checks Kokoro, WhisperX >=3.8.4
+  and pipeline dependencies. Invalid configured runtimes do not claim standard
+  English jobs; unconfigured operators retain the current interpreter. Mandarin
+  and expressive routing are independent and their artistic identities stay.
+  Automatic source and owner-document jobs set `OPENSHELF_REQUIRE_COMPLETE_AUDIO=1`:
+  any skipped body chunk fails before publication/completion. Manual DAG runs
+  retain their documented diagnostic partial-output behavior unless opted in.
+  The child receives its exact API base and PC credential in environment variables
+  for the final authenticated D1 catalog sync; it never receives the owner token.
+  Credentials are not printed or written to artifacts.
 - `pipeline/scripts/job-monitor.pyw` launches Windows OpenShelf Studio, a pywebview
   WebView2 window hosting the local dashboard. It reads the
   ignored production owner token for owner-only queue/priority/cancel calls and
@@ -105,6 +124,10 @@ under `pipeline/src/openshelf/pipeline/engines/`.
   synthesis. A killed job's lease expires and can be reclaimed on the next launch
   within the existing three-attempt cap;
   partial output is retained for the existing fixed-build resume contract.
+  The outbound consumer also terminates and waits for the complete synthesis
+  descendant tree on cancellation, lease failure or exceptions, including the
+  Windows virtualenv launcher/base-Python layers. It uses psutil and escalates
+  unresponsive owned descendants to kill after a bounded grace period.
   A startup failure closes all resources already acquired and shows a native
   error message. pywebview>=6,<7 and WebView2 Runtime are required on Windows.
   Its owner API client uses a fixed HTTPS origin and rejects redirects. It never
@@ -153,6 +176,15 @@ under `pipeline/src/openshelf/pipeline/engines/`.
 - `engines/qwen3.py` owns the Mandarin CustomVoice adapter, fixed checkpoint,
   narration instruction and synthesis settings. `requirements-mandarin.txt`
   owns the isolated runtime dependencies. Settings are part of resume identity.
+- `synthesis_checkpoints.py` stores validated, local-only per-region WAV/JSON
+  checkpoints beside a build for interrupted long-section synthesis; it does
+  not publish incomplete sections or change the R2/client contract.
+- `build_recovery.py` adopts validated local completed sections/checkpoints into
+  a fresh ordinary owner job build with equal immutable settings, records a
+  recovery audit, and never changes job attempts or publication pointers.
+- `ops/recover_source_job.py` supervises one ordinary standard Mandarin job,
+  waits for a verified legacy process boundary when requested, adopts validated
+  local work and resumes through the existing capped claim/lease/finish path.
 - Deleted legacy script filenames are not preserved.
 
 ## Tests

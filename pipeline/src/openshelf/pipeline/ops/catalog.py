@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from datetime import datetime, timezone
 from typing import Sequence
 
@@ -145,8 +146,16 @@ def build_catalog(client, bucket: str) -> dict:
     }
 
 
-def build_and_upload_catalog(*, dry_run: bool = False, client=None, bucket: str = R2_BUCKET) -> dict:
-    """Build catalog.json and upload it unless ``dry_run`` is set."""
+def build_and_upload_catalog(*, dry_run: bool = False, client=None, bucket: str = R2_BUCKET,
+                             api_base: str | None = None) -> dict:
+    """Upload the R2 audit artifact and synchronize current D1 publication rows."""
+    api = None
+    if not dry_run:
+        from openshelf.pipeline.job_consumer import JobAPI
+        base = api_base or os.environ.get("OPENSHELF_API_BASE", "")
+        if not base:
+            raise ValueError("Catalog publication requires --api-base or OPENSHELF_API_BASE")
+        api = JobAPI(base, os.environ.get("OPENSHELF_PC_TOKEN", ""))
     if client is None:
         client = make_client()
     catalog = build_catalog(client, bucket)
@@ -167,6 +176,24 @@ def build_and_upload_catalog(*, dry_run: bool = False, client=None, bucket: str 
         CacheControl="public, max-age=60",
     )
     print("Uploaded catalog.json to R2.")
+    keys = [{"author_slug": book["author_slug"], "title_slug": book["title_slug"]}
+            for book in catalog["books"]]
+    for offset in range(0, len(keys), 10):
+        batch = keys[offset:offset + 10]
+        result = api.post("/internal/catalog/sync", {"books": batch})
+        if result.get("synced") != len(batch):
+            raise RuntimeError("Catalog sync did not index every publication; retry after resolving concurrent deletion or missing manifests")
+    print(f"Synchronized {len(keys)} publication(s) to D1.")
+    after = None
+    while True:
+        result = api.post("/internal/catalog/reconcile", {"after": after} if after else {})
+        next_after = result.get("after")
+        if not next_after:
+            break
+        if next_after == after:
+            raise RuntimeError("Catalog reconciliation did not advance its cursor")
+        after = next_after
+    print("Reconciled the D1 publication catalog with R2.")
     return catalog
 
 
@@ -176,8 +203,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         description="Build and upload catalog.json from root R2 manifests.",
     )
     parser.add_argument("--dry-run", action="store_true", help="Print catalog without uploading")
+    parser.add_argument("--api-base", help="Worker /api/v1 URL (or OPENSHELF_API_BASE)")
     args = parser.parse_args(argv)
-    build_and_upload_catalog(dry_run=args.dry_run)
+    build_and_upload_catalog(dry_run=args.dry_run, api_base=args.api_base)
     return 0
 
 

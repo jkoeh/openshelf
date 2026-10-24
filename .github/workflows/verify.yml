@@ -15,7 +15,7 @@ jobs:
           node-version: '22'
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
       - run: npm ci
         working-directory: worker
       - run: npm ci

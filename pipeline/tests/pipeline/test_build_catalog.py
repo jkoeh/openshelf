@@ -44,6 +44,56 @@ class FakeClient:
 
 
 class TestBuildCatalog(unittest.TestCase):
+    def test_upload_syncs_publication_keys_in_bounded_batches_and_requires_api_success(self):
+        books = [{"author_slug": "owner", "title_slug": f"book-{index}"} for index in range(101)]
+        built = {"version": 2, "generated_at": "now", "books": books}
+        client = MagicMock()
+        with patch.dict(os.environ, {"OPENSHELF_API_BASE": "https://worker.example/api/v1", "OPENSHELF_PC_TOKEN": "pc-token-longer-than-twenty-four"}), \
+                patch.object(catalog, "build_catalog", return_value=built), \
+                patch("openshelf.pipeline.job_consumer.JobAPI") as api_class, redirect_stdout(io.StringIO()):
+            api = api_class.return_value
+            api.post.side_effect = lambda path, body: {"synced": len(body["books"])} if path.endswith("/sync") else {"checked": 0, "removed": 0, "after": None}
+            self.assertEqual(catalog.build_and_upload_catalog(client=client), built)
+            api_class.assert_called_once_with("https://worker.example/api/v1", "pc-token-longer-than-twenty-four")
+            self.assertEqual([len(call.args[1]["books"]) for call in api.post.call_args_list if call.args[0].endswith("/sync")], [10] * 10 + [1])
+            self.assertEqual(api.post.call_args_list[-1].args, ("/internal/catalog/reconcile", {}))
+            client.put_object.assert_called_once()
+            api.post.side_effect = RuntimeError("sync failed")
+            with self.assertRaisesRegex(RuntimeError, "sync failed"):
+                catalog.build_and_upload_catalog(client=client)
+            api.post.side_effect = None
+            api.post.return_value = {"synced": 0}
+            with self.assertRaisesRegex(RuntimeError, "every publication"):
+                catalog.build_and_upload_catalog(client=client)
+
+    def test_non_dry_publication_requires_explicit_api_environment_before_writing(self):
+        client = MagicMock()
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "OPENSHELF_API_BASE"):
+                catalog.build_and_upload_catalog(client=client)
+        client.put_object.assert_not_called()
+
+    def test_empty_r2_catalog_still_reconciles_all_existing_d1_rows(self):
+        built = {"version": 2, "generated_at": "now", "books": []}
+        cursor = {"author_slug": "owner", "title_slug": "last-book"}
+        with patch.dict(os.environ, {"OPENSHELF_API_BASE": "https://worker.example/api/v1", "OPENSHELF_PC_TOKEN": "pc-token-longer-than-twenty-four"}), \
+                patch.object(catalog, "build_catalog", return_value=built), \
+                patch("openshelf.pipeline.job_consumer.JobAPI") as api_class, redirect_stdout(io.StringIO()):
+            api = api_class.return_value
+            api.post.side_effect = [{"checked": 10, "removed": 10, "after": cursor}, {"checked": 1, "removed": 1, "after": None}]
+            catalog.build_and_upload_catalog(client=MagicMock())
+            self.assertEqual([call.args for call in api.post.call_args_list], [
+                ("/internal/catalog/reconcile", {}), ("/internal/catalog/reconcile", {"after": cursor})])
+
+    def test_dry_catalog_never_creates_an_api_client(self):
+        built = {"version": 2, "generated_at": "now", "books": []}
+        client = MagicMock()
+        with patch.object(catalog, "build_catalog", return_value=built), \
+                patch("openshelf.pipeline.job_consumer.JobAPI") as api, redirect_stdout(io.StringIO()):
+            self.assertEqual(catalog.build_and_upload_catalog(dry_run=True, client=client), built)
+        api.assert_not_called()
+        client.put_object.assert_not_called()
+
     def test_parse_manifest_key_accepts_only_root_book_manifest(self):
         self.assertEqual(
             catalog.parse_manifest_key("books/franz-kafka/the-trial/manifest.json"),

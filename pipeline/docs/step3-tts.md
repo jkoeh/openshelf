@@ -242,6 +242,32 @@ chunk into multiple directed segments when the LLM decides the chunk needs
 different controls internally; those segments still synthesize and align as one
 reader chunk.
 
+## Local synthesis checkpoints
+
+`synthesis_checkpoints.py` stores completed heading/body synthesis regions under
+`section-NN.checkpoints/` beside the section artifacts. Each region has a float32
+WAV plus JSON containing its input fingerprint, WAV SHA-256, sample rate, words
+and synthesis seam audit. The fingerprint covers the exact directed text/voice,
+engine settings, alignment identity, pause policy and absolute start frame. A
+restart reuses only an exact matching, readable, finite mono waveform whose hash
+and metadata agree. Partial or invalid checkpoints are ignored and regenerated.
+Writes replace temporary files atomically, with JSON committed after audio.
+
+These checkpoints are private local resume artifacts; they are never uploaded
+to R2 and never replace public section audio, sync, or `section_data.json`.
+They retain the same model and narrator identity as `run.json`. Explicit force
+generation bypasses checkpoints. Successful regions remain available after an
+interruption so a long spine section need not repeat hours of completed work.
+
+A completed section also writes `section-NN.complete.json` locally after AAC,
+sync and seam audit have all been committed. It contains their SHA-256 hashes
+and the section input fingerprint. A validated `--resume` invocation skips that
+section only when every hash, original chunk text, alignment metadata and encoded
+duration agree. An incomplete, corrupt or incompatible section regenerates,
+reusing matching region checkpoints. Old sections without completion receipts
+are not silently trusted. Explicit force bypasses both reuse layers. Neither
+completion receipts nor checkpoint WAVs are published.
+
 ## Section Sync Artifact
 
 After section audio is synthesized/aligned and encoded, the pipeline writes one
@@ -573,6 +599,8 @@ word text and clamps its start/end just after the previous emitted word.
 - Empty chunks list: raise `ValueError`
 - Single chunk failure: log warning, mark skipped, continue
 - All chunks fail: raise `RuntimeError`
+- Opt-in `OPENSHELF_REQUIRE_COMPLETE_AUDIO=1` fails the full DAG before manifests
+  or upload when any body chunk was skipped; local completed regions are kept.
 - Failed alignment: return audio with empty word list for that chunk
 - Failed steered segment: retry original text before skipping the chunk
 - Missing optional engine package, model load failure, or missing F5 reference
