@@ -178,7 +178,7 @@ class OwnerDocumentTests(unittest.TestCase):
     def test_invalid_english_runtime_does_not_advertise_standard_english(self):
         from openshelf.pipeline import job_consumer
         api = SimpleNamespace(post=MagicMock(return_value={"job": None}))
-        with patch.object(job_consumer, "JobAPI", return_value=api), patch.object(job_consumer, "english_runtime", side_effect=ValueError("unavailable")), patch.object(job_consumer, "mandarin_runtime", return_value="mandarin-python"), patch.object(job_consumer, "document_runtime_ready", return_value=True):
+        with patch.object(job_consumer, "JobAPI", return_value=api), patch.object(job_consumer, "english_runtime", side_effect=ValueError("unavailable")), patch.object(job_consumer, "mandarin_runtime", return_value="mandarin-python"), patch.object(job_consumer, "document_runtime_ready", return_value=True), patch.object(job_consumer, "production_recovery_active", return_value=False):
             self.assertEqual(job_consumer.main(["--api-base", "https://example.com/api/v1", "--once"]), 0)
         capabilities = api.post.call_args.args[1]
         self.assertFalse(capabilities["english"])

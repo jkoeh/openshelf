@@ -38,6 +38,13 @@ active job or synthesis child, preventing a second GPU producer. Compatible
 work is adopted into the fresh build with `build_recovery.py`. No publication
 manifests are copied; the entire new job must finish normally.
 
+Ordinary consumers, including a consumer opened by Studio during recovery,
+wait before claiming while an exact same-checkout recovery command holds its
+live PID/start-time state lock. Foreign working directories, unrelated commands
+and stale/reused PID locks do not block the queue. This check is only in normal
+queue polling; the supervisor's targeted claim and `process_job` path continue.
+Closing Studio's ordinary idle consumer does not stop the independent recovery.
+
 Example (the PID is checked against the build command, never trusted alone):
 
 ```text

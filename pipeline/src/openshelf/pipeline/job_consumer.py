@@ -622,6 +622,58 @@ def english_runtime() -> str | None:
     return configured
 
 
+def production_recovery_active(root: Path = PROJECT_ROOT) -> bool:
+    """Recognize only a live, PID-locked recovery owned by this checkout."""
+    import psutil
+    root = root.resolve()
+    script = root / "pipeline/scripts/openshelf-pipeline.py"
+
+    def option(arguments, flag):
+        values = [argument.split("=", 1)[1] for argument in arguments if argument.startswith(flag + "=")]
+        values += [arguments[index + 1] for index, argument in enumerate(arguments[:-1]) if argument == flag]
+        return values[0] if len(values) == 1 else None
+
+    for process in psutil.process_iter(["cmdline", "create_time"]):
+        try:
+            arguments = process.info["cmdline"] or []
+            if not any(arguments[index:index + 2] == ["ops", "recover-source-job"]
+                       for index in range(len(arguments) - 1)):
+                continue
+            cwd = Path(process.cwd()).resolve()
+            if cwd != root:
+                continue
+            prefix = arguments[:arguments.index("ops")]
+            entrypoint = any((cwd / argument).resolve() == script for argument in prefix
+                             if Path(argument).name == "openshelf-pipeline.py")
+            module = any(prefix[index:index + 2] == ["-m", "openshelf.pipeline.cli"]
+                         for index in range(len(prefix) - 1))
+            console = any(Path(argument).resolve() == root / ".venv/Scripts/openshelf-pipeline.exe"
+                          for argument in prefix)
+            if not (entrypoint or module or console):
+                continue
+            source_build = option(arguments, "--source-build")
+            state_file = option(arguments, "--state-file")
+            if not source_build or not state_file:
+                continue
+            source_build = (cwd / source_build).resolve()
+            state_file = (cwd / state_file).resolve()
+            if (not source_build.is_relative_to(root / "audio")
+                    or not re.fullmatch(r"[0-9a-f]{16}", source_build.name)
+                    or not state_file.is_relative_to(root / "audio")):
+                continue
+            lock = state_file.with_suffix(state_file.suffix + ".lock")
+            if lock.stat().st_size > 4096:
+                continue
+            identity = json.loads(lock.read_text(encoding="utf-8"))
+            if (identity.get("pid") == process.pid
+                    and identity.get("created") == process.info["create_time"]
+                    and process.is_running()):
+                return True
+        except (psutil.Error, OSError, ValueError, TypeError, KeyError):
+            continue
+    return False
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="openshelf-pipeline books consume-jobs")
     parser.add_argument("--api-base", required=True, help="Worker URL including /api/v1")
@@ -643,8 +695,20 @@ def main(argv=None) -> int:
         print("Configured English runtime is unavailable; standard English jobs remain queued", file=sys.stderr)
     if args.sync_pages:
         print(f"Indexed {sync_gutenberg(api, args.sync_pages)} Gutenberg editions")
+    recovery_paused = False
     while True:
         try:
+            if production_recovery_active():
+                if not recovery_paused:
+                    print("Local source recovery owns audio generation; ordinary consumer is waiting", flush=True)
+                    recovery_paused = True
+                if args.once:
+                    return 0
+                time.sleep(45)
+                continue
+            if recovery_paused:
+                print("Local source recovery finished; ordinary queue polling resumed", flush=True)
+                recovery_paused = False
             job = api.post("/internal/generation-jobs/claim", {
                 "expressive": bool(OPENAI_API_KEY), "mandarin": bool(mandarin_python), "documents": documents_ready, "english": english_ready})["job"]
             if job:

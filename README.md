@@ -359,7 +359,10 @@ The production Worker reads `worker/wrangler.toml`, where `[env.production]` dep
 - Production branch: `main`
 - Build command: `npm run build:web`
 - Output directory: `dist`
-- Environment variable: `EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1`
+- Set the Pages production build variable `EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1`.
+- Set the Pages preview build variable `EXPO_PUBLIC_API_BASE=https://openshelf-api-staging.johnkoeh.workers.dev/api/v1`.
+  Each environment also needs the public Google client ID above. A Pages build
+  fails when its API base is missing, instead of publishing a localhost client.
 - Owner login build variable: `EXPO_PUBLIC_GOOGLE_CLIENT_ID` (the same public
   Google OAuth Web client ID configured as the Worker's `GOOGLE_CLIENT_ID`).
 

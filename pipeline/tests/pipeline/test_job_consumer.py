@@ -89,6 +89,9 @@ class ConsumerTests(unittest.TestCase):
             self.assertEqual(api.posts[-1][1]["title_slug"], se.title_slug("Alice", source_id))
 
     def setUp(self):
+        recovery_patcher = patch.object(consumer, "production_recovery_active", return_value=False)
+        recovery_patcher.start()
+        self.addCleanup(recovery_patcher.stop)
         metadata_patcher = patch("openshelf.pipeline.epub_parser.read_book_metadata", return_value={"language": "en"})
         metadata_patcher.start()
         self.addCleanup(metadata_patcher.stop)
@@ -308,6 +311,55 @@ class ConsumerTests(unittest.TestCase):
                 consumer.main(["--api-base", "https://example.com/api/v1", "--sync-pages", "11"])
         self.assertEqual(exit_status.exception.code, 2)
         self.assertIn("--sync-pages must be 0..10", errors.getvalue())
+
+
+class RecoveryClaimGuardTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.state = self.root / "audio/source-recovery.json"
+        self.state.parent.mkdir()
+        self.lock = self.state.with_suffix(".json.lock")
+        self.lock.write_text(json.dumps({"pid": 321, "created": 123.5}), encoding="utf-8")
+        self.arguments = ["python", "-u", "pipeline/scripts/openshelf-pipeline.py", "ops", "recover-source-job",
+                          "--source-build", "audio/author/title/audio/qwen3-serena/builds/aaaaaaaaaaaaaaaa",
+                          "--state-file", "audio/source-recovery.json"]
+        self.process = SimpleNamespace(pid=321, info={"cmdline": self.arguments, "create_time": 123.5},
+                                       cwd=lambda: str(self.root), is_running=lambda: True)
+
+    def active(self):
+        with patch("psutil.process_iter", return_value=[self.process]):
+            return consumer.production_recovery_active(self.root)
+
+    def test_exact_workspace_recovery_and_pid_lock_pause_claims(self):
+        self.assertTrue(self.active())
+        self.lock.write_text(json.dumps({"pid": 321, "created": 100.0}), encoding="utf-8")
+        self.assertFalse(self.active())
+
+    def test_foreign_workspace_or_unrelated_process_does_not_pause(self):
+        self.process.cwd = lambda: str(self.root / "foreign")
+        self.assertFalse(self.active())
+        self.process.cwd = lambda: str(self.root)
+        self.process.info["cmdline"] = ["python", "pipeline/scripts/openshelf-pipeline.py", "ops", "doctor"]
+        self.assertFalse(self.active())
+
+    def test_foreign_entrypoint_or_state_path_does_not_pause(self):
+        self.process.info["cmdline"] = [argument.replace("pipeline/scripts/", "foreign/scripts/")
+                                        for argument in self.arguments]
+        self.assertFalse(self.active())
+        self.process.info["cmdline"] = [argument.replace("audio/source-recovery.json", "../foreign.json")
+                                        for argument in self.arguments]
+        self.assertFalse(self.active())
+
+    def test_ordinary_once_consumer_does_not_claim_during_recovery(self):
+        with patch.object(consumer, "JobAPI", return_value=FakeAPI()) as connect, \
+                patch.object(consumer, "production_recovery_active", return_value=True), \
+                patch.object(consumer, "mandarin_runtime", return_value=None), \
+                patch.object(consumer, "english_runtime", return_value=None), \
+                patch.object(consumer, "document_runtime_ready", return_value=True):
+            self.assertEqual(consumer.main(["--api-base", "https://example.com/api/v1", "--once"]), 0)
+        self.assertEqual(connect.return_value.posts, [])
 
 
 class RightsTests(unittest.TestCase):

@@ -75,6 +75,9 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
   wait message while the PC stops that work at its next heartbeat.
 - Hooks in `hooks/` bridge lib logic to React components
 - API base URL via `EXPO_PUBLIC_API_BASE` env var (defaults to localhost:8787)
+- Pages builds require an explicit API base: production uses the production
+  Worker, previews use the staging Worker. `build:web` rejects a missing API base
+  when `CF_PAGES` is set; the localhost default remains for local development.
 - Google owner sign-in uses the public `EXPO_PUBLIC_GOOGLE_CLIENT_ID` from Pages
   production/preview build variables or ignored `client/.env` in local development.
   It must match the Worker's `GOOGLE_CLIENT_ID`; README.md records the configured ID.

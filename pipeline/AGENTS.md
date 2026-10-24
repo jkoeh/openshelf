@@ -185,6 +185,9 @@ under `pipeline/src/openshelf/pipeline/engines/`.
 - `ops/recover_source_job.py` supervises one ordinary standard Mandarin job,
   waits for a verified legacy process boundary when requested, adopts validated
   local work and resumes through the existing capped claim/lease/finish path.
+  Ordinary consumer polling waits when that exact same-workspace recovery
+  command owns a live PID/start-time state lock, so opening Studio cannot start
+  another GPU producer. The supervisor's targeted job processing is independent.
 - Deleted legacy script filenames are not preserved.
 
 ## Tests
