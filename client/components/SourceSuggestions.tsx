@@ -153,7 +153,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
           </Text>
           <Text style={{ color: palette.text, fontSize: 15, marginTop: 6 }}>{book.author}</Text>
           <Text style={{ color: palette.muted, fontSize: 13, marginTop: 8, marginBottom: 14 }}>
-            {book.source_id.startsWith("standardebooks:") ? "Standard Ebooks" : `Gutenberg #${book.source_id.split(":")[1]}`}
+            {book.source_id.startsWith("standardebooks:") ? "Standard Ebooks" : book.source_id.startsWith("wikisource:") ? "Wikisource" : `Gutenberg #${book.source_id.split(":")[1]}`}{book.language === "zh" ? " · Chinese · Mandarin audio" : ""}
           </Text>
           {book.indexed === false && <Text style={{ color: palette.muted, marginBottom: 14 }}>
             Read now. Audio will be available after this edition is added to the catalog.
@@ -192,7 +192,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
               </Text>
             </Pressable>
           )}
-          {adminToken && book.indexed !== false && !active && !(failed && mode === "expressive") && (
+          {adminToken && book.language !== "zh" && book.indexed !== false && !active && !(failed && mode === "expressive") && (
             pendingExpressiveSource === book.source_id ? <View style={{ marginTop: 12, padding: 14,
               borderWidth: 1, borderColor: palette.border, borderRadius: 9 }}>
               <Text style={{ color: palette.text, lineHeight: 21 }}>

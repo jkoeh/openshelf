@@ -5,6 +5,7 @@ import urllib.parse
 
 from openshelf.config import GUTENDEX_API
 from openshelf.scrapers.http import make_request
+from openshelf.pipeline.gutenberg_source import mirror_url
 
 
 def gutenberg_search(author=None, language=None, subject=None, delay=2):
@@ -32,6 +33,10 @@ def gutenberg_search(author=None, language=None, subject=None, delay=2):
         for book in body.get("results", []):
             epub_url = book.get("formats", {}).get("application/epub+zip")
             if not epub_url:
+                continue
+            try:
+                epub_url = mirror_url(epub_url, f"gutenberg:{book.get('id')}")
+            except ValueError:
                 continue
             authors = book.get("authors", [])
             author_name = authors[0]["name"] if authors else "unknown"

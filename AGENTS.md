@@ -2,7 +2,7 @@
 
 ## What This Project Is
 
-**OpenShelf** is an open source public domain audiobook platform. It downloads EPUB books from Project Gutenberg and Standard Ebooks, converts them to AI-narrated audio through swappable TTS engines, aligns final audio with WhisperX word timestamps, and serves it globally via Cloudflare R2.
+**OpenShelf** is an open source public domain audiobook platform. It imports validated English and Chinese editions from approved Gutenberg mirrors/bulk access, Standard Ebooks and Wikisource API snapshots, caches reading EPUBs independently of audio, converts them to AI-narrated audio through swappable TTS engines, aligns final audio with WhisperX word timestamps, and serves it globally via Cloudflare R2. `pipeline/docs/source-access.md` specifies identity, provenance, rights, caching and language support.
 
 ## End-to-End Flow
 
@@ -15,7 +15,7 @@ flowchart LR
         P1[EPUB] --> P2[parse_epub<br/>typed Sections + heading/body ContentElements]
         P2 --> P3[text_chunker<br/>body chunks only]
         P3 --> P3B[voice_director<br/>registry + speaker spans + engine-aware direction]
-        P3B --> P4[TTSEngine adapter<br/>Kokoro, F5-TTS, or Chatterbox]
+        P3B --> P4[TTSEngine adapter<br/>Kokoro, Qwen3, F5-TTS, or Chatterbox]
         P4 -->|heading + body WAV<br/>+ region word timestamps<br/>+ synthesis seam audit| P5[encode_to_aac<br/>m4a]
         P3B --> P6A[character_registry.json<br/>voices + aliases]
         P3B --> P6B[voice_direction.json<br/>speaker + performance audit]
@@ -42,7 +42,7 @@ flowchart LR
         R_M4A[audio/{rendition}/builds/{build}/<br/>section-NN.m4a]
         R_CD[audio/{rendition}/builds/{build}/<br/>section_data.json]
         R_CAT[catalog.json]
-        R_SOURCE[source-epubs/standardebooks/{source-hash}/book.epub<br/>verified reading cache]
+        R_SOURCE[source-epubs/{provider}/{source-hash}/book.epub<br/>validated reading cache + provenance/hash]
     end
 
     R_JOBS[(D1 source index + generation jobs)]
@@ -70,9 +70,9 @@ flowchart LR
         W_EPUB[GET /books/:a/:t/epub]
         W_SPEC[GET /openapi.json + /docs<br/>auto-generated from Zod schemas]
         W_SEARCH[GET /source-books<br/>bounded autocomplete]
-        W_SOURCE_EPUB[GET /source-books/:source_id/epub<br/>source EPUB redirect or inline stream]
+        W_SOURCE_EPUB[GET /source-books/:source_id/epub<br/>R2 reading copy independent of upstream/audio]
         W_ADMIN[GET /admin/me<br/>verify Google owner]
-        W_JOBS[Public Kokoro requests/status<br/>Owner cancel/retry/regenerate/priority<br/>Owner bounded queue and recent history<br/>Owner OpenAI-directed Chatterbox requests<br/>PC claim/heartbeat/finish]
+        W_JOBS[Public standard audio requests/status<br/>Owner cancel/retry/regenerate/priority<br/>Owner bounded queue and recent history<br/>Owner OpenAI-directed Chatterbox requests<br/>PC claim/heartbeat/finish]
     end
 
     R_CAT --> W_CAT
@@ -128,9 +128,11 @@ flowchart LR
 
     subgraph PC[Owner PC — outbound consumer]
         J_MON[Windows Studio · embedded local dashboard<br/>owns server + consumer process tree<br/>priority + cancel + retry + consumer status]
-        J1[Poll + lease job] --> J2[Exact Gutenberg or Standard Ebooks EPUB]
+        J_IMPORT[Bulk Gutenberg / Standard Ebooks / Wikisource API<br/>verify identity, rights, language, order + provenance] --> R_SOURCE
+        J_IMPORT --> R_JOBS
+        J1[Poll + lease job] --> J2[Cached exact EPUB or approved source access]
         J2 --> J2R[Verify source-specific public-domain rights + EPUB identity]
-        J2R --> J3[Standard: Kokoro<br/>Expressive: OpenAI direction + Chatterbox<br/>both: WhisperX + R2]
+        J2R --> J3[Standard: English Kokoro / Mandarin Qwen3 Serena<br/>Expressive: English OpenAI + Chatterbox<br/>language-aware WhisperX + R2]
     end
     J1 <--> W_JOBS
     J_MON <--> W_JOBS
@@ -173,10 +175,10 @@ Notes:
   entry count, and parsed source spoken words before starting LLM or synthesis.
   Standard and expressive jobs have no word-count limit or `--max-words` option.
   Parsed spoken text must still be nonempty, including spoken headings.
-- Source search offers one **Read now** action. It opens a source EPUB reader immediately, fetches the validated EPUB with `inline=1`, and independently creates or follows an audio job. Failed/canceled audio and queue/start limits never block text. The reader follows the OPF spine and renders plain text. An animated owl shows stage milestones (0% queued, 25% preparation, 50% synthesis/alignment/encoding/upload, 100% complete), honors reduced motion, and becomes Start Listening when published. The default EPUB endpoint still redirects for direct downloads; inline mode streams through the API without credentials; upstream redirects are bounded and revalidated against the exact source ID. The annotated R2 EPUB endpoint remains available; the UI uses Read now instead of download buttons.
-- Generation requests for the fixed local Kokoro voice may be public, subject to
+- Source search offers one **Read now** action. It opens a source EPUB reader immediately, fetches the validated R2 EPUB with `inline=1`, and independently creates or follows an audio job. Failed/canceled audio and queue/start limits never block text. The reader follows the OPF spine and renders plain text. An animated owl shows stage milestones (0% queued, 25% preparation, 50% synthesis/alignment/encoding/upload, 100% complete), honors reduced motion, and becomes Start Listening when published. Cached copies are served for both inline and direct downloads; inline misses fail explicitly without upstream access. Legacy direct Gutenberg/Standard Ebooks downloads may redirect through approved source access. The PC bounds and validates upstream redirects against the exact source ID. The annotated R2 EPUB endpoint remains available; the UI uses Read now instead of download buttons.
+- Generation requests for fixed local English Kokoro or Mandarin Qwen3 Serena voices may be public, subject to
   the atomic daily-start and queue caps. An expressive request is owner-only and
-  selects a fixed Chatterbox `af_heart` rendition with batched OpenAI emotion
+  selects an English-only fixed Chatterbox `af_heart` rendition with batched OpenAI emotion
   direction. The OpenAI key remains on the PC; the browser cannot select an
   arbitrary model, engine, voice, or prompt. Browser admin actions accept a Google
   Identity Services ID token only after the Worker verifies its signature,
@@ -264,7 +266,7 @@ audio/                  # (gitignored) generated audio files
 plans/                  # design docs and plans
   astra-prototype/      # standalone Astra game experiment; SPEC.md, static dist/, local model preview
 design-qa.md             # catalog visual comparison and responsive QA record
-.github/workflows/      # offline API, consumer/monitor, and headless browser CI gate
+.github/workflows/      # full offline Python/API/client and browser regression gates
 scripts/                # PC setup and local monitor launcher
 ```
 
@@ -277,6 +279,23 @@ npm run dev:window:r2 # Windows-safe dev start; local worker + client with remot
 npm run test         # Run worker + client tests
 npm run typecheck    # Type-check worker + client
 ```
+
+### Regression gates
+
+CI installs CPU-only test dependencies from `pipeline/requirements-test.txt` and
+runs the full offline Python suite with `python -m unittest discover -s pipeline/tests -t . -v`.
+Model downloads, GPU synthesis and live alignment remain opt-in integration QA.
+The client has mocked browser flows (`npm run test:e2e`) and a separate real API
+browser suite (`npm run test:e2e:integration`, both from `client/`). The latter
+uses a temporary local Worker/D1/R2 harness under `worker/tests/browser/`, applies
+all migrations, and never loads production credentials or remote bindings.
+It checks cached Chinese/English reading with upstream unavailable, audio job
+routing/publication, original text/order, real media playback, word seek/highlight,
+section advance and isolation from later builds. A fixture producer supplies
+EPUB/AAC/alignment artifacts in place of the PC; this gate does not certify
+model quality or replace the pipeline's validation tests.
+Playback controls expose accessible Play/Pause and previous/next section labels
+so browser checks operate the same controls as readers.
 
 ## Conventions
 
@@ -299,7 +318,7 @@ npm run typecheck    # Type-check worker + client
 
 ### Standard Ebooks source discovery
 
-Source search includes indexed Gutenberg and Standard Ebooks editions. Standard
+Source search includes indexed Gutenberg, Standard Ebooks and Wikisource editions. Standard
 Ebooks IDs are `standardebooks:<author>/<title>[/<contributors>...]`, preserving
 the canonical edition path. The PC imports at most 1,000 editions per run through
 `books sync-catalog --source standard-ebooks`, with a two-second request delay,
@@ -317,20 +336,22 @@ the edition. The client labels the source of each edition.
 Reading and generation allow only HTTPS EPUB URLs matching the exact edition on
 `standardebooks.org`; redirects are bounded and revalidated. No download-cookie
 gate is bypassed. The official exact-file `?source=download` continuation is
-allowed; other query strings are rejected. An upstream HTML response fails explicitly. Before synthesis,
-the PC rechecks the edition page, verifies the EPUB OPF identifier matches that
+allowed; other query strings are rejected. An upstream HTML response fails explicitly. Before caching,
+the PC checks the edition page, verifies the EPUB OPF identifier matches that
 edition and its rights dedicate the edition to the public domain via CC0.
 Standard Ebooks rejects direct Cloudflare fetches with HTTP 403. During a real
 catalog import the PC downloads and verifies each exact EPUB before indexing it,
 then sends it to the PC-authenticated internal source-EPUB upload route. The
 Worker stores it at `source-epubs/standardebooks/{sha256(source_id)}/book.epub`.
 Uploads are bounded to 32 MiB, require EPUB ZIP magic, and are accepted only for
-an indexed Standard Ebooks ID. Inline reading streams this cache with `no-store`;
+an indexed source ID (all three providers use the same authenticated cache route).
+Reading streams this cache with `no-store` independently of upstream availability;
 missing caches fail explicitly. On a cache miss (404/502), the reader fetches
 the exact official Standard Ebooks EPUB directly, using its canonical source ID
 and the same 32 MiB bound. Direct requests omit credentials and reject redirects;
 HTTP 403/429 is shown without retrying automatically. The D1/R2 index is a fast
-path, not a prerequisite for text reading. Direct download requests retain the source redirect.
+path, not a prerequisite for text reading of live Standard Ebooks suggestions.
+Direct downloads serve cached copies first and redirect only on a legacy cache miss.
 `--dry-run` validates metadata without downloading or uploading EPUBs. Source
 cache bytes are independent of audiobook publication and are retained on refresh.
 Imports check the cache with a HEAD request before downloading an EPUB again.
@@ -339,6 +360,21 @@ completed entries; operators may resume later without repeating cached downloads
 Standard Ebooks publication slugs append `-se-` plus the first 12 hex characters
 of SHA-256 of the source ID; Gutenberg retains `-g<id>`. Both generation modes
 share existing limits, leases, resume behavior, and publication checks.
+
+### Gutenberg, Wikisource and Chinese source access
+
+`pipeline/docs/source-access.md` is the source-access spec. Gutenberg bulk imports
+support English and Chinese and use the listed HTTPS mirror or a local rsync
+collection. Wikisource imports use curated API snapshots pinned to root/chapter
+revisions, explicit edition order and verified U.S. rights evidence. Cached
+editions retain provenance and content hashes. Consumer jobs validate cached
+hashes, embedded rights/identity and language before synthesis; legacy uncached
+Gutenberg/Standard Ebooks jobs also recheck upstream rights. Chinese standard
+jobs use Qwen3-TTS 1.7B CustomVoice Serena (`qwen3-serena`) and WhisperX `zh`.
+The PC uses an isolated Mandarin Python runtime, advertises Mandarin claim
+capability only when configured, and pins checkpoint/settings in `run.json`.
+Existing Kokoro Mandarin renditions retain their identity. Chinese source script and punctuation
+are retained in reading and sync. Expressive generation remains English-only.
 
 ## Docs-First Workflow (mandatory)
 

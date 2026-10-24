@@ -12,6 +12,8 @@ export interface CatalogBook {
 }
 
 export interface SourceBook {
+  language?: "en" | "zh";
+  reading_cached?: boolean;
   indexed?: boolean;
   source_id: string;
   title: string;

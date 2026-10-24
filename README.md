@@ -270,11 +270,14 @@ $env:OPENSHELF_PC_TOKEN = (Get-Content worker/.secrets/prod-pc-token -Raw).Trim(
 .\.venv\Scripts\python.exe pipeline/scripts/openshelf-pipeline.py books sync-catalog --catalog download/pg_catalog.csv.gz --rights-archive download/rdf-files.tar.bz2 --api-base https://openshelf-api.johnkoeh.workers.dev/api/v1 --max-books 500
 ```
 
-This imports English text metadata in batches of 50;
-it does not claim a job or invoke the GPU. Import checks the official RDF
-archive for an explicit US public-domain marker and a matching EPUB URL;
-the PC checks official RDF and the downloaded EPUB's own rights notice before
-synthesis. Unknown or copyrighted records fail
+This imports English and Chinese editions in bounded requests of at most 50,
+validating and caching EPUB reading copies independently of audio. Use
+`--language zh` for Chinese-only imports or `--dry-run` to inspect metadata
+without writes. It does not claim a job or invoke the GPU. Import checks the
+official RDF archive for an explicit US public-domain marker, matching ID,
+language and EPUB URL, then downloads through the approved Gutenberg mirror
+or a local rsync collection and checks embedded identity/rights. Cached consumer
+jobs verify the copy's hash, identity and language before synthesis. Unknown or copyrighted records fail
 closed. Gutenberg's marker establishes U.S. public-domain status, not rights in
 every country. OpenShelf does not geographically restrict public reading; the
 operator remains responsible for distribution rights outside the U.S. Manual
@@ -311,8 +314,25 @@ Offline API, PC, and headless browser checks run in `.github/workflows/verify.ym
 The staging acceptance run covered index sync, autocomplete, protected creation,
 PC claim, GPU synthesis and alignment, R2 publication, job completion, search
 availability, section data, and ranged audio for *The Tale of Peter Rabbit*
-(Gutenberg #14838, 6.0 minutes). The browser automation covers the client flow
-against a mocked API; the live run used the Worker and PC CLI.
+(Gutenberg #14838, 6.0 minutes). The mocked browser suite covers UI states, owner
+controls and source fallbacks. `cd client; npm run test:e2e:integration` additionally
+runs the browser against the real Worker with temporary local D1/R2 storage and
+all migrations applied. It checks English/Chinese cached reading while upstream
+is blocked, language-aware claim/publication, AAC playback, highlighting,
+tap-to-seek, section order/advance and rendition/build isolation. A fixture
+producer stands in for the PC's import, synthesis and alignment; browser API
+requests, job transitions and storage are real. The test harness under
+`worker/tests/browser/` has no production bindings or credentials. Both browser
+suites run in CI; GPU/WhisperX acceptance stays a separate release check.
+
+For a clean offline Python test environment, install CPU PyTorch, then the test
+dependencies (do this in a separate environment to retain a GPU installation):
+
+```text
+python -m pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+python -m pip install -r pipeline/requirements-test.txt
+python -m unittest discover -s pipeline/tests -t . -v
+```
 
 ## Deployment
 

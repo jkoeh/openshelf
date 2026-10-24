@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:integration": "playwright test --config playwright.integration.config.ts",
     "build:web": "expo export --platform web",
     "build:ios": "eas build --platform ios",
     "build:android": "eas build --platform android"

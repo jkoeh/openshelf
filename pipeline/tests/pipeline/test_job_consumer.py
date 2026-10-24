@@ -30,6 +30,9 @@ class FakeAPI:
         self.posts.append((path, payload))
         return {"ok": True}
 
+    def source_epub_cached(self, _source_id):
+        return False
+
 
 class FakeChild:
     returncode = 0
@@ -84,6 +87,9 @@ class ConsumerTests(unittest.TestCase):
             self.assertEqual(api.posts[-1][1]["title_slug"], se.title_slug("Alice", source_id))
 
     def setUp(self):
+        metadata_patcher = patch("openshelf.pipeline.epub_parser.read_book_metadata", return_value={"language": "en"})
+        metadata_patcher.start()
+        self.addCleanup(metadata_patcher.stop)
         patcher = patch.object(consumer, "verify_public_domain")
         self.rights = patcher.start()
         self.addCleanup(patcher.stop)
@@ -158,7 +164,7 @@ class ConsumerTests(unittest.TestCase):
                                          device="cuda")
             popen.assert_not_called()
             self.rights.assert_called_once_with("gutenberg:11")
-            self.epub_rights.assert_called_once_with(epub)
+            self.epub_rights.assert_called_once_with(epub, "gutenberg:11")
             self.assertEqual(api.posts[-1][1]["error_code"], "ValueError")
 
     def test_spoken_text_accepts_large_books_and_counts_headings(self):
@@ -250,10 +256,11 @@ class ConsumerTests(unittest.TestCase):
                 return {"job": None}
         for key, expected in [("", False), ("test-local-key", True)]:
             with self.subTest(configured=expected), patch.object(consumer, "OPENAI_API_KEY", key), \
-                    patch.object(consumer, "JobAPI", return_value=EmptyQueue()) as connect:
+                    patch.object(consumer, "JobAPI", return_value=EmptyQueue()) as connect, \
+                    patch.object(consumer, "mandarin_runtime", return_value=None):
                 self.assertEqual(consumer.main(["--api-base", "https://example.com/api/v1", "--once"]), 0)
                 request = connect.return_value.posts[0]
-                self.assertEqual(request, ("/internal/generation-jobs/claim", {"expressive": expected}))
+                self.assertEqual(request, ("/internal/generation-jobs/claim", {"expressive": expected, "mandarin": False}))
                 self.assertNotIn(key or "unconfigured", str(request))
 
     def test_rejected_heartbeat_stops_pipeline_immediately(self):
@@ -374,7 +381,11 @@ class RightsTests(unittest.TestCase):
                     "formats": {"application/epub+zip":
                                 f"https://www.gutenberg.org/ebooks/{number}.epub.images"}}
         page = {"results": [record(11, False), record(12, True), record(13, None)], "next": None}
-        with patch.object(consumer.urllib.request, "urlopen", return_value=FakeResponse(json.dumps(page).encode())):
+        def cache_book(api, book):
+            api.post("/internal/source-books/sync", {"books": [book]})
+        with patch.object(consumer.urllib.request, "urlopen", return_value=FakeResponse(json.dumps(page).encode())), \
+                patch("openshelf.pipeline.source_catalog.cache_book", side_effect=cache_book), \
+                patch.object(consumer, "verify_public_domain", return_value={"rights_statement": "Public domain in the USA."}):
             api = FakeAPI()
             self.assertEqual(consumer.sync_gutenberg(api, 1), 1)
         self.assertEqual([item["source_id"] for item in api.posts[0][1]["books"]], ["gutenberg:11"])

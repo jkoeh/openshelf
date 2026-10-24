@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Sequence
 
 
-_ACCELERATOR_REQUIRED_ENGINES = {"chatterbox", "chatterboxtts"}
+_ACCELERATOR_REQUIRED_ENGINES = {"chatterbox", "chatterboxtts", "qwen3", "qwen3tts"}
 
 
 @dataclass
@@ -146,14 +146,14 @@ def run_gpu_preflight(
         messages.append(PreflightMessage(
             "error",
             (
-                "Chatterbox auto device resolved to CPU. Install/use a GPU-capable "
+                f"{'Qwen3' if normalize_engine_name(engine) in {'qwen3', 'qwen3tts'} else 'Chatterbox'} auto device resolved to CPU. Install/use a GPU-capable "
                 "PyTorch package or force the slow path with --device cpu."
             ),
         ))
     if requested == "cpu" and requires_accelerator:
         messages.append(PreflightMessage(
             "warning",
-            "Chatterbox CPU was explicitly selected; full-book runs are usually very slow.",
+            f"{'Qwen3' if normalize_engine_name(engine) in {'qwen3', 'qwen3tts'} else 'Chatterbox'} CPU was explicitly selected; full-book runs are usually very slow.",
         ))
 
     model_devices: list[str] = []
@@ -163,7 +163,7 @@ def run_gpu_preflight(
                 from openshelf.pipeline.engines import create_engine
 
                 engine_factory = create_engine
-            engine_obj = engine_factory(engine, device=resolved)
+            engine_obj = engine_factory(engine, device=resolved, **({"language": "zh"} if normalize_engine_name(engine) in {"qwen3", "qwen3tts"} else {}))
             runtime_loader = getattr(engine_obj, "_runtime", None)
             runtime = runtime_loader() if callable(runtime_loader) else engine_obj
             model_devices = sorted(_collect_model_devices(runtime))

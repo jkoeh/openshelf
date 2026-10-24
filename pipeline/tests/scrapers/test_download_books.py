@@ -102,8 +102,9 @@ class TestGutenbergSearch(unittest.TestCase):
     def _api_page(self, results, next_url=None):
         return json.dumps({"results": results, "next": next_url}).encode()
 
-    def _book(self, title="A Book", author="Author Name", epub_url="http://x.epub"):
+    def _book(self, title="A Book", author="Author Name", epub_url="https://www.gutenberg.org/ebooks/11.epub.images"):
         entry = {
+            "id": 11,
             "title": title,
             "authors": [{"name": author}] if author is not None else [],
             "formats": {},
@@ -117,7 +118,7 @@ class TestGutenbergSearch(unittest.TestCase):
         mock_req.return_value = self._api_page([self._book()])
         results = list(gutenberg.gutenberg_search(delay=0))
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0], ("Author Name", "A Book", "http://x.epub"))
+        self.assertEqual(results[0], ("Author Name", "A Book", "https://gutenberg.pglaf.org/cache/epub/11/pg11-images.epub"))
 
     @patch.object(gutenberg, "make_request")
     def test_no_epub_skipped(self, mock_req):
@@ -241,9 +242,16 @@ class TestSeSearch(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestDownloadBook(unittest.TestCase):
+    def setUp(self):
+        from openshelf.pipeline import job_consumer
+        self.patches = [patch.object(job_consumer, "verify_public_domain"), patch.object(job_consumer, "check_epub_rights")]
+        for patcher in self.patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def test_dry_run(self):
         result = http.download_book(
-            "Author", "Title", "http://x.epub", "/tmp/fake", dry_run=True
+            "Author", "Title", "https://www.gutenberg.org/ebooks/11.epub", "/tmp/fake", dry_run=True
         )
         self.assertTrue(result)
 
@@ -251,51 +259,47 @@ class TestDownloadBook(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             author_dir = os.path.join(tmpdir, "author")
             os.makedirs(author_dir)
-            filepath = os.path.join(author_dir, "title.epub")
+            filepath = os.path.join(author_dir, "title-g11.epub")
             with open(filepath, "wb") as f:
                 f.write(b"existing")
-            result = http.download_book("Author", "Title", "http://x.epub", tmpdir)
+            result = http.download_book("Author", "Title", "https://www.gutenberg.org/ebooks/11.epub", tmpdir)
             self.assertTrue(result)
             with open(filepath, "rb") as f:
                 self.assertEqual(f.read(), b"existing")
 
-    @patch.object(http, "make_request")
+    @patch("openshelf.pipeline.job_consumer.fetch_epub")
     def test_new_download(self, mock_req):
         epub_data = b"PK\x03\x04epub-data"
-        mock_req.return_value = epub_data
+        mock_req.side_effect = lambda url, source_id, path: path.write_bytes(epub_data)
         with tempfile.TemporaryDirectory() as tmpdir:
             result = http.download_book(
-                "Author", "Title", "http://x.epub", tmpdir, delay=0
+                "Author", "Title", "https://www.gutenberg.org/ebooks/11.epub", tmpdir, delay=0
             )
             self.assertTrue(result)
-            filepath = os.path.join(tmpdir, "author", "title.epub")
+            filepath = os.path.join(tmpdir, "author", "title-g11.epub")
             self.assertTrue(os.path.exists(filepath))
             with open(filepath, "rb") as f:
                 self.assertEqual(f.read(), epub_data)
 
-    @patch.object(http, "make_request")
+    @patch("openshelf.pipeline.job_consumer.fetch_epub")
     def test_failed_download(self, mock_req):
-        mock_req.return_value = None
+        mock_req.side_effect = OSError("offline")
         with tempfile.TemporaryDirectory() as tmpdir:
             result = http.download_book(
-                "Author", "Title", "http://x.epub", tmpdir, delay=0
+                "Author", "Title", "https://www.gutenberg.org/ebooks/11.epub", tmpdir, delay=0
             )
             self.assertFalse(result)
 
-    @patch.object(http, "make_request")
-    def test_se_html_response_retries(self, mock_req):
-        html_page = b'<html>standardebooks.org download page</html>'
-        epub_data = b"PK\x03\x04real-epub"
-        mock_req.side_effect = [html_page, epub_data]
+    @patch("openshelf.pipeline.job_consumer.fetch_epub")
+    def test_se_html_response_fails_without_cookie_or_retry(self, mock_req):
+        mock_req.side_effect = ValueError("source returned HTML")
         with tempfile.TemporaryDirectory() as tmpdir:
             result = http.download_book(
-                "Author", "Title", "http://x.epub", tmpdir, delay=0
+                "Author", "Title", "https://standardebooks.org/ebooks/author/title/downloads/author_title.epub", tmpdir, delay=0
             )
-            self.assertTrue(result)
-            filepath = os.path.join(tmpdir, "author", "title.epub")
-            with open(filepath, "rb") as f:
-                self.assertEqual(f.read(), epub_data)
-            self.assertEqual(mock_req.call_count, 2)
+            self.assertFalse(result)
+            self.assertEqual(mock_req.call_count, 1)
+            self.assertFalse(any(cookie.name == "download-count" for cookie in http._cookie_jar))
 
     @patch.object(http, "make_request")
     def test_se_html_response_retry_fails(self, mock_req):
@@ -307,16 +311,16 @@ class TestDownloadBook(unittest.TestCase):
             )
             self.assertFalse(result)
 
-    @patch.object(http, "make_request")
+    @patch("openshelf.pipeline.job_consumer.fetch_epub")
     def test_filename_sanitization(self, mock_req):
-        mock_req.return_value = b"PK\x03\x04data"
+        mock_req.side_effect = lambda url, source_id, path: path.write_bytes(b"PK\x03\x04data")
         with tempfile.TemporaryDirectory() as tmpdir:
             http.download_book(
                 "Fyodor Dostoyevsky", "Crime & Punishment!",
-                "http://x.epub", tmpdir, delay=0,
+                "https://www.gutenberg.org/ebooks/11.epub", tmpdir, delay=0,
             )
             expected = os.path.join(
-                tmpdir, "fyodor-dostoyevsky", "crime-punishment.epub"
+                tmpdir, "fyodor-dostoyevsky", "crime-punishment-g11.epub"
             )
             self.assertTrue(os.path.exists(expected))
 
@@ -328,7 +332,7 @@ class TestProcessBooksFiltering(unittest.TestCase):
             title_slug = http.sanitize(title) or "untitled"
             author_dir = os.path.join(source_dir, author_slug)
             os.makedirs(author_dir, exist_ok=True)
-            with open(os.path.join(author_dir, title_slug + ".epub"), "wb") as f:
+            with open(http.download_path(author_name, title, epub_url, source_dir), "wb") as f:
                 f.write(b"PK\x03\x04")
             return True
 
@@ -341,7 +345,7 @@ class TestProcessBooksFiltering(unittest.TestCase):
         )
         with (
             patch.object(books, "se_search", return_value=[
-                ("Lewis Carroll", "Alices Adventures In Wonderland", "http://x.epub"),
+                ("Lewis Carroll", "Alices Adventures In Wonderland", "https://standardebooks.org/ebooks/lewis-carroll/alice/downloads/lewis-carroll_alice.epub"),
             ]),
             patch.object(books, "download_book", side_effect=fake_download),
         ):

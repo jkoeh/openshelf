@@ -25,6 +25,11 @@ the relevant docs first:
 - `pipeline/docs/step6-r2.md`
 - `pipeline/docs/dag-cli.md`
 - `pipeline/docs/ops-tools.md`
+- `pipeline/docs/source-access.md`
+
+Source access and language rules follow `docs/source-access.md`. All providers
+validate/cache reading EPUBs before audio. Chinese standard jobs use Mandarin
+Qwen3 CustomVoice Serena, shared text units and WhisperX `zh`; expressive jobs remain English-only.
 
 For any TTS engine work, start with
 `pipeline/docs/engine-knowledge-base.md`, then open only the relevant adapter
@@ -33,7 +38,7 @@ under `pipeline/src/openshelf/pipeline/engines/`.
 ## Engine Rules
 
 - `TTSEngine` in `pipeline/src/openshelf/pipeline/tts_engine.py` is the shared adapter contract.
-- Kokoro, F5-TTS, and Chatterbox adapters must preserve the same version-2
+- Kokoro, Qwen3, F5-TTS, and Chatterbox adapters must preserve the same version-2
   public output: `.m4a` audio plus `section_data.json` with separate heading
   metadata, original body text, and WhisperX word timestamps.
 - `voice_direction.json` is audit metadata. It may include synthesis-only text, emotion labels, pace, pauses, and engine-specific control decisions. It must not replace reader text.
@@ -49,7 +54,7 @@ under `pipeline/src/openshelf/pipeline/engines/`.
 
 - `openshelf-pipeline` is the canonical command surface.
 - `openshelf-pipeline books consume-jobs` polls outward to the Worker, downloads
-  an exact Gutenberg or Standard Ebooks EPUB after host and EPUB validation, renews its lease, and
+  an exact cached Gutenberg, Standard Ebooks or Wikisource EPUB after hash and identity validation, renews its lease, and
   invokes the existing exact-EPUB DAG runner with a fixed build ID. Before any
   LLM or synthesis work, it rejects archives above 2 MiB central-directory
   metadata, 256 MiB expanded size, or 5,000 entries. Standard and expressive
@@ -59,7 +64,13 @@ under `pipeline/src/openshelf/pipeline/engines/`.
   listener or stores the owner credential.
   Historical word-budget failures can be retried with the updated consumer.
 - The PC consumer accepts only Worker-issued `standard` and `expressive` job
-  modes. Standard runs fixed Kokoro `af_heart` without an OpenAI call. Expressive
+  modes. Standard runs fixed Kokoro `af_heart` (English) or Qwen3 `qwen3-serena`
+  (Chinese) without an OpenAI call. Mandarin jobs run with
+  `OPENSHELF_MANDARIN_PYTHON`, an isolated Python 3.12 runtime installed from
+  `pipeline/requirements-mandarin.txt`; `OPENSHELF_QWEN_CACHE` optionally locates
+  its Hugging Face cache. A consumer advertises Mandarin capability only after
+  a bounded startup probe verifies Qwen, WhisperX >=3.8.4, pipeline dependencies
+  and CUDA availability (unless CPU was explicitly requested). English-only expressive
   runs fixed Chatterbox `af_heart` with `--performance-direction batched` and
   `LLM_PROVIDER=openai` for that child process only. It advertises expressive
   claim capability only when a local `OPENAI_API_KEY` is configured. The key is
@@ -99,17 +110,18 @@ under `pipeline/src/openshelf/pipeline/engines/`.
   Its owner API client uses a fixed HTTPS origin and rejects redirects. It never
   embeds or prints credentials. Canceling a selected task uses the Worker lease-revocation
   route; the consumer terminates its child at its next heartbeat.
-- Before launching TTS for Gutenberg, the PC consumer reads official per-book Gutenberg RDF
+- Before launching TTS for uncached Gutenberg, the PC consumer reads official per-book Gutenberg RDF from the approved mirror
   for the exact source ID and requires `Public domain in the USA.`. Missing or
   ambiguous rights fail closed, including for already indexed jobs. It also
-  requires the downloaded EPUB's OPF `dc:rights` to say the same and rejects
+  requires the downloaded EPUB's OPF identifier to match and `dc:rights` to say the same and rejects
   the explicit copyrighted Project Gutenberg notice in readable front matter.
 - `openshelf-pipeline books sync-catalog` imports locally downloaded official
   Gutenberg CSV or CSV.gz and RDF archive through the PC-authenticated source-sync API.
-  It considers English `Text` records and validates RDF rights and EPUB URL against the numeric
+  It considers English and Chinese `Text` records and validates RDF rights/language and EPUB URL against the numeric
   Gutenberg ID, sends at most 50 records per request, and caps each run at
   1,000 candidates (500 by default). It only syncs candidates whose exact RDF
   record says `Public domain in the USA.` and names a valid EPUB.
+  Real imports validate/cache exact reading EPUBs; `--language` filters candidates.
   `--after-id` resumes a later numeric range. Import never
   claims or starts an audio job.
 - `books sync-catalog --source standard-ebooks` imports the bounded public HTML
@@ -131,6 +143,16 @@ under `pipeline/src/openshelf/pipeline/engines/`.
   runs for explicit EPUB/build paths.
 - `openshelf-pipeline ops ...`, `voices ...`, `qa ...`, and `profile ...` own
   local diagnostics, reference-voice prep, quality checks, and profiling.
+- `qa tts-benchmark` is an opt-in local comparison of Qwen3-TTS 1.7B
+  CustomVoice and existing adapters. `qa/tts_benchmark.py` writes short WAVs,
+  original text, measured synthesis time/RTF/peak CUDA memory, runtime/model
+  identity and optional WhisperX alignment under an ignored output directory.
+  Qwen runs in an isolated environment; `--align-only` runs the existing
+  aligner separately. It does not publish, consume jobs, or change defaults.
+  See `docs/ops-tools.md` for setup and interpretation.
+- `engines/qwen3.py` owns the Mandarin CustomVoice adapter, fixed checkpoint,
+  narration instruction and synthesis settings. `requirements-mandarin.txt`
+  owns the isolated runtime dependencies. Settings are part of resume identity.
 - Deleted legacy script filenames are not preserved.
 
 ## Tests
@@ -138,6 +160,9 @@ under `pipeline/src/openshelf/pipeline/engines/`.
 Pipeline tests are Python `unittest` tests under `pipeline/tests/` and should
 be mocked/offline. Engine tests should not require real model downloads, GPU,
 network, R2, or ffmpeg.
+`requirements-test.txt` lists the dependencies needed for the full offline suite;
+CI installs CPU PyTorch and runs discovery from the repository root with `-t .`
+so the test package cannot shadow the real `openshelf.pipeline` package.
 The monitor's API, process helpers, and local HTTP security boundary are tested
 offline without contacting the production Worker.
 `pipeline/tests/pipeline/desktop_smoke.py` is an opt-in Windows integration

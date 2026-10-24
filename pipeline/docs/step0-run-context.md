@@ -34,6 +34,11 @@ the existing context does not match the current invocation, the pipeline fails.
 
 ## Artifact
 
+The `language` field preserves legacy English Kokoro configuration `a`. Chinese
+builds record `zh`; the source OPF determines model language, voice compatibility
+and alignment. A changed language invalidates resume just like other immutable
+inputs. See `source-access.md`.
+
 `run.json` lives beside the build artifacts:
 
 ```text
@@ -91,6 +96,12 @@ Resume validation compares immutable fields:
 - language
 - selected chapter set
 - pipeline version
+- engine settings (model/checkpoint/instruction/precision/generation settings for Qwen)
+
+`engine_settings` is a JSON object, empty for existing adapters. Missing values
+in legacy contexts normalize to `{}`. Qwen contexts record the pinned settings
+from `engine.synthesis_settings`; any change fails resume. The artifact remains
+version 2 because existing empty-setting contexts preserve their compatibility.
 
 Mutable upload state is not part of `run.json`; R2 upload idempotency remains
 gated by `rendition-manifest.json`.

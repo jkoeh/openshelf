@@ -1,5 +1,100 @@
 # Pipeline Ops Tools
 
+## Mandarin production runtime
+
+Mandarin standard jobs use Qwen3 CustomVoice Serena and an isolated Python 3.12
+environment. Install CUDA PyTorch 2.8 first as in the benchmark setup below,
+then install `pipeline/requirements-mandarin.txt` into that environment.
+Set `OPENSHELF_MANDARIN_PYTHON` in the ignored root/pipeline `.env` to its absolute
+Python executable. `OPENSHELF_QWEN_CACHE` may point to the prepared Hugging Face
+cache (for this checkout, the benchmark cache can be reused). Restart the local
+consumer while idle so it reads these settings. The consumer probes the runtime
+once at startup with a 30-second bound and advertises Mandarin capability only
+when Qwen, fixed dependencies, Chinese alignment and the selected accelerator
+are usable. The Worker leaves Mandarin jobs queued for a capable consumer;
+older consumers can continue claiming English work. This does not change caps,
+leases or source validation. Public Mandarin requests use `qwen3-serena`;
+expressive mode remains the existing owner-only English Chatterbox path.
+
+Manual exact-EPUB processing in this environment supports:
+
+```text
+openshelf-pipeline books process --epub <validated-zh.epub> --engine qwen3 --voice qwen3-serena --device cuda
+```
+
+The Qwen model revision and narration settings are pinned in `run.json`, and
+WhisperX >=3.8.4 supplies the same version-2 sync contract. Existing English jobs
+and prior Kokoro Mandarin builds retain their original engine/rendition identity.
+
+## Local Qwen3-TTS comparison
+
+`qa tts-benchmark` is an opt-in real-model diagnostic. Keep its isolated runtime
+and generated files under ignored `download/` and `audio/`; do not install Qwen
+into the existing production environment. Example setup from the repository root:
+
+```powershell
+uv venv --python 3.12 download/qwen3-benchmark/venv
+uv pip install --python download/qwen3-benchmark/venv/Scripts/python.exe torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+uv pip install --python download/qwen3-benchmark/venv/Scripts/python.exe qwen-tts==0.1.1 whisperx==3.8.4
+$env:PYTHONPATH = (Resolve-Path pipeline/src).Path
+$env:HF_HOME = (Join-Path (Get-Location) 'download/qwen3-benchmark/huggingface')
+& download/qwen3-benchmark/venv/Scripts/python.exe pipeline/scripts/openshelf-pipeline.py qa tts-benchmark --engine qwen3 --language zh --voice Serena --output-dir audio/tts-benchmark/qwen3-serena-zh
+& download/qwen3-benchmark/venv/Scripts/python.exe pipeline/scripts/openshelf-pipeline.py qa tts-benchmark --align-only --output-dir audio/tts-benchmark/qwen3-serena-zh
+```
+
+CUDA defaults to BF16/SDPA and batch size one. `--revision` pins a checkpoint;
+`--device cpu` selects float32. The command fails rather than silently falling
+back to CPU. Run `--engine kokoro --language zh --voice zf_xiaobei` in the current
+environment for the same Chinese samples. English comparisons use `--language en`
+with Qwen `Ryan`, Kokoro `af_heart`, or Chatterbox `chatterbox-af_heart` (an
+existing local reference WAV is required). Qwen Chinese also offers `Uncle_Fu`.
+Alignment can run with the existing environment when healthy, or with the isolated
+Python 3.12 environment above. WhisperX 3.8.2 was withdrawn for timestamp defects;
+the benchmark uses 3.8.4. On this PC the existing Python 3.13 pandas/PyArrow stack
+also crashes during real alignment; the benchmark does not modify that stack.
+`--sample ID` limits the run to one fixture. Existing reports/outputs are not
+overwritten unless `--overwrite` is explicit. `--align-only` adds alignment to
+the report without repeating synthesis and may be rerun after a failed alignment.
+
+`report.json` includes original sample text/hash, WAV/hash, sample rate, duration,
+load time, per-sample synthesis seconds, RTF (lower is faster), process peak CUDA
+allocated bytes, model checkpoint/revision, package versions and generation
+settings. Alignment records elapsed time, per-character/word timestamps, coverage
+and violations; empty alignment fails the command. All samples must have finite,
+nonempty audio and timestamps within its duration. A local `index.html` provides
+audio controls and original text, with highlights after alignment. It embeds no
+external scripts or services. No R2 writes, source imports, jobs or public engine
+changes occur. Compare listening quality, omitted/repeated text, pronunciation,
+voice consistency and memory/time separately. Forced alignment alone is not a
+speech-accuracy metric, and short samples cannot establish full-book reliability.
+
+### Initial local measurements (2026-10-15)
+
+RTX 4070 Ti SUPER (16 GiB), batch size one. Qwen checkpoint
+`0c0e3051f131929182e2c023b9537f8b1c68adfe`, qwen-tts 0.1.1,
+PyTorch 2.8.0/CUDA 12.8, BF16/SDPA; existing adapters used PyTorch 2.8.0/CUDA
+12.6. Times below exclude model loading and alignment but include the first
+sample's pronunciation/voice initialization. These are initial short-run
+observations, not a controlled or optimized throughput comparison.
+
+| Engine / voice | Language | Audio seconds | Synthesis seconds | Aggregate RTF | Peak allocated CUDA GiB |
+|---|---|---:|---:|---:|---:|
+| Qwen / Serena | zh | 55.84 | 72.65 | 1.30 | 4.28 |
+| Kokoro / zf_xiaobei | zh | 47.93 | 3.02 | 0.06 | 0.77 |
+| Qwen / Ryan | en | 37.20 | 50.45 | 1.36 | 4.18 |
+| Kokoro / af_heart | en | 32.48 | 1.46 | 0.05 | 0.76 |
+| Chatterbox / chatterbox-af_heart | en | 29.20 | 17.88 | 0.61 | 3.27 |
+
+All 17 samples subsequently aligned with WhisperX 3.8.4 on CUDA with 100%
+original-text-unit coverage and zero timestamp invariant violations. The
+Chatterbox comparison uses its existing adapter/default controls and local
+reference, without the production OpenAI direction pass. Listening quality has
+not been scored. Qwen local synthesis/alignment is verified; this benchmark
+does not establish long-form quality. Production setup is documented above.
+The ignored listening artifact is `audio/tts-benchmark/index.html`, with each
+voice's measured report and highlighting page beside its WAVs. A local server
+bound to 127.0.0.1 may serve this output directory for listening.
+
 ## Outbound generation consumer
 
 `scripts/open-job-monitor.cmd` launches Windows OpenShelf Studio with
@@ -190,7 +285,7 @@ retry later after the upstream limit clears. No automatic retries bypass limits.
 The operator downloads Gutenberg's weekly CSV.gz and RDF tar.bz2 feeds into
 `download/`, then runs `books sync-catalog --catalog <csv.gz> --rights-archive
 <rdf.tar.bz2> --api-base <Worker /api/v1 URL>`. A dedicated `OPENSHELF_PC_TOKEN`
-authorizes batches of at most 50. The command considers at most 500 English
+authorizes batches of at most 50. The command considers at most 500 English or Chinese
 `Text` candidates by default, or up to 1,000 with `--max-books`; `--after-id`
 continues from a numeric Gutenberg ID. The CSV provides display metadata, while
 the exact RDF record must explicitly say `Public domain in the USA.` and list a
@@ -202,6 +297,12 @@ batch on the owner's PC. Before another batch, check the account's D1 daily
 row-write usage.
 
 ## `ops doctor`
+
+Source import follows `source-access.md`: Gutenberg bulk imports cache exact
+EPUBs from an approved mirror/local rsync collection, with `--language en|zh|all`.
+`--source wikisource --editions <json>` imports curated revision-pinned API books.
+Real imports validate/cache reading copies separately from audio; dry runs write
+nothing.
 
 ```bash
 openshelf-pipeline ops doctor \

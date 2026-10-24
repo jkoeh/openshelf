@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import hashlib
 import json
 import os
 import re
@@ -20,13 +21,14 @@ from xml.etree import ElementTree
 
 from openshelf.config import OPENAI_API_KEY, PROJECT_ROOT
 from openshelf.scrapers.http import sanitize
+from openshelf.pipeline.gutenberg_source import mirror_url, rights_url, source_number
+from openshelf.pipeline.language import normalize_language, unit_count
 
 MAX_EPUB_BYTES = 50 * 1024 * 1024
 MAX_CENTRAL_DIRECTORY_BYTES = 2 * 1024 * 1024
 MAX_EXPANDED_BYTES = 256 * 1024 * 1024
 MAX_EPUB_ENTRIES = 5_000
 MAX_RIGHTS_BYTES = 128 * 1024
-GUTENBERG_HOSTS = {"www.gutenberg.org", "dev.gutenberg.org", "gutenberg.org"}
 
 
 class RightsNotVerified(ValueError):
@@ -37,15 +39,7 @@ def validate_epub_url(url: str, source_id: str) -> str:
     if source_id.startswith("standardebooks:"):
         from openshelf.pipeline.standard_ebooks_source import validate_url
         return validate_url(url, source_id)
-    match = re.fullmatch(r"gutenberg:([1-9][0-9]*)", source_id)
-    parsed = urllib.parse.urlparse(url)
-    if not match or parsed.scheme != "https" or parsed.hostname not in GUTENBERG_HOSTS:
-        raise ValueError("untrusted Gutenberg URL")
-    number = match.group(1)
-    if not re.search(rf"/(?:ebooks|cache/epub)/{number}(?:[./-]|$)", parsed.path):
-        raise ValueError("Gutenberg URL does not match source ID")
-    if parsed.username or parsed.password or parsed.port or parsed.fragment:
-        raise ValueError("unexpected Gutenberg URL component")
+    mirror_url(url, source_id)
     return url
 
 
@@ -56,6 +50,8 @@ class GutenbergRedirects(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         validate_epub_url(newurl, self.source_id)
+        if self.source_id.startswith("gutenberg:") and urllib.parse.urlsplit(newurl).hostname != "gutenberg.pglaf.org":
+            raise ValueError("Gutenberg redirect left approved mirror")
         self.redirects += 1
         if self.redirects > 3:
             raise ValueError("too many source EPUB redirects")
@@ -67,10 +63,27 @@ def fetch_epub(url: str, source_id: str, destination: Path) -> None:
     if source_id.startswith("standardebooks:"):
         from openshelf.pipeline.standard_ebooks_source import epub_url
         url = epub_url(source_id)
+    else:
+        url = mirror_url(url, source_id)
+        local_root = os.environ.get("OPENSHELF_GUTENBERG_MIRROR_DIR")
+        if local_root:
+            # The local root is the generated rsync collection (contains ID dirs).
+            relative = urllib.parse.urlsplit(url).path.removeprefix("/cache/epub/")
+            local = Path(local_root).resolve() / relative
+            if local.is_file():
+                if local.stat().st_size > MAX_EPUB_BYTES:
+                    raise ValueError("local mirror EPUB exceeds size limit")
+                data = local.read_bytes()
+                _store_epub(data, destination)
+                return
     opener = urllib.request.build_opener(GutenbergRedirects(source_id))
     req = urllib.request.Request(url, headers={"User-Agent": "OpenShelf/1.0"})
     with opener.open(req, timeout=45) as response:
         data = response.read(MAX_EPUB_BYTES + 1)
+    _store_epub(data, destination)
+
+
+def _store_epub(data: bytes, destination: Path) -> None:
     if len(data) > MAX_EPUB_BYTES or not data.startswith(b"PK\x03\x04"):
         raise ValueError("EPUB is missing, oversized, or not a ZIP")
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -134,6 +147,17 @@ def check_epub_rights(path: Path, source_id: str | None = None) -> None:
                 raise RightsNotVerified("Standard Ebooks EPUB rights are not verified")
         elif rights != ["Public domain in the USA."]:
             raise RightsNotVerified("EPUB is not verified public domain in the USA")
+        if source_id and source_id.startswith("gutenberg:"):
+            number = source_number(source_id)
+            identifiers = {node.text.strip() for node in package.iter("{http://purl.org/dc/elements/1.1/}identifier") if node.text}
+            accepted = {f"{scheme}://www.gutenberg.org/{prefix}{number}"
+                        for scheme in ("http", "https") for prefix in ("ebooks/", "")}
+            if len(identifiers) != 1 or not identifiers.issubset(accepted):
+                raise RightsNotVerified("EPUB identifier does not match Gutenberg ID")
+        if source_id and source_id.startswith("wikisource:"):
+            identifiers = [node.text for node in package.iter("{http://purl.org/dc/elements/1.1/}identifier")]
+            if identifiers != [f"urn:openshelf:{source_id}"]:
+                raise RightsNotVerified("EPUB identifier does not match Wikisource snapshot")
         banner = re.compile(r"this\s+is\s+a\s+copyrighted\s+project\s+gutenberg\s+ebook", re.I)
         for item in archive.infolist():
             if not item.filename.lower().endswith((".htm", ".html", ".xhtml", ".txt")):
@@ -173,49 +197,66 @@ def public_domain_epub_url(data: bytes, source_id: str) -> str:
         if not url:
             continue
         try:
-            urls.append(validate_epub_url(url, source_id))
+            urls.append(mirror_url(url, source_id))
         except ValueError:
             continue
     if not urls:
         raise RightsNotVerified("verified edition has no trusted EPUB")
-    return next((url for url in urls if url.endswith(".epub.images")), urls[0])
+    return next((url for url in urls if "-images" in url), urls[0])
 
 
-def verify_public_domain(source_id: str) -> None:
+def verify_public_domain(source_id: str) -> dict:
     """Require the official RDF rights marker before any expensive work."""
     if source_id.startswith("standardebooks:"):
         from openshelf.pipeline.standard_ebooks_source import BASE, edition_path, fetch_page, parse_edition
         try:
-            parse_edition(fetch_page(f"{BASE}/ebooks/{edition_path(source_id)}"), source_id)
+            book = parse_edition(fetch_page(f"{BASE}/ebooks/{edition_path(source_id)}"), source_id)
         except ValueError as exc:
             raise RightsNotVerified("Standard Ebooks edition rights are not verified") from exc
-        return
+        return book["provenance"]
     match = re.fullmatch(r"gutenberg:([1-9][0-9]*)", source_id)
     if not match:
         raise RightsNotVerified("invalid Gutenberg ID")
     number = match.group(1)
-    opener = urllib.request.build_opener(GutenbergRedirects(source_id))
-    for host in ("dev.gutenberg.org", "www.gutenberg.org"):
-        url = f"https://{host}/cache/epub/{number}/pg{number}.rdf"
-        request = urllib.request.Request(url, headers={"User-Agent": "OpenShelf/1.0"})
-        try:
-            with opener.open(request, timeout=15) as response:
-                data = response.read(MAX_RIGHTS_BYTES + 1)
+    local_root = os.environ.get("OPENSHELF_GUTENBERG_MIRROR_DIR")
+    if local_root:
+        local = Path(local_root) / number / f"pg{number}.rdf"
+        if local.is_file():
+            with local.open("rb") as source:
+                data = source.read(MAX_RIGHTS_BYTES + 1)
             public_domain_epub_url(data, source_id)
-            return
-        except OSError:
-            continue
+            return _gutenberg_provenance(source_id, data)
+    request = urllib.request.Request(rights_url(source_id), headers={"User-Agent": "OpenShelf/1.0 (+https://github.com/jkoeh/openshelf)"})
+    try:
+        with urllib.request.build_opener(NoRedirects()).open(request, timeout=15) as response:
+            data = response.read(MAX_RIGHTS_BYTES + 1)
+        public_domain_epub_url(data, source_id)
+        return _gutenberg_provenance(source_id, data)
+    except OSError:
+        pass
     raise RightsNotVerified("could not verify Gutenberg rights")
+
+
+def _gutenberg_provenance(source_id: str, data: bytes) -> dict:
+    from datetime import datetime, timezone
+    return {"source_url": public_domain_epub_url(data, source_id), "rights_url": rights_url(source_id),
+            "rights_statement": "Public domain in the USA.", "rights_sha256": hashlib.sha256(data).hexdigest(),
+            "verified_at": datetime.now(timezone.utc).isoformat()}
 
 
 def check_spoken_text(path: Path) -> int:
     from openshelf.pipeline.epub_parser import parse_epub
 
-    count = sum(section.word_count + len(section.heading.spoken_text.split())
+    count = sum(section.word_count + unit_count(section.heading.spoken_text)
                 for section in parse_epub(str(path)))
     if count < 1:
         raise ValueError("EPUB has no spoken words")
     return count
+
+
+class NoRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        raise ValueError("unexpected API redirect")
 
 
 class JobAPI:
@@ -263,6 +304,23 @@ class JobAPI:
                 return False
             raise
 
+    def download_source_epub(self, source_id: str, destination: Path) -> bool:
+        request = urllib.request.Request(
+            self.base + "/source-books/" + urllib.parse.quote(source_id, safe="") + "/epub?inline=1",
+            headers={"User-Agent": "OpenShelf/1.0 (+https://github.com/jkoeh/openshelf)"},
+        )
+        try:
+            with urllib.request.build_opener(NoRedirects()).open(request, timeout=45) as response:
+                data = response.read(32 * 1024 * 1024 + 1)
+            if len(data) > 32 * 1024 * 1024:
+                raise ValueError("reading copy exceeds size limit")
+            _store_epub(data, destination)
+            return True
+        except urllib.error.HTTPError as exc:
+            if exc.code in (404, 502):
+                return False
+            raise
+
 
 def sync_gutenberg(api: JobAPI, pages: int) -> int:
     url = "https://gutendex.com/books/"
@@ -279,7 +337,7 @@ def sync_gutenberg(api: JobAPI, pages: int) -> int:
         books = []
         for book in page.get("results", []):
             if (book.get("copyright") is not False or book.get("media_type") != "Text"
-                    or "en" not in book.get("languages", [])):
+                    or not {"en", "zh"} & set(book.get("languages", []))):
                 continue
             epub_url = book.get("formats", {}).get("application/epub+zip")
             source_id = f"gutenberg:{book.get('id')}"
@@ -290,44 +348,94 @@ def sync_gutenberg(api: JobAPI, pages: int) -> int:
             authors = book.get("authors", [])
             books.append({"source_id": source_id, "title": book.get("title") or "Untitled",
                           "author": authors[0].get("name", "Unknown") if authors else "Unknown",
-                          "epub_url": epub_url})
-        for offset in range(0, len(books), 50):
-            api.post("/internal/source-books/sync", {"books": books[offset:offset+50]})
-            total += len(books[offset:offset+50])
+                          "epub_url": mirror_url(epub_url, source_id),
+                          "language": "zh" if "zh" in book["languages"] else "en"})
+        from openshelf.pipeline.source_catalog import cache_book
+        for book in books:
+            if api.source_epub_cached(book["source_id"]):
+                continue
+            try:
+                book["provenance"] = verify_public_domain(book["source_id"])
+                cache_book(api, book)
+                total += 1
+            except RightsNotVerified:
+                continue
         url = page.get("next")
     return total
 
 
-def process_job(api: JobAPI, job: dict, *, download_root: Path, audio_root: Path, device: str) -> None:
+def mandarin_runtime(device: str) -> str | None:
+    """Probe the configured isolated runtime once before advertising capability."""
+    configured = os.environ.get("OPENSHELF_MANDARIN_PYTHON", "")
+    if not configured or not Path(configured).is_file():
+        return None
+    probe = (
+        "import importlib.metadata as m, torch, qwen_tts, whisperx.alignment; "
+        "import ebooklib, bs4, boto3, dotenv, openai, anthropic, psutil; "
+        "assert tuple(map(int,m.version('whisperx').split('.')[:3])) >= (3,8,4); "
+        "assert m.version('qwen-tts') == '0.1.1'; "
+        + ("assert torch.cuda.is_available()" if device != "cpu" else "assert True")
+    )
+    try:
+        result = subprocess.run([configured, "-c", probe], capture_output=True, timeout=30,
+                                check=False, cwd=PROJECT_ROOT)
+        return configured if result.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def process_job(api: JobAPI, job: dict, *, download_root: Path, audio_root: Path, device: str,
+                mandarin_python: str | None = None) -> None:
     source_id = job["source_id"]
     author_slug = sanitize(job["author"]) or "unknown"
     from openshelf.pipeline.standard_ebooks_source import title_slug as edition_title_slug
     title_slug = edition_title_slug(job["title"], source_id)
-    source = "standard-ebooks" if source_id.startswith("standardebooks:") else "gutenberg"
+    source = "standard-ebooks" if source_id.startswith("standardebooks:") else "wikisource" if source_id.startswith("wikisource:") else "gutenberg"
     epub = download_root / source / author_slug / f"{title_slug}.epub"
     lease = job["lease_token"]
     route = f"/internal/generation-jobs/{job['id']}"
     try:
-        verify_public_domain(source_id)
+        cached_proof = job.get("epub_sha256")
+        if not cached_proof:
+            verify_public_domain(source_id)
         if not epub.exists():
-            fetch_epub(job["epub_url"], source_id, epub)
+            cached = api.download_source_epub(source_id, epub) if hasattr(api, "download_source_epub") else False
+            if not cached:
+                if source == "wikisource" or cached_proof:
+                    raise ValueError("validated reading copy is unavailable")
+                fetch_epub(job["epub_url"], source_id, epub)
         validate_local_epub(epub)
-        if source == "standard-ebooks":
-            check_epub_rights(epub, source_id)
-        else:
-            check_epub_rights(epub)
+        if cached_proof:
+            if hashlib.sha256(epub.read_bytes()).hexdigest() != cached_proof:
+                raise ValueError("source cache hash does not match edition")
+            if job.get("provenance", {}).get("rights_statement") != "Public domain in the USA.":
+                raise RightsNotVerified("source cache lacks verified U.S. rights evidence")
+        check_epub_rights(epub, source_id)
+        language = normalize_language(job.get("language", "en"))
+        from openshelf.pipeline.epub_parser import read_book_metadata
+        if normalize_language(read_book_metadata(str(epub)).get("language", "en")) != language:
+            raise ValueError("EPUB language does not match indexed edition")
         mode = job.get("mode", "standard")
         check_spoken_text(epub)
         if mode == "standard":
-            engine, voice, rendition = "kokoro", "af_heart", "kokoro-af-heart"
+            if language not in {"en", "zh"}:
+                raise ValueError("unsupported book language")
+            if language == "zh":
+                if not mandarin_python:
+                    raise ValueError("Mandarin runtime is not configured")
+                engine, voice, rendition = "qwen3", "qwen3-serena", "qwen3-serena"
+            else:
+                engine, voice, rendition = "kokoro", "af_heart", "kokoro-af-heart"
         elif mode == "expressive":
+            if language != "en":
+                raise ValueError("expressive generation requires English")
             if not OPENAI_API_KEY:
                 raise ValueError("OpenAI direction is not configured on this PC")
             engine, voice, rendition = "chatterbox", "chatterbox-af_heart", "chatterbox-af-heart"
         else:
             raise ValueError("unsupported generation mode")
         build_dir = audio_root / author_slug / title_slug / "audio" / rendition / "builds" / job["build_id"]
-        command = [sys.executable, "-m", "openshelf.pipeline.cli", "books", "process", "--epub", str(epub),
+        command = [mandarin_python if language == "zh" else sys.executable, "-m", "openshelf.pipeline.cli", "books", "process", "--epub", str(epub),
                    "--output", str(audio_root), "--engine", engine, "--voice", voice,
                    "--rendition", rendition, "--build-id", job["build_id"], "--device", device, "--upload"]
         if mode == "expressive":
@@ -339,6 +447,8 @@ def process_job(api: JobAPI, job: dict, *, download_root: Path, audio_root: Path
         env["PYTHONPATH"] = str(PROJECT_ROOT / "pipeline" / "src") + os.pathsep + env.get("PYTHONPATH", "")
         if mode == "expressive":
             env["LLM_PROVIDER"] = "openai"
+        if language == "zh" and env.get("OPENSHELF_QWEN_CACHE"):
+            env["HF_HOME"] = env["OPENSHELF_QWEN_CACHE"]
         child = subprocess.Popen(command, env=env, cwd=PROJECT_ROOT)
         last_renewal = time.monotonic()
         last_attempt = last_renewal
@@ -387,15 +497,18 @@ def main(argv=None) -> int:
     if args.sync_pages < 0 or args.sync_pages > 10:
         parser.error("--sync-pages must be 0..10")
     api = JobAPI(args.api_base, os.environ.get("OPENSHELF_PC_TOKEN", ""))
+    mandarin_python = mandarin_runtime(args.device)
     if args.sync_pages:
         print(f"Indexed {sync_gutenberg(api, args.sync_pages)} Gutenberg editions")
     while True:
         try:
-            job = api.post("/internal/generation-jobs/claim", {"expressive": bool(OPENAI_API_KEY)})["job"]
+            job = api.post("/internal/generation-jobs/claim", {
+                "expressive": bool(OPENAI_API_KEY), "mandarin": bool(mandarin_python)})["job"]
             if job:
                 print(f"Processing {job['source_id']} ({job['id']})")
                 process_job(api, job, download_root=PROJECT_ROOT / "download" / "books",
-                            audio_root=PROJECT_ROOT / "audio", device=args.device)
+                            audio_root=PROJECT_ROOT / "audio", device=args.device,
+                            mandarin_python=mandarin_python)
             elif args.once:
                 return 0
             else:

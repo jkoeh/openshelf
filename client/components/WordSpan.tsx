@@ -3,6 +3,7 @@ import { Text } from "react-native";
 
 interface WordSpanProps {
   word: string;
+  trailingSpace?: boolean;
   isActive: boolean;
   wordIndex: number;
   highlightColor: string;
@@ -14,6 +15,7 @@ interface WordSpanProps {
 
 function WordSpanInner({
   word,
+  trailingSpace = true,
   isActive,
   wordIndex,
   highlightColor,
@@ -37,7 +39,7 @@ function WordSpanInner({
         borderRadius: isActive ? 2 : 0,
       }}
     >
-      {word}{" "}
+      {word}{trailingSpace ? " " : ""}
     </Text>
   );
 }

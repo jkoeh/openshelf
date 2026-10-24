@@ -1037,7 +1037,7 @@ class TestDagCliRun(unittest.TestCase):
                 finally:
                     close_pipeline_logging()
 
-        create_engine.assert_called_once_with("chatterbox", device="cuda")
+        create_engine.assert_called_once_with("chatterbox", device="cuda", language="en")
 
     def test_auto_chatterbox_cpu_resolution_fails_fast(self):
         with patch("openshelf.pipeline.tts.get_device", return_value="cpu"):
@@ -1177,8 +1177,8 @@ class TestDagCliSynth(unittest.TestCase):
                     patch("openshelf.pipeline.encoder.encode_to_aac", side_effect=fake_encode):
                 synth_chapter(build_dir, 1, engine_name="chatterbox", device="cuda")
 
-        create_engine.assert_called_once_with("chatterbox", device="cuda")
-        create_aligner.assert_called_once_with(fake_engine, device="cuda")
+        create_engine.assert_called_once_with("chatterbox", device="cuda", language="en")
+        create_aligner.assert_called_once_with(fake_engine, device="cuda", language="en")
 
     def test_synth_auto_device_resolves_before_engine_factory(self):
         result, fake_encode = self._patched()
@@ -1205,8 +1205,8 @@ class TestDagCliSynth(unittest.TestCase):
             ):
                 synth_chapter(build_dir, 1, engine_name="chatterbox")
 
-        create_engine.assert_called_once_with("chatterbox", device="cuda")
-        create_aligner.assert_called_once_with(fake_engine, device="cuda")
+        create_engine.assert_called_once_with("chatterbox", device="cuda", language="en")
+        create_aligner.assert_called_once_with(fake_engine, device="cuda", language="en")
 
     def test_synth_errors_when_direction_missing(self):
         with tempfile.TemporaryDirectory() as tmp:

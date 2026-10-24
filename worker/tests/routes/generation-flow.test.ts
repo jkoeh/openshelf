@@ -2,7 +2,7 @@ import { env, fetchMock } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import app from "../../src/index";
 import type { Env } from "../../src/types";
-import { sourceTitleSlug } from "../../src/utils/source-editions";
+import { sourceTitleSlug, gutenbergMirrorUrl } from "../../src/utils/source-editions";
 
 const ownerToken = "test-owner-token-longer-than-twenty-four";
 const pcToken = "test-consumer-token-longer-than-twenty-four";
@@ -39,12 +39,17 @@ const source = (id: number, title: string, author = "Lewis Carroll") => ({
 	author,
 	epub_url: `https://www.gutenberg.org/ebooks/${id}.epub3.images`,
 });
-const sync = async (books: ReturnType<typeof source>[]) =>
+const sync = async (books: { source_id: string; title: string; author: string; epub_url: string; language?: "en" | "zh"; provenance?: object }[]) =>
 	request("/internal/source-books/sync", "POST", { books }, pcToken);
+const uploadReading = (sourceId: string, body = "PK\x03\x04reading-copy") => app.request(
+	`${origin}/api/v1/internal/source-books/${encodeURIComponent(sourceId)}/epub`, {
+		method: "POST", body, headers: { Authorization: `Bearer ${pcToken}`, "Content-Type": "application/epub+zip", "Content-Length": String(body.length) },
+	}, bindings,
+);
 const create = async (id: number, token = ownerToken) =>
 	request("/generation-jobs", "POST", { source_id: `gutenberg:${id}` }, token);
-const claim = async (expressive = false) =>
-	request("/internal/generation-jobs/claim", "POST", { expressive }, pcToken);
+const claim = async (expressive = false, mandarin = false) =>
+	request("/internal/generation-jobs/claim", "POST", { expressive, mandarin }, pcToken);
 
 beforeEach(async () => {
 	searchAllowed = true;
@@ -99,22 +104,73 @@ describe("source search and generation API", () => {
 		expect((await request(`/internal/generation-jobs/${job.id}/finish`, "POST", { ...done, title_slug: "alice-g11" }, pcToken)).status).toBe(409);
 		expect((await request(`/internal/generation-jobs/${job.id}/finish`, "POST", done, pcToken)).status).toBe(200);
 	});
-	it("streams source EPUB for immediate reading and validates upstream redirects", async () => {
+	it("reads Gutenberg from R2 while upstream access and audio starts are unavailable", async () => {
 		await sync([source(11, "Alice")]);
+		expect((await request("/source-books/gutenberg%3A11/epub?inline=1")).status).toBe(502);
+		expect((await uploadReading("gutenberg:11")).status).toBe(200);
+		createAllowed = false;
 		fetchMock.activate();
 		fetchMock.disableNetConnect();
 		try {
-			const upstream = fetchMock.get("https://www.gutenberg.org");
-			upstream.intercept({ path: "/ebooks/11.epub3.images" }).reply(302, "", { headers: { Location: "/cache/epub/11/pg11-images-3.epub" } });
-			upstream.intercept({ path: "/cache/epub/11/pg11-images-3.epub" }).reply(200, "epub-bytes");
+			await env.JOB_DB.prepare("UPDATE source_books SET epub_url='https://offline.example/book' WHERE source_id='gutenberg:11'").run();
 			const response = await request("/source-books/gutenberg%3A11/epub?inline=1");
 			expect(response.status).toBe(200);
 			expect(response.headers.get("Content-Type")).toBe("application/epub+zip");
-			expect(await response.text()).toBe("epub-bytes");
-			upstream.intercept({ path: "/ebooks/11.epub3.images" }).reply(302, "", { headers: { Location: "https://evil.example/book.epub" } });
-			expect((await request("/source-books/gutenberg%3A11/epub?inline=1")).status).toBe(502);
+			expect(await response.text()).toBe("PK\x03\x04reading-copy");
+			expect(response.headers.get("X-Content-SHA256")).toMatch(/^[a-f0-9]{64}$/);
+			const direct = await request("/source-books/gutenberg%3A11/epub");
+			expect(direct.status).toBe(200);
+			expect(await direct.text()).toBe("PK\x03\x04reading-copy");
+			expect(await env.JOB_DB.prepare("SELECT COUNT(*) count FROM generation_starts").first("count")).toBe(0);
 			fetchMock.assertNoPendingInterceptors();
 		} finally { fetchMock.deactivate(); }
+	});
+	it("conditionally preserves validated bytes and cached provenance on refresh", async () => {
+		const book = { ...source(11, "Alice"), provenance: { rights_statement: "Public domain in the USA." } };
+		await sync([book]);
+		expect((await uploadReading(book.source_id)).status).toBe(200);
+		expect((await uploadReading(book.source_id)).status).toBe(200);
+		expect((await uploadReading(book.source_id, "PK\x03\x04different-edition")).status).toBe(409);
+		await sync([{ ...book, language: "zh", provenance: {} }]);
+		const stored = await env.JOB_DB.prepare("SELECT language,provenance,epub_sha256 FROM source_books WHERE source_id=?").bind(book.source_id).first<{ language: string; provenance: string; epub_sha256: string }>();
+		expect(stored?.language).toBe("en");
+		expect(JSON.parse(stored!.provenance)).toEqual(book.provenance);
+		expect(stored!.epub_sha256).toMatch(/^[a-f0-9]{64}$/);
+		expect(await (await request("/source-books/gutenberg%3A11/epub?inline=1")).text()).toBe("PK\x03\x04reading-copy");
+	});
+	it("indexes Chinese Wikisource snapshots, filters language and claims Mandarin jobs", async () => {
+		const sourceId = "wikisource:zh:1:10:1234567890abcdef";
+		const book = { source_id: sourceId, title: "古书天地玄黄宇宙洪荒", author: "古人", language: "zh" as const,
+			epub_url: "https://zh.wikisource.org/w/index.php?oldid=10", provenance: { rights_statement: "Public domain in the USA." } };
+		expect((await sync([book])).status).toBe(200);
+		expect((await sync([{ ...book, epub_url: book.epub_url.replace("10", "11") }])).status).toBe(400);
+		expect((await sync([{ ...book, language: "en" }])).status).toBe(400);
+		expect((await request(`/source-books/${encodeURIComponent(sourceId)}/epub`)).status).toBe(502);
+		expect((await uploadReading(sourceId)).status).toBe(200);
+		const found = await (await request("/source-books?q=天地&language=zh")).json<{ books: { language: string; reading_cached: boolean }[] }>();
+		expect(found.books).toHaveLength(1);
+		expect(found.books[0]).toMatchObject({ language: "zh", reading_cached: true });
+		expect((await (await request("/source-books?q=天地玄黄宇宙&language=zh")).json<{ books: object[] }>()).books).toHaveLength(1);
+		expect((await (await request("/source-books?q=天地&language=en")).json<{ books: object[] }>()).books).toHaveLength(0);
+		expect((await request("/generation-jobs", "POST", { source_id: sourceId, mode: "expressive" }, ownerToken)).status).toBe(400);
+		expect(await env.JOB_DB.prepare("SELECT COUNT(*) count FROM generation_starts").first("count")).toBe(0);
+		expect((await request("/generation-jobs", "POST", { source_id: sourceId })).status).toBe(200);
+		expect((await (await claim()).json<{ job: unknown }>()).job).toBeNull();
+		const job = (await (await claim(false, true)).json<{ job: { id: string; build_id: string; lease_token: string; language: string; epub_sha256: string; provenance: object } }>()).job;
+		expect(job.language).toBe("zh");
+		expect(job.epub_sha256).toMatch(/^[a-f0-9]{64}$/);
+		expect(job.provenance).toEqual(book.provenance);
+		const title = await sourceTitleSlug("", sourceId);
+		const root = `books/unknown/${title}`;
+		const prefix = `${root}/audio/qwen3-serena/builds/${job.build_id}`;
+		await env.R2_BUCKET.put(`${root}/manifest.json`, JSON.stringify({ source: "wikisource", renditions: { "qwen3-serena": { current_build: job.build_id } } }));
+		await env.R2_BUCKET.put(`${prefix}/rendition-manifest.json`, JSON.stringify({ version: 2, build: job.build_id, sections: [{ sequence: 1 }] }));
+		await env.R2_BUCKET.put(`${prefix}/section_data.json`, "{}");
+		await env.R2_BUCKET.put(`${prefix}/section-01.m4a`, "audio");
+		await env.R2_BUCKET.put("catalog.json", JSON.stringify({ books: [{ author_slug: "unknown", title_slug: title, current_build: job.build_id }] }));
+		expect((await request(`/internal/generation-jobs/${job.id}/finish`, "POST", {
+			lease_token: job.lease_token, success: true, author_slug: "unknown", title_slug: title,
+		}, pcToken)).status).toBe(200);
 	});
 	it("downloads an indexed EPUB independently of failed audio, PC credentials, and quotas", async () => {
 		await sync([source(2554, "Crime and Punishment")]);
@@ -129,7 +185,7 @@ describe("source search and generation API", () => {
 			R2_BUCKET: env.R2_BUCKET, JOB_DB: env.JOB_DB, SEARCH_RATE_LIMITER: limiter,
 		});
 		expect(response.status).toBe(302);
-		expect(response.headers.get("Location")).toBe(source(2554, "Crime").epub_url);
+		expect(response.headers.get("Location")).toBe(gutenbergMirrorUrl(new URL(source(2554, "Crime").epub_url), "gutenberg:2554")!.href);
 		expect(response.headers.get("Cache-Control")).toBe("no-store");
 		const job = await (await request(`/generation-jobs/${made.id}`)).json<{ state: string }>();
 		expect(job.state).toBe("failed");

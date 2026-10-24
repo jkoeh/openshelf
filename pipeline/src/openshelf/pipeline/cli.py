@@ -80,13 +80,19 @@ def _voices_main(argv: Sequence[str] | None = None) -> int:
 
 
 def _qa_main(argv: Sequence[str] | None = None) -> int:
-    from openshelf.pipeline.qa import audio
+    from openshelf.pipeline.qa import tts_benchmark
+
+    def audio_main(rest: Sequence[str] | None = None) -> int:
+        from openshelf.pipeline.qa import audio
+
+        return audio.main(rest)
 
     return _dispatch_group(
         prog="openshelf-pipeline qa",
         argv=list(argv or []),
         commands={
-            "audio": ("Validate audio quality", audio.main),
+            "audio": ("Validate audio quality", audio_main),
+            "tts-benchmark": ("Compare short local TTS samples", tts_benchmark.main),
         },
     )
 

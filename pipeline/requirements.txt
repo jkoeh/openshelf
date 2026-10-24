@@ -1,6 +1,7 @@
 ebooklib
 beautifulsoup4
 kokoro
+misaki[zh]
 f5-tts
 chatterbox-tts
 soundfile

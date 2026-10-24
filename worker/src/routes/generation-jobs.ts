@@ -45,7 +45,7 @@ const Create = z.object({
 	mode: z.enum(["standard", "expressive"]).default("standard"),
 	regenerate: z.boolean().default(false),
 });
-const Claim = z.object({ expressive: z.boolean().default(false) });
+const Claim = z.object({ expressive: z.boolean().default(false), mandarin: z.boolean().default(false) });
 const Lease = z.object({ lease_token: z.string().uuid() });
 const Progress = Lease.extend({
 	stage: z.enum(["download", "parse", "direction", "synthesis", "alignment", "encode", "upload"]),
@@ -69,6 +69,9 @@ const ClaimJob = Job.extend({
 	epub_url: z.string().url(),
 	title: z.string(),
 	author: z.string(),
+	language: z.enum(["en", "zh"]),
+	epub_sha256: z.string().nullable(),
+	provenance: z.record(z.unknown()),
 	lease_token: z.string(),
 });
 const ClaimResponse = z.object({ job: ClaimJob.nullable() });
@@ -306,14 +309,15 @@ async function verifyPublished(
 	author: string,
 	title: string,
 ): Promise<boolean> {
-	const selectedRendition = row.mode === "expressive" ? "chatterbox-af-heart" : "kokoro-af-heart";
+	const language = await env.JOB_DB!.prepare("SELECT language FROM source_books WHERE source_id=?").bind(row.source_id).first<string>("language");
+const selectedRendition = row.mode === "expressive" ? "chatterbox-af-heart" : language === "zh" ? "qwen3-serena" : "kokoro-af-heart";
 	const manifest = await env.R2_BUCKET.get(r2Key.bookManifest(author, title));
 	if (!manifest) return false;
 	const book = (await manifest.json()) as {
 		source?: string;
 		renditions?: Record<string, { current_build?: string }>;
 	};
-	if (book.source !== (row.source_id.startsWith("standardebooks:") ? "standard-ebooks" : "gutenberg")) return false;
+	if (book.source !== (row.source_id.startsWith("standardebooks:") ? "standard-ebooks" : row.source_id.startsWith("wikisource:") ? "wikisource" : "gutenberg")) return false;
 	if (book.renditions?.[selectedRendition]?.current_build !== row.build_id) return false;
 	const rendition = await env.R2_BUCKET.get(
 		r2Key.renditionManifest(author, title, selectedRendition, row.build_id),
@@ -378,11 +382,13 @@ owner.openapi(create, async (c) => {
 		);
 	const db = c.env.JOB_DB!;
 	const source = await db
-		.prepare("SELECT source_id,author_slug,title_slug FROM source_books WHERE source_id=?")
+		.prepare("SELECT source_id,author_slug,title_slug,language FROM source_books WHERE source_id=?")
 		.bind(source_id)
-		.first<{ source_id: string; author_slug: string | null; title_slug: string | null }>();
+		.first<{ source_id: string; author_slug: string | null; title_slug: string | null; language: string }>();
 	if (!source)
 		return c.json({ error: { code: "NOT_FOUND", message: "Source edition not indexed" } }, 404);
+	if (!["en", "zh"].includes(source.language) || (mode === "expressive" && source.language !== "en"))
+		return c.json({ error: { code: "UNSUPPORTED_LANGUAGE", message: "Expressive audio is currently available for English editions only" } }, 400, noStore);
 	if (await db.prepare(`SELECT 1 FROM book_deletions d JOIN source_books s
 		ON s.author_slug=d.author_slug AND s.title_slug=d.title_slug WHERE s.source_id=?`)
 		.bind(source_id).first())
@@ -584,17 +590,18 @@ internal.openapi(claim, async (c) => {
 		);
 	const db = c.env.JOB_DB!,
 		timestamp = now();
-	const { expressive } = c.req.valid("json");
+	const { expressive, mandarin } = c.req.valid("json");
 	await db
 		.prepare(`UPDATE generation_jobs SET state='failed',stage='failed',error_code='LEASE_EXHAUSTED',lease_token=NULL,lease_until=NULL,updated_at=?
 		WHERE state='running' AND lease_until<? AND attempts>=3`)
 		.bind(timestamp, timestamp)
 		.run();
 	const candidate = await db
-		.prepare(`SELECT id,state FROM generation_jobs WHERE (state='queued' OR (state='running' AND lease_until<? AND attempts<3))
-		AND (mode='standard' OR ?=1)
-		ORDER BY CASE WHEN state='queued' THEN 0 ELSE 1 END,priority DESC,created_at LIMIT 1`)
-		.bind(timestamp, expressive ? 1 : 0)
+		.prepare(`SELECT j.id,j.state FROM generation_jobs j JOIN source_books b ON b.source_id=j.source_id
+		WHERE (j.state='queued' OR (j.state='running' AND j.lease_until<? AND j.attempts<3))
+		AND (j.mode='standard' OR ?=1) AND (b.language='en' OR ?=1)
+		ORDER BY CASE WHEN j.state='queued' THEN 0 ELSE 1 END,j.priority DESC,j.created_at LIMIT 1`)
+		.bind(timestamp, expressive ? 1 : 0, mandarin ? 1 : 0)
 		.first<{ id: string; state: string }>();
 	if (!candidate) return c.json({ job: null }, 200, noStore);
 	const lease = crypto.randomUUID(),
@@ -623,11 +630,11 @@ internal.openapi(claim, async (c) => {
 	}
 	const job = await db
 		.prepare(
-			`SELECT j.${fields.replaceAll(",", ",j.")},b.epub_url,b.title,b.author FROM generation_jobs j JOIN source_books b ON b.source_id=j.source_id WHERE j.id=? AND j.lease_token=?`,
+			`SELECT j.${fields.replaceAll(",", ",j.")},b.epub_url,b.title,b.author,b.language,b.provenance,b.epub_sha256 FROM generation_jobs j JOIN source_books b ON b.source_id=j.source_id WHERE j.id=? AND j.lease_token=?`,
 		)
 		.bind(candidate.id, lease)
-		.first<Row & { epub_url: string; title: string; author: string }>();
-	return c.json({ job: job ? { ...job, lease_token: lease } : null }, 200, noStore);
+		.first<Row & { epub_url: string; title: string; author: string; language: "en" | "zh"; provenance: string; epub_sha256: string | null }>();
+	return c.json({ job: job ? { ...job, provenance: JSON.parse(job.provenance) as Record<string, unknown>, lease_token: lease } : null }, 200, noStore);
 });
 internal.openapi(heartbeat, async (c) => {
 	if (!ready(c.env))

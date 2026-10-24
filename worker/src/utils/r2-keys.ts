@@ -9,7 +9,7 @@ function sectionFilename(sequence: string | number): string {
 }
 
 export const r2Key = {
-	sourceEpub: (sourceHash: string) => `source-epubs/standardebooks/${sourceHash}/book.epub`,
+	sourceEpub: (sourceHash: string, provider = "standardebooks") => `source-epubs/${provider}/${sourceHash}/book.epub`,
 	bookPrefix,
 	cover: (author: string, title: string, ext = "jpg") =>
 		`${bookPrefix(author, title)}/cover.${ext}`,

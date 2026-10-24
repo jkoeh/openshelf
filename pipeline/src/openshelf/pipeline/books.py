@@ -23,7 +23,7 @@ from openshelf.pipeline.ops.gpu_preflight import (
     run_gpu_preflight,
 )
 from openshelf.scrapers.gutenberg import gutenberg_search
-from openshelf.scrapers.http import download_book, matches_filter, sanitize
+from openshelf.scrapers.http import download_book, download_path, matches_filter, sanitize
 from openshelf.scrapers.standard_ebooks import se_search
 
 
@@ -129,7 +129,7 @@ def search_and_download(args: argparse.Namespace) -> list[tuple[str, str]]:
                 print(f"  {author_name} - {title}")
                 ok = download_book(author_name, title, epub_url, source_dir, delay=args.delay)
                 if ok:
-                    epub_path = _downloaded_epub_path(source_dir, author_name, title)
+                    epub_path = download_path(author_name, title, epub_url, source_dir)
                     if os.path.isfile(epub_path):
                         downloaded.append((epub_path, source_name))
 
@@ -149,7 +149,7 @@ def search_and_download(args: argparse.Namespace) -> list[tuple[str, str]]:
                 print(f"  {author_name} - {title}")
                 ok = download_book(author_name, title, epub_url, source_dir, delay=args.delay)
                 if ok:
-                    epub_path = _downloaded_epub_path(source_dir, author_name, title)
+                    epub_path = download_path(author_name, title, epub_url, source_dir)
                     if os.path.isfile(epub_path):
                         downloaded.append((epub_path, source_name))
 
@@ -223,6 +223,8 @@ def find_local_epub(author: str, title: str, download_dir: str) -> str | None:
     """Return the local EPUB path for ``author`` and ``title`` if present."""
     author_slug = sanitize(author)
     title_slug = sanitize(title)
+    if not author_slug or not title_slug:
+        return None
 
     all_epubs = glob.glob(os.path.join(download_dir, "*", "*", "*.epub"))
     matches = [
@@ -265,7 +267,7 @@ def process_books(args: argparse.Namespace, parser: argparse.ArgumentParser | No
             logger.error("Local EPUB not found: %s", epub_path)
             return 1
         source_name = "local"
-        for src in ("gutenberg", "standard-ebooks"):
+        for src in ("gutenberg", "standard-ebooks", "wikisource"):
             if src in epub_path:
                 source_name = src
                 break
@@ -595,8 +597,10 @@ def _build_parser() -> argparse.ArgumentParser:
     consume.add_argument("--once", action="store_true")
     consume.add_argument("--device", choices=["auto", "cuda", "mps", "cpu"], default="auto")
 
-    catalog = subparsers.add_parser("sync-catalog", help="Index Gutenberg or Standard Ebooks metadata")
-    catalog.add_argument("--source", choices=["gutenberg", "standard-ebooks"], default="gutenberg")
+    catalog = subparsers.add_parser("sync-catalog", help="Index and cache validated source editions")
+    catalog.add_argument("--source", choices=["gutenberg", "standard-ebooks", "wikisource"], default="gutenberg")
+    catalog.add_argument("--language", choices=["en", "zh", "all"], default="all")
+    catalog.add_argument("--editions")
     catalog.add_argument("--catalog")
     catalog.add_argument("--rights-archive")
     catalog.add_argument("--after-page", type=int, default=0)
@@ -627,13 +631,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             return job_consumer.main(passed)
         if args.command == "sync-catalog":
             from openshelf.pipeline import source_catalog
-            passed = ["--source", args.source, "--after-page", str(args.after_page),
+            passed = ["--source", args.source, "--language", args.language, "--after-page", str(args.after_page),
                       "--max-pages", str(args.max_pages), "--api-base", args.api_base,
                       "--after-id", str(args.after_id), "--max-books", str(args.max_books)]
             if args.catalog:
                 passed += ["--catalog", args.catalog]
             if args.rights_archive:
                 passed += ["--rights-archive", args.rights_archive]
+            if args.editions:
+                passed += ["--editions", args.editions]
             if args.dry_run:
                 passed.append("--dry-run")
             return source_catalog.main(passed)

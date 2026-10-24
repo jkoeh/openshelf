@@ -108,6 +108,28 @@ test("read now keeps text available when the audio queue is full", async ({ page
   await page.screenshot({ path: testInfo.outputPath("source-reader-mobile.png"), fullPage: true });
 });
 
+test("Chinese Read now opens the cached edition when audio and upstream are unavailable", async ({ page }) => {
+  const chinese: SourceBook = { ...edition, source_id: "wikisource:zh:1:10:1234567890abcdef", title: "古书", author: "古人", language: "zh", reading_cached: true };
+  await mockCatalog(page, [chinese]);
+  await page.route("https://zh.wikisource.org/**", route => route.abort());
+  await page.route("**/api/v1/generation-jobs", route => route.fulfill({ status: 429, json: {
+    error: { code: "QUEUE_FULL", message: "The audio queue is full. Try again later." },
+  } }));
+  const files = {
+    "META-INF/container.xml": '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+    "book.opf": '<package><manifest><item id="one" href="one.xhtml"/></manifest><spine><itemref idref="one"/></spine></package>',
+    "one.xhtml": '<html><body><h1>第一回</h1><p>天地玄黃，宇宙洪荒。</p></body></html>',
+  };
+  const bytes = zipSync(Object.fromEntries(Object.entries(files).map(([name, text]) => [name, strToU8(text)])));
+  await page.route("**/api/v1/source-books/*/epub?inline=1", route => route.fulfill({ contentType: "application/epub+zip", body: Buffer.from(bytes) }));
+  await page.goto("/");
+  await page.getByRole("textbox", { name: "Search books" }).fill("古书");
+  await expect(page.getByText("Wikisource · Chinese · Mandarin audio")).toBeVisible();
+  await page.getByRole("button", { name: "Read now" }).click();
+  await expect(page.getByText("天地玄黃，宇宙洪荒。")).toBeVisible();
+  await expect(page.getByText("The audio queue is full. Try again later.")).toBeVisible();
+});
+
 for (const [stage, verb, percent] of [["download", "Gathering", 25], ["synthesis", "Hooting", 50]] as const) {
   test(`source reader shows ${percent}% for ${stage}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 });

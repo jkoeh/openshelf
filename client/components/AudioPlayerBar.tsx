@@ -188,6 +188,8 @@ export default function AudioPlayerBar({
 				{/* Previous chapter */}
 				<Pressable
 					onPress={onPrev}
+					accessibilityRole="button"
+					accessibilityLabel="Previous section"
 					disabled={!canPrev}
 					hitSlop={8}
 					style={{
@@ -205,6 +207,8 @@ export default function AudioPlayerBar({
 				{/* Play/Pause — central, prominent */}
 				<Pressable
 					onPress={onPlayPause}
+					accessibilityRole="button"
+					accessibilityLabel={playing ? "Pause" : "Play"}
 					disabled={!isLoaded}
 					hitSlop={8}
 					style={{ opacity: isLoaded ? 1 : 0.4 }}
@@ -220,6 +224,8 @@ export default function AudioPlayerBar({
 				{/* Next chapter */}
 				<Pressable
 					onPress={onNext}
+					accessibilityRole="button"
+					accessibilityLabel="Next section"
 					disabled={!canNext}
 					hitSlop={8}
 					style={{

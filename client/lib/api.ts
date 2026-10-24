@@ -59,8 +59,9 @@ export function fetchCatalog(params: CatalogParams = {}, fresh = false): Promise
 	return fetchJson<CatalogResponse>(`${API_BASE}/catalog${qs ? `?${qs}` : ""}`, fresh ? { cache: "no-store" } : undefined);
 }
 
-export async function fetchSourceBooks(q: string, signal?: AbortSignal): Promise<{ books: SourceBook[]; discovery_error?: string }> {
-	const result = await fetchJson<{ books: SourceBook[] }>(`${API_BASE}/source-books?q=${encodeURIComponent(q)}&limit=10`, { cache: "no-store", ...(signal ? { signal } : {}) });
+export async function fetchSourceBooks(q: string, signal?: AbortSignal, language?: "en" | "zh"): Promise<{ books: SourceBook[]; discovery_error?: string }> {
+	const result = await fetchJson<{ books: SourceBook[] }>(`${API_BASE}/source-books?q=${encodeURIComponent(q)}&limit=10${language ? `&language=${language}` : ""}`, { cache: "no-store", ...(signal ? { signal } : {}) });
+	if (language === "zh" || /\p{Script=Han}/u.test(q)) return result;
 	if (q.trim().length < 3 || result.books.some(book => book.source_id.startsWith("standardebooks:"))) return result;
 	try {
 		const live = await searchStandardEbooks(q, signal);

@@ -389,6 +389,10 @@ repair command; initial word sync is produced by `synth`.
 For engines with a device-aware adapter, `run --device cuda` passes `cuda` into
 the engine constructor before lazy model load; it also uses the same selected
 device for WhisperX forced alignment. If `--device` is omitted, `run` resolves
-CUDA, then MPS, then CPU. Chatterbox may use CPU only when the caller passes
+CUDA, then MPS, then CPU. Chatterbox and Qwen3 may use CPU only when the caller passes
 `--device cpu`; an automatic CPU fallback fails before registry, LLM, or TTS
 work starts.
+
+`--engine qwen3 --voice qwen3-serena` selects Mandarin CustomVoice from the
+isolated runtime. It rejects non-Chinese EPUBs and unsupported devices. `run.json`
+also pins Qwen synthesis settings as documented in `step0-run-context.md`.

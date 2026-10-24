@@ -28,6 +28,7 @@ from openshelf.pipeline.seams import (
     TextUnit,
     pause_frames,
 )
+from openshelf.pipeline.language import has_han, split_sentences, unit_count, unit_spans
 from openshelf.pipeline.tts_engine import (
     DirectedSegment,
     NullAligner,
@@ -72,7 +73,7 @@ _BRACKET_CUE_RE = re.compile(
 )
 _TAG_RE = re.compile(r"<[^>]+>")
 _PARAGRAPH_BREAK_RE = re.compile(r"\n\s*\n+")
-_SENTENCE_END_RE = re.compile(r"[.!?][\"'\u201d\u2019)\]]*\s*$")
+_SENTENCE_END_RE = re.compile(r"[.!?。！？][\"'\u201d\u2019」』)\]]*\s*$")
 _CHAPTER_LABEL_RE = re.compile(r"^(?:chapter\s+)?(?:[ivxlcdm]+|\d+)\.?$", re.IGNORECASE)
 
 # Lazy-loaded at first use — torch and kokoro are heavy deps
@@ -131,12 +132,12 @@ def get_device() -> str:
     return "cpu"
 
 
-def load_pipeline(device: str | None = None):
+def load_pipeline(device: str | None = None, language: str = TTS_LANGUAGE):
     kp = _import_kpipeline()
     if device is None:
         device = get_device()
     logger.info("Loading Kokoro pipeline on %s", device)
-    return kp(lang_code=TTS_LANGUAGE, device=device)
+    return kp(lang_code=language, device=device)
 
 
 def _generate_silence(sample_rate: int, duration_ms: int) -> np.ndarray:
@@ -313,6 +314,8 @@ def _join_synthesis_fragments(left: str, right: str) -> str:
         return right_clean
     if not right_clean:
         return left_clean
+    if has_han(left_clean + right_clean):
+        return left_clean + right_clean
     if (
         not _SENTENCE_END_RE.search(left_clean)
         and _word_count(left_clean) <= 8
@@ -339,6 +342,8 @@ def _split_synthesis_units(text: str) -> list[TextUnit]:
 
 
 def _word_count(text: str) -> int:
+    if has_han(text):
+        return unit_count(text)
     return len(re.findall(r"\b[\w']+\b", text))
 
 
@@ -346,6 +351,10 @@ def _last_sentence(text: str, max_words: int = 30) -> str:
     clean = _sanitize_synthesis_text(text)
     if not clean:
         return ""
+    if has_han(clean):
+        sentence = split_sentences(clean)[-1]
+        spans = unit_spans(sentence)
+        return sentence[spans[-max_words][0]:] if len(spans) > max_words else sentence
     sentences = re.findall(r"[^.!?]+[.!?][\"'\u201d\u2019]*|[^.!?]+$", clean)
     if not sentences:
         return ""

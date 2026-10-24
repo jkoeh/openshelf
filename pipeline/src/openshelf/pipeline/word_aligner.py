@@ -10,6 +10,7 @@ import math
 from dataclasses import dataclass
 
 from openshelf.pipeline.tts_engine import WordTimestamp
+from openshelf.pipeline.language import has_han, normalize_language, split_sentences, unit_count, unit_spans
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,8 @@ def _split_into_sentences(text: str) -> list[str]:
 
     Uses the same abbreviation-aware splitting as the text chunker.
     """
+    if has_han(text):
+        return split_sentences(text)
     import re
     # Protect common abbreviations from being treated as sentence ends
     _ABBREV = re.compile(
@@ -94,6 +97,36 @@ def validate_alignment(
     return violations
 
 
+def _chinese_text_units(words: list[WordEntry], chunk_texts: list[str]) -> list[WordEntry]:
+    """Combine real character timings into original Han/Latin text units."""
+    output = []
+    by_chunk: dict[int, list[WordEntry]] = {}
+    for word in words:
+        by_chunk.setdefault(word.chunk_idx, []).append(word)
+    for chunk_idx, text in enumerate(chunk_texts):
+        spans = unit_spans(text)
+        timed: dict[int, WordEntry] = {}
+        cursor = unit_index = 0
+        for word in by_chunk.get(chunk_idx, []):
+            if not word.word.strip():
+                continue
+            start = text.find(word.word.strip(), cursor)
+            if start < 0:
+                continue
+            cursor = start + len(word.word.strip())
+            while unit_index < len(spans) and spans[unit_index][1] <= start:
+                unit_index += 1
+            index = unit_index
+            while index < len(spans) and spans[index][0] < cursor:
+                left, right = spans[index]
+                previous = timed.get(index)
+                timed[index] = WordEntry(text[left:right], min(previous.start, word.start) if previous else word.start,
+                                         max(previous.end, word.end) if previous else word.end, chunk_idx)
+                index += 1
+        output.extend(timed.values())
+    return output
+
+
 def align_chapter(
     audio_path: str,
     chunk_texts: list[str],
@@ -147,10 +180,10 @@ def align_chapter(
             chunk_idx_map.append(i)
         else:
             chunk_duration = end_s - start_s
-            total_words = sum(len(s.split()) for s in sentences)
+            total_words = sum(unit_count(s) for s in sentences)
             cursor = start_s
             for sent in sentences:
-                sent_words = len(sent.split())
+                sent_words = unit_count(sent)
                 sent_duration = chunk_duration * sent_words / total_words if total_words > 0 else 0
                 sent_end = cursor + sent_duration
                 segments.append({"text": sent, "start": cursor, "end": sent_end})
@@ -161,7 +194,7 @@ def align_chapter(
         return []
 
     try:
-        model_a, metadata = whisperx.load_align_model(language_code=language, device=device)
+        model_a, metadata = whisperx.load_align_model(language_code=normalize_language(language), device=device)
         result = whisperx.align(segments, model_a, metadata, audio, device)
     except Exception:
         logger.exception("WhisperX alignment failed for %s", audio_path)
@@ -173,7 +206,9 @@ def align_chapter(
 
     words: list[WordEntry] = []
     for w in result.get("word_segments", []):
-        word_start = w.get("start", 0.0)
+        if w.get("start") is None or w.get("end") is None:
+            continue
+        word_start = w["start"]
         # Find which segment this word falls in
         chunk_idx = chunk_idx_map[-1]  # default to last chunk
         for seg_start, seg_end, cidx in seg_boundaries:
@@ -187,7 +222,7 @@ def align_chapter(
             chunk_idx=chunk_idx,
         ))
 
-    return words
+    return _chinese_text_units(words, chunk_texts) if normalize_language(language) == "zh" else words
 
 
 # --- chapter-NN.sync.json durable artifact (see plans/pipeline-resumable-repair-plan.md) ---
@@ -214,7 +249,7 @@ def sync_coverage_metrics(
 
     for index, words in enumerate(chunk_words):
         text = chunk_texts[index] if index < len(chunk_texts) else ""
-        reader_word_count = len(text.split())
+        reader_word_count = unit_count(text)
         aligned_word_count = len(words)
         chunk_first_missing = (
             aligned_word_count

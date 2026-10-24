@@ -10,6 +10,7 @@ import os
 from dataclasses import dataclass
 
 from openshelf.config import CHUNK_MAX_WORDS
+from openshelf.pipeline.language import normalize_language, split_chinese, unit_count
 
 _ABBREVIATIONS = re.compile(
     r"\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|Gen|Gov|Sgt|Cpl|Pvt|Rev|Hon|Pres"
@@ -187,7 +188,12 @@ def chunk_text(
     paragraphs: list[str],
     max_words: int = CHUNK_MAX_WORDS,
     element_ids: list[str] | None = None,
+    language: str = "en",
 ) -> list[Chunk]:
+    if max_words < 1:
+        raise ValueError("max_words must be positive")
+    chinese = normalize_language(language) == "zh"
+    count = unit_count if chinese else lambda text: len(text.split())
     if element_ids is not None and len(element_ids) != len(paragraphs):
         raise ValueError(
             f"element_ids length {len(element_ids)} must match paragraphs length {len(paragraphs)}"
@@ -203,11 +209,11 @@ def chunk_text(
         para = para.strip()
         if not para:
             continue
-        wc = len(para.split())
+        wc = count(para)
         if wc <= max_words:
             para_units.append((para, para_idx))
         else:
-            for sub in _chunk_paragraph(para, max_words):
+            for sub in (split_chinese(para, max_words) if chinese else _chunk_paragraph(para, max_words)):
                 para_units.append((sub, para_idx))
 
     if not para_units:
@@ -221,7 +227,7 @@ def chunk_text(
     current_para_end: int = para_units[0][1]
 
     for unit_text, para_idx in para_units:
-        u_wc = len(unit_text.split())
+        u_wc = count(unit_text)
         if current_wc + u_wc <= max_words:
             current_parts.append(unit_text)
             current_wc += u_wc

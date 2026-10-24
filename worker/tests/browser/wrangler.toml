@@ -1,0 +1,33 @@
+# Test-only local resources; no production identifiers or secret files.
+name = "openshelf-browser-test"
+main = "../../src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+PC_TOKEN = "browser-test-pc-token-longer-than-twenty-four"
+OWNER_TOKEN = "browser-test-owner-token-longer-than-twenty-four"
+
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "browser-test-books"
+
+[[d1_databases]]
+binding = "JOB_DB"
+database_name = "browser-test-jobs"
+database_id = "00000000-0000-0000-0000-000000000001"
+
+[[ratelimits]]
+name = "SEARCH_RATE_LIMITER"
+namespace_id = "9001"
+simple = { limit = 1000, period = 60 }
+
+[[ratelimits]]
+name = "CREATE_RATE_LIMITER"
+namespace_id = "9002"
+simple = { limit = 1000, period = 60 }
+
+[[ratelimits]]
+name = "AUTH_RATE_LIMITER"
+namespace_id = "9003"
+simple = { limit = 1000, period = 60 }

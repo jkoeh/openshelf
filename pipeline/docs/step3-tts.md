@@ -6,6 +6,12 @@
 
 ## Purpose
 
+OPF language controls models/alignment (`en`/`zh`). Mandarin standard jobs use
+Qwen3 CustomVoice Serena; optional Mandarin Kokoro uses `z` and
+Mandarin-only casting; shared Chinese units control synthesis budgets and
+WhisperX `zh` supplies character timings. Unsupported engine/language pairs fail
+before synthesis. See `source-access.md` for the complete language contract.
+
 Generate section audio from a deterministic narrator heading plus directed body
 segments. The public output contract is the same for every engine:
 
@@ -23,6 +29,20 @@ can modify seam pauses without rerunning the LLM or TTS when exact seam metadata
 is available.
 
 ## Engine Boundary
+
+Qwen3 implements this same boundary for Chinese with a pinned CustomVoice model,
+fixed narration instructions and `qwen3-serena` rendition. It returns 24 kHz WAV
+and uses WhisperX `zh`, without an LLM performance pass. Resume identity includes
+its immutable model/settings. See `engine-knowledge-base.md` for the exact policy.
+
+An opt-in local `qa tts-benchmark` command compares Qwen3-TTS CustomVoice with
+existing engines using short authored English/Chinese samples. It records WAVs,
+runtime/model identity, synthesis RTF and peak CUDA allocation. A separate
+`--align-only` invocation uses the existing WhisperX path and original text.
+This experiment does not change the engine factory, pipeline output contract,
+voice/rendition identities, resume settings or public job defaults. See
+`ops-tools.md` for reproducible commands and `engine-knowledge-base.md` for the
+experimental runtime contract.
 
 TTS engines implement `TTSEngine` from `tts_engine.py`. The selected engine is configured with `TTS_ENGINE` or `openshelf-pipeline ... --engine`.
 
