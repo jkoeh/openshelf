@@ -47,7 +47,7 @@ def _dispatch_group(
 
 
 def _ops_main(argv: Sequence[str] | None = None) -> int:
-    from openshelf.pipeline.ops import catalog, doctor, gpu_preflight
+    from openshelf.pipeline.ops import catalog, doctor, gpu_preflight, recover_source_job
 
     return _dispatch_group(
         prog="openshelf-pipeline ops",
@@ -56,6 +56,7 @@ def _ops_main(argv: Sequence[str] | None = None) -> int:
             "gpu-preflight": ("Check GPU readiness", gpu_preflight.main),
             "doctor": ("Inspect a local build", doctor.main),
             "catalog": ("Build/upload catalog.json", catalog.main),
+            "recover-source-job": ("Resume one long standard Mandarin source job", recover_source_job.main),
         },
     )
 
@@ -80,13 +81,19 @@ def _voices_main(argv: Sequence[str] | None = None) -> int:
 
 
 def _qa_main(argv: Sequence[str] | None = None) -> int:
-    from openshelf.pipeline.qa import audio
+    from openshelf.pipeline.qa import tts_benchmark
+
+    def audio_main(rest: Sequence[str] | None = None) -> int:
+        from openshelf.pipeline.qa import audio
+
+        return audio.main(rest)
 
     return _dispatch_group(
         prog="openshelf-pipeline qa",
         argv=list(argv or []),
         commands={
-            "audio": ("Validate audio quality", audio.main),
+            "audio": ("Validate audio quality", audio_main),
+            "tts-benchmark": ("Compare short local TTS samples", tts_benchmark.main),
         },
     )
 

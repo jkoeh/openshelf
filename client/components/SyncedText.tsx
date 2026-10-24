@@ -3,6 +3,7 @@ import { type LayoutChangeEvent, Text, View } from "react-native";
 import { useTheme } from "../hooks/useTheme";
 import type { WordEntry } from "../types";
 import WordSpan from "./WordSpan";
+import { alignedTextParts } from "../lib/aligned-text";
 
 interface SyncedChunkProps {
   chunkIndex: number;
@@ -52,6 +53,8 @@ const SyncedChunk = memo(function SyncedChunk({
     }
     return result;
   }, [words, chunkIndex]);
+  const parts = useMemo(() => alignedTextParts(chunkText,
+    chunkWords.map(({ word, globalIdx }) => ({ word: word.word, index: globalIdx }))), [chunkText, chunkWords]);
 
   // If no words for this chunk, render plain text
   if (chunkWords.length === 0) {
@@ -83,12 +86,15 @@ const SyncedChunk = memo(function SyncedChunk({
       }}
     >
       <Text style={{ flexDirection: "row", flexWrap: "wrap" }}>
-        {chunkWords.map(({ word: w, globalIdx }) => (
+        {parts.map((part, index) => part.index === undefined ? (
+          <Text key={`gap-${index}`} style={{ color: colors.text, fontSize, lineHeight }}>{part.text}</Text>
+        ) : (
           <WordSpan
-            key={globalIdx}
-            word={w.word}
-            isActive={isActiveChunk && globalIdx === activeWordIndex}
-            wordIndex={globalIdx}
+            key={part.index}
+            word={part.text}
+            trailingSpace={false}
+            isActive={isActiveChunk && part.index === activeWordIndex}
+            wordIndex={part.index}
             highlightColor={colors.highlight}
             textColor={colors.text}
             fontSize={fontSize}

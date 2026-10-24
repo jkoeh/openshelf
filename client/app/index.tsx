@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, Text, useWindowDimensions, View } from "react-native";
 import BookCard from "../components/BookCard";
 import AdminSignIn from "../components/AdminSignIn";
+import OwnerDocuments from "../components/OwnerDocuments";
 import SearchBar from "../components/SearchBar";
 import SourceSuggestions from "../components/SourceSuggestions";
 import { discoveryColors } from "../constants/discovery";
@@ -92,6 +93,7 @@ export default function CatalogPage() {
             </Text>
             <SearchBar value={query} onChangeText={setQuery} />
             <SourceSuggestions query={query} adminToken={adminToken} onAdminExpired={() => setAdminToken(null)} />
+            {adminToken && <OwnerDocuments token={adminToken} onExpired={() => setAdminToken(null)} />}
             {books.length > 0 && <Text accessibilityRole="header" style={{
               color: palette.text, fontFamily: "Georgia", fontSize: 27,
               fontWeight: "700", marginTop: 36, marginBottom: 8,

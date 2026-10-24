@@ -6,16 +6,18 @@ build-backend = "setuptools.build_meta"
 name = "openshelf"
 version = "0.1.0"
 description = "Open source public domain audiobook platform"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 
 dependencies = [
     "kokoro",
+    "misaki[zh]",
     "f5-tts",
     "chatterbox-tts",
     "soundfile",
     "numpy",
     "pydub",
     "ebooklib",
+    "pypdf>=6.21.2,<7",
     "beautifulsoup4",
     "boto3",
     "anthropic",

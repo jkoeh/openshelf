@@ -16,8 +16,10 @@ class Chunk:
     el_end: str = ""
 ```
 
-The sentence-aware 200-word algorithm and body element-ID tracking remain
-unchanged.
+`chunk_text(..., language='en')` preserves English sentence-aware 200-word
+packing and body element IDs. Chinese uses 200 text units (Han characters and
+non-Han words), Chinese punctuation boundaries and hard splits as needed,
+without inserting character spaces. See `source-access.md` for shared units.
 
 Each section writes `section-NN.chunks.json`:
 

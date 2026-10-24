@@ -12,6 +12,8 @@ export interface CatalogBook {
 }
 
 export interface SourceBook {
+  language?: "en" | "zh";
+  reading_cached?: boolean;
   indexed?: boolean;
   source_id: string;
   title: string;
@@ -34,7 +36,7 @@ export interface GenerationJob {
   stage: string;
   author_slug: string | null;
   title_slug: string | null;
-	error_code: "RIGHTS_NOT_VERIFIED" | "BOOK_TOO_LONG" | "GENERATION_FAILED" | null;
+	error_code: "RIGHTS_NOT_VERIFIED" | "BOOK_TOO_LONG" | "INVALID_DOCUMENT" | "GENERATION_FAILED" | null;
   created_at: string;
   updated_at: string;
 }

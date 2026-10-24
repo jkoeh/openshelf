@@ -48,22 +48,21 @@ books/{author-slug}/{title-slug}/
     rendition-manifest.json         # ordered sections; uploaded last
 ```
 
-Build files use immutable cache headers. The book manifest and catalog use a short cache; the rendition manifest signals that a complete build has been uploaded. Audit files and `run.json` are uploaded when present.
+Build files use immutable cache headers. The book manifest uses a short cache; catalog discovery reads current D1 publications with `no-store`. The R2 catalog is a publication/audit artifact. The rendition manifest signals that a complete build has been uploaded. Audit files and `run.json` are uploaded when present.
 
 ### Worker API
 
-Under `/api/v1`, the Worker serves `GET /catalog`, `/books/:author/:title`, `/books/:author/:title/builds`, `/books/:author/:title/sections/:sequence`, `/books/:author/:title/sections/:sequence/audio`, and book cover and EPUB routes. Section and audio requests identify a rendition and build. The catalog contains already-published audiobooks and its `q` search is a case-insensitive title/author substring filter. The API contract is generated from route schemas at `/api/v1/openapi.json`, with interactive docs at `/api/v1/docs`.
+Under `/api/v1`, the Worker serves `GET /catalog`, `/books/:author/:title`, `/books/:author/:title/builds`, `/books/:author/:title/sections/:sequence`, `/books/:author/:title/sections/:sequence/audio`, and book cover and EPUB routes. Section and audio requests identify a rendition and build. The catalog contains already-published audiobooks and its `q` search reads the current D1 title/author index with Chinese script normalization and no result caching. The API contract is generated from route schemas at `/api/v1/openapi.json`, with interactive docs at `/api/v1/docs`.
 
 The additive job API has public `GET /source-books` suggestions, capped public
 job creation and status reads, owner-authenticated cancel/retry/regeneration
 and expressive requests,
 and PC-only source sync, claim, heartbeat, progress, and finish routes. D1 stores the source index and leases. The Worker
-checks the R2 book pointer, section objects, and catalog before completion.
-Rate-limit bindings protect public search and authentication attempts. A bounded
-15-second cache within each Worker instance can save D1 reads for repeated
-suggestions after rate limiting; it is best effort because instances do not
-share memory. Clients receive `no-store` and may see job availability lag by up
-to 15 seconds. D1 caps queued jobs, daily starts, and job attempts. Generation
+checks the R2 book pointer and section objects, then updates the D1 publication
+index before completion. Rate-limit bindings protect public search and
+authentication attempts. Source and published-book searches query current D1
+data on every request and return `no-store`; neither uses an in-isolate result
+cache or upstream search. D1 caps queued jobs, daily starts, and job attempts. Generation
 is public for the fixed Kokoro voice; once configured, Google sign-in for
 `johnkoeh@gmail.com` allows browser cancel, retry, regeneration, and expressive
 requests. The expressive job uses Chatterbox `af_heart` and batched OpenAI
@@ -77,7 +76,7 @@ sign-out. Successful sign-in closes the modal and enables job actions in search.
 
 ## Development
 
-Prerequisites: Node.js, Python 3.11+, `uv`, and `ffmpeg`. A CUDA or MPS GPU is recommended for generation; CPU synthesis is slow. From the repository root:
+Prerequisites: Node.js, Python 3.12+, `uv`, and `ffmpeg`. A CUDA or MPS GPU is recommended for generation; CPU synthesis is slow. From the repository root:
 
 ```bash
 npm install
@@ -214,11 +213,14 @@ Read now supports both sources; each edition keeps a separate audio job/build.
 Real Standard Ebooks imports also download and verify each EPUB, then upload a
 reading copy to R2 because Standard Ebooks blocks Cloudflare's direct downloads.
 Files above the reader's 32 MiB bound or with unverifiable rights are skipped.
-When a Standard Ebooks title is missing from the index, the client searches the
-official website directly and offers Read now. Missing cached EPUBs fall back to
-the exact official compatible EPUB. Direct requests carry no owner credentials;
-source download limits still apply. Live editions can be read before indexing,
-while audio requests require a PC-verified catalog entry.
+Search always queries our D1 index and never contacts an upstream website.
+There is no suggestion-result cache: new imports, reading-cache availability and
+audio job states appear on the next request. Simplified and traditional Chinese
+queries match the same editions while results and book text retain the source
+script. Missing editions need a PC import; discovery is independent of upstream
+request limits. Legacy Standard Ebooks reading links with a missing cached EPUB
+still fall back to the exact official compatible EPUB without owner credentials;
+source download limits apply only to that reading fallback and catalog import.
 
 For production, use `worker/.secrets/prod-pc-token` as `OPENSHELF_PC_TOKEN`
 on the PC, the
@@ -270,11 +272,14 @@ $env:OPENSHELF_PC_TOKEN = (Get-Content worker/.secrets/prod-pc-token -Raw).Trim(
 .\.venv\Scripts\python.exe pipeline/scripts/openshelf-pipeline.py books sync-catalog --catalog download/pg_catalog.csv.gz --rights-archive download/rdf-files.tar.bz2 --api-base https://openshelf-api.johnkoeh.workers.dev/api/v1 --max-books 500
 ```
 
-This imports English text metadata in batches of 50;
-it does not claim a job or invoke the GPU. Import checks the official RDF
-archive for an explicit US public-domain marker and a matching EPUB URL;
-the PC checks official RDF and the downloaded EPUB's own rights notice before
-synthesis. Unknown or copyrighted records fail
+This imports English and Chinese editions in bounded requests of at most 50,
+validating and caching EPUB reading copies independently of audio. Use
+`--language zh` for Chinese-only imports or `--dry-run` to inspect metadata
+without writes. It does not claim a job or invoke the GPU. Import checks the
+official RDF archive for an explicit US public-domain marker, matching ID,
+language and EPUB URL, then downloads through the approved Gutenberg mirror
+or a local rsync collection and checks embedded identity/rights. Cached consumer
+jobs verify the copy's hash, identity and language before synthesis. Unknown or copyrighted records fail
 closed. Gutenberg's marker establishes U.S. public-domain status, not rights in
 every country. OpenShelf does not geographically restrict public reading; the
 operator remains responsible for distribution rights outside the U.S. Manual
@@ -311,8 +316,25 @@ Offline API, PC, and headless browser checks run in `.github/workflows/verify.ym
 The staging acceptance run covered index sync, autocomplete, protected creation,
 PC claim, GPU synthesis and alignment, R2 publication, job completion, search
 availability, section data, and ranged audio for *The Tale of Peter Rabbit*
-(Gutenberg #14838, 6.0 minutes). The browser automation covers the client flow
-against a mocked API; the live run used the Worker and PC CLI.
+(Gutenberg #14838, 6.0 minutes). The mocked browser suite covers UI states, owner
+controls and source fallbacks. `cd client; npm run test:e2e:integration` additionally
+runs the browser against the real Worker with temporary local D1/R2 storage and
+all migrations applied. It checks English/Chinese cached reading while upstream
+is blocked, language-aware claim/publication, AAC playback, highlighting,
+tap-to-seek, section order/advance and rendition/build isolation. A fixture
+producer stands in for the PC's import, synthesis and alignment; browser API
+requests, job transitions and storage are real. The test harness under
+`worker/tests/browser/` has no production bindings or credentials. Both browser
+suites run in CI; GPU/WhisperX acceptance stays a separate release check.
+
+For a clean offline Python test environment, install CPU PyTorch, then the test
+dependencies (do this in a separate environment to retain a GPU installation):
+
+```text
+python -m pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+python -m pip install -r pipeline/requirements-test.txt
+python -m unittest discover -s pipeline/tests -t . -v
+```
 
 ## Deployment
 
@@ -337,7 +359,10 @@ The production Worker reads `worker/wrangler.toml`, where `[env.production]` dep
 - Production branch: `main`
 - Build command: `npm run build:web`
 - Output directory: `dist`
-- Environment variable: `EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1`
+- Set the Pages production build variable `EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1`.
+- Set the Pages preview build variable `EXPO_PUBLIC_API_BASE=https://openshelf-api-staging.johnkoeh.workers.dev/api/v1`.
+  Each environment also needs the public Google client ID above. A Pages build
+  fails when its API base is missing, instead of publishing a localhost client.
 - Owner login build variable: `EXPO_PUBLIC_GOOGLE_CLIENT_ID` (the same public
   Google OAuth Web client ID configured as the Worker's `GOOGLE_CLIENT_ID`).
 

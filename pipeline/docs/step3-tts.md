@@ -6,6 +6,12 @@
 
 ## Purpose
 
+OPF language controls models/alignment (`en`/`zh`). Mandarin standard jobs use
+Qwen3 CustomVoice Serena; optional Mandarin Kokoro uses `z` and
+Mandarin-only casting; shared Chinese units control synthesis budgets and
+WhisperX `zh` supplies character timings. Unsupported engine/language pairs fail
+before synthesis. See `source-access.md` for the complete language contract.
+
 Generate section audio from a deterministic narrator heading plus directed body
 segments. The public output contract is the same for every engine:
 
@@ -23,6 +29,20 @@ can modify seam pauses without rerunning the LLM or TTS when exact seam metadata
 is available.
 
 ## Engine Boundary
+
+Qwen3 implements this same boundary for Chinese with a pinned CustomVoice model,
+fixed narration instructions and `qwen3-serena` rendition. It returns 24 kHz WAV
+and uses WhisperX `zh`, without an LLM performance pass. Resume identity includes
+its immutable model/settings. See `engine-knowledge-base.md` for the exact policy.
+
+An opt-in local `qa tts-benchmark` command compares Qwen3-TTS CustomVoice with
+existing engines using short authored English/Chinese samples. It records WAVs,
+runtime/model identity, synthesis RTF and peak CUDA allocation. A separate
+`--align-only` invocation uses the existing WhisperX path and original text.
+This experiment does not change the engine factory, pipeline output contract,
+voice/rendition identities, resume settings or public job defaults. See
+`ops-tools.md` for reproducible commands and `engine-knowledge-base.md` for the
+experimental runtime contract.
 
 TTS engines implement `TTSEngine` from `tts_engine.py`. The selected engine is configured with `TTS_ENGINE` or `openshelf-pipeline ... --engine`.
 
@@ -221,6 +241,32 @@ not call the LLM again. Adaptive performance direction may split one reader
 chunk into multiple directed segments when the LLM decides the chunk needs
 different controls internally; those segments still synthesize and align as one
 reader chunk.
+
+## Local synthesis checkpoints
+
+`synthesis_checkpoints.py` stores completed heading/body synthesis regions under
+`section-NN.checkpoints/` beside the section artifacts. Each region has a float32
+WAV plus JSON containing its input fingerprint, WAV SHA-256, sample rate, words
+and synthesis seam audit. The fingerprint covers the exact directed text/voice,
+engine settings, alignment identity, pause policy and absolute start frame. A
+restart reuses only an exact matching, readable, finite mono waveform whose hash
+and metadata agree. Partial or invalid checkpoints are ignored and regenerated.
+Writes replace temporary files atomically, with JSON committed after audio.
+
+These checkpoints are private local resume artifacts; they are never uploaded
+to R2 and never replace public section audio, sync, or `section_data.json`.
+They retain the same model and narrator identity as `run.json`. Explicit force
+generation bypasses checkpoints. Successful regions remain available after an
+interruption so a long spine section need not repeat hours of completed work.
+
+A completed section also writes `section-NN.complete.json` locally after AAC,
+sync and seam audit have all been committed. It contains their SHA-256 hashes
+and the section input fingerprint. A validated `--resume` invocation skips that
+section only when every hash, original chunk text, alignment metadata and encoded
+duration agree. An incomplete, corrupt or incompatible section regenerates,
+reusing matching region checkpoints. Old sections without completion receipts
+are not silently trusted. Explicit force bypasses both reuse layers. Neither
+completion receipts nor checkpoint WAVs are published.
 
 ## Section Sync Artifact
 
@@ -553,6 +599,8 @@ word text and clamps its start/end just after the previous emitted word.
 - Empty chunks list: raise `ValueError`
 - Single chunk failure: log warning, mark skipped, continue
 - All chunks fail: raise `RuntimeError`
+- Opt-in `OPENSHELF_REQUIRE_COMPLETE_AUDIO=1` fails the full DAG before manifests
+  or upload when any body chunk was skipped; local completed regions are kept.
 - Failed alignment: return audio with empty word list for that chunk
 - Failed steered segment: retry original text before skipping the chunk
 - Missing optional engine package, model load failure, or missing F5 reference

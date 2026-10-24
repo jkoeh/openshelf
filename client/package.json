@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "build:web": "expo export --platform web",
+    "test:e2e:integration": "playwright test --config playwright.integration.config.ts",
+    "build:web": "node -e \"if (process.env.CF_PAGES && !process.env.EXPO_PUBLIC_API_BASE) { console.error('Set EXPO_PUBLIC_API_BASE for this Pages environment.'); process.exit(1); }\" && expo export --platform web",
     "build:ios": "eas build --platform ios",
     "build:android": "eas build --platform android"
   },

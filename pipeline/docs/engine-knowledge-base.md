@@ -4,6 +4,12 @@
 
 ## Purpose
 
+Mandarin Kokoro uses OPF language `zh`, KPipeline `z` and the eight `zf_*`/`zm_*`
+presets documented upstream. Only matching-language voices are offered for
+casting. `create_aligner(..., language='zh')` uses WhisperX Chinese character
+alignment. See `source-access.md`; unsupported language/engine pairs fail before
+models load.
+
 This document is the progressive-disclosure map for every TTS engine adapter in
 OpenShelf. Before changing an engine, read only that engine's section here,
 then open the linked adapter and the relevant step docs:
@@ -44,6 +50,61 @@ Engine steering lives on `DirectedSegment.emotion`, `DirectedSegment.speed`,
 Adapters return `TTSResult(audio, sample_rate, words)`. Current production
 engines set `words=None`; `WhisperXAligner` remains the canonical final sync
 source.
+
+## Qwen3-TTS (Mandarin default)
+
+`engines/qwen3.py` implements the shared adapter contract for Chinese (`zh`)
+using `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` pinned to
+`0c0e3051f131929182e2c023b9537f8b1c68adfe`. Public standard Chinese jobs use
+voice/rendition `qwen3-serena`; manual runs also offer `qwen3-vivian` and
+`qwen3-uncle-fu`. English remains Kokoro/Chatterbox; the Qwen production adapter
+rejects non-Chinese languages. Model loading is lazy; CUDA uses BF16/SDPA,
+explicit CPU uses float32. MPS is not supported by this adapter. Automatic CPU
+fallback is rejected before model/LLM work, like Chatterbox.
+
+`generate_custom_voice` receives the original synthesis text, explicit Chinese,
+the mapped built-in speaker, a fixed literary narration instruction, seed 1337
+and max_new_tokens=2048. Paragraph/chunk splitting retains Chinese punctuation.
+The adapter returns finite nonempty mono 24 kHz audio with `words=None`, and
+rejects unexpected sample rates. It does not request an LLM performance pass,
+voice cloning, numeric speed control or prompt markers. Its fixed instruction
+provides consistent native style control; public callers cannot replace it.
+WhisperX remains the final timestamp source, including headings and credits.
+No reference clips are required. The per-segment audit records model, pinned
+revision, speaker and instruction. `synthesis_settings` carries model/revision,
+instruction hash, seed, generation limit, precision, attention and package version
+into immutable `run.json.engine_settings`. Settings changes invalidate resume.
+
+The outbound consumer launches Chinese jobs with `OPENSHELF_MANDARIN_PYTHON`
+and optionally `OPENSHELF_QWEN_CACHE`, leaving the English runtime separate.
+See `requirements-mandarin.txt` and `ops-tools.md`. Model downloads may be
+prepared beforehand; no network API is used for narration or performance.
+
+## Local Qwen3-TTS comparison
+
+`qa tts-benchmark --engine qwen3` evaluates
+`Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` using matching authored samples.
+It is a diagnostic command independent of the production adapter and job modes.
+The runtime is the official `qwen-tts` package in an isolated Python 3.12
+environment because its Transformers requirements differ from existing engines.
+CUDA uses BF16 and PyTorch SDPA by default (no native Windows FlashAttention
+build required). CPU uses float32. Each sample is generated separately with
+explicit `Chinese` or `English`, a built-in native speaker, a fixed seed and
+a recorded narration instruction. Model downloads can be pinned by `--revision`;
+the resolved checkpoint commit is recorded when available. Outputs record the
+actual runtime versions and model configuration. Model loading, synthesis and
+alignment times are reported separately; RTF is synthesis seconds / audio seconds.
+
+The comparison includes modern prose, dialogue, proper names/numerals and
+traditional-script classical prose. Samples are authored fixtures, not imported
+editions. WAVs and reports are local and never become a book or rendition.
+The existing Chinese WhisperX path aligns each sample against its original text
+in a second process/environment after synthesis exits, recording real timestamp
+coverage and invariant violations. Forced alignment does not establish correct
+pronunciation or transcription accuracy; listening and long-form testing are
+required before claiming better narration or changing production defaults.
+
+Upstream: https://github.com/QwenLM/Qwen3-TTS
 
 ## Kokoro
 

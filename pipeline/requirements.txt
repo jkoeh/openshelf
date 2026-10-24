@@ -1,6 +1,8 @@
 ebooklib
+pypdf>=6.21.2,<7
 beautifulsoup4
 kokoro
+misaki[zh]
 f5-tts
 chatterbox-tts
 soundfile

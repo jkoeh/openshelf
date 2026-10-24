@@ -28,7 +28,7 @@ def normalize_search_text(value: str) -> str:
     value = unicodedata.normalize("NFKD", value.casefold())
     value = "".join(ch for ch in value if not unicodedata.combining(ch))
     value = re.sub(r"['\u2018\u2019\u02bc]", "", value)
-    value = re.sub(r"[^a-z0-9]+", " ", value)
+    value = re.sub(r"[^\w]+", " ", value, flags=re.UNICODE)
     return " ".join(value.split())
 
 
@@ -67,40 +67,41 @@ def _is_epub(data: bytes) -> bool:
     return data[:4] == b"PK\x03\x04"
 
 
-def _force_se_cookie() -> None:
-    """Force the Standard Ebooks download-count cookie high enough to get files.
+def source_id_from_url(url: str) -> str:
+    from urllib.parse import urlsplit
+    from openshelf.pipeline.gutenberg_source import mirror_url
+    from openshelf.pipeline.standard_ebooks_source import validate_url
+    parsed = urlsplit(url)
+    if parsed.hostname == "standardebooks.org" and "/downloads/" in parsed.path:
+        source_id = "standardebooks:" + parsed.path.removeprefix("/ebooks/").split("/downloads/", 1)[0]
+        validate_url(url, source_id)
+        return source_id
+    match = re.match(r"/(?:ebooks|cache/epub)/([1-9][0-9]*)(?:[./]|$)", parsed.path)
+    if not match:
+        raise ValueError("source EPUB locator has no exact edition ID")
+    source_id = "gutenberg:" + match.group(1)
+    mirror_url(url, source_id)
+    return source_id
 
-    SE requires download-count >= 5 before serving actual EPUB files.
-    We clear any existing download-count cookie and set ours.
-    """
-    # Remove any existing download-count cookies
-    to_remove = [c for c in _cookie_jar if c.name == "download-count"]
-    for c in to_remove:
-        _cookie_jar.clear(c.domain, c.path, c.name)
 
-    cookie = http.cookiejar.Cookie(
-        version=0, name="download-count", value="5",
-        port=None, port_specified=False,
-        domain=".standardebooks.org", domain_specified=True,
-        domain_initial_dot=True,
-        path="/", path_specified=True,
-        secure=True, expires=None, discard=True,
-        comment=None, comment_url=None, rest={"SameSite": "Lax"},
-    )
-    _cookie_jar.set_cookie(cookie)
+def download_path(author_name, title, epub_url, source_dir):
+    import os
+    from openshelf.pipeline.standard_ebooks_source import title_slug
+    source_id = source_id_from_url(epub_url)
+    return os.path.join(source_dir, sanitize(author_name) or "unknown", title_slug(title, source_id) + ".epub")
 
 
 def download_book(author_name, title, epub_url, source_dir, delay=2, dry_run=False):
     """Download a single EPUB into source_dir/author/title.epub."""
     import os
 
-    author_slug = sanitize(author_name)
-    title_slug = sanitize(title)
-    if not title_slug:
-        title_slug = "untitled"
-
-    author_dir = os.path.join(source_dir, author_slug)
-    filepath = os.path.join(author_dir, title_slug + ".epub")
+    try:
+        source_id = source_id_from_url(epub_url)
+        filepath = download_path(author_name, title, epub_url, source_dir)
+    except ValueError as exc:
+        print(f"  [FAIL] {exc}")
+        return False
+    author_dir = os.path.dirname(filepath)
 
     if dry_run:
         print(f"  [DRY RUN] {author_name} — {title}")
@@ -115,21 +116,18 @@ def download_book(author_name, title, epub_url, source_dir, delay=2, dry_run=Fal
     print(f"  [DOWNLOAD] {author_name} — {title}")
     print(f"             {epub_url}")
 
-    data = make_request(epub_url, delay=delay)
-    if data is None:
-        print(f"  [FAIL] Could not download {epub_url}")
+    from pathlib import Path
+    from openshelf.pipeline.job_consumer import fetch_epub, check_epub_rights, verify_public_domain
+    try:
+        verify_public_domain(source_id)
+        fetch_epub(epub_url, source_id, Path(filepath))
+        check_epub_rights(Path(filepath), source_id)
+    except (ValueError, OSError) as exc:
+        Path(filepath).unlink(missing_ok=True)
+        print(f"  [FAIL] Source validation: {type(exc).__name__}")
         return False
-
-    # Standard Ebooks serves an HTML page instead of the file until a
-    # download-count cookie >= 5. Detect and retry with the cookie set.
-    if not _is_epub(data) and b"standardebooks.org" in data[:2000]:
-        _force_se_cookie()
-        data = make_request(epub_url, delay=delay)
-        if data is None or not _is_epub(data):
-            print(f"  [FAIL] Server returned HTML instead of EPUB: {epub_url}")
-            return False
-
-    with open(filepath, "wb") as f:
-        f.write(data)
-    print(f"  [OK] {filepath} ({len(data)} bytes)")
+    finally:
+        if delay > 0:
+            time.sleep(delay)
+    print(f"  [OK] {filepath} ({os.path.getsize(filepath)} bytes)")
     return True

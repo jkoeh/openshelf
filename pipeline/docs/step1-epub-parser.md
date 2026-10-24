@@ -81,7 +81,9 @@ Spine position never creates an ordinal. `ordinal` is populated only from a
 source chapter label or ordinal. Named special sections remain unnumbered.
 
 Recognized named sections are retained even when short. Other candidates need
-at least 50 spoken body words. Empty/decorative candidates are skipped.
+at least 50 spoken body units: whitespace words for English, Han characters and
+non-Han words for Chinese. Chinese chapter labels such as `第一回` retain original
+speech and ordinal. Empty/decorative candidates are skipped.
 
 ## Heading extraction
 

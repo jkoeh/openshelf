@@ -65,7 +65,9 @@ describe("owner book management", () => {
 		method, headers: token ? { Authorization: `Bearer ${token}` } : {},
 	}, bindings);
 	beforeEach(async () => {
-		await env.JOB_DB.exec("DELETE FROM book_deletions; DELETE FROM generation_jobs; DELETE FROM generation_starts; DELETE FROM source_tokens; DELETE FROM source_books;");
+		await env.JOB_DB.exec("DELETE FROM published_books; DELETE FROM book_deletions; DELETE FROM generation_jobs; DELETE FROM generation_starts; DELETE FROM source_tokens; DELETE FROM source_books;");
+		await env.JOB_DB.prepare(`INSERT INTO published_books(author_slug,title_slug,author,title,source,rendition,current_build,total_duration_seconds,section_count,has_cover,title_search,author_search,updated_at)
+			VALUES ('jane-austen','pride-g1342','Jane Austen','Pride and Prejudice','gutenberg','kokoro-af-heart',?,12,1,0,'pride and prejudice','jane austen','2026-10-11')`).bind(BUILD).run();
 		await env.JOB_DB.prepare(`INSERT INTO source_books(source_id,title,author,epub_url,author_slug,title_slug,updated_at)
 			VALUES ('gutenberg:1342','Pride and Prejudice','Jane Austen','https://www.gutenberg.org/ebooks/1342.epub3.images','jane-austen','pride-g1342','2026-10-11')`).run();
 		await env.R2_BUCKET.put(`${root}/manifest.json`, JSON.stringify(BOOK_MANIFEST));
@@ -120,6 +122,7 @@ describe("owner book management", () => {
 		expect(await env.R2_BUCKET.head(`${root}-other/manifest.json`)).not.toBeNull();
 		const catalog = await (await env.R2_BUCKET.get("catalog.json"))!.json<{ books: unknown[] }>();
 		expect(catalog.books).toEqual([{ author_slug: "other", title_slug: "keep" }]);
+		expect(await env.JOB_DB.prepare("SELECT 1 FROM published_books WHERE author_slug='jane-austen' AND title_slug='pride-g1342'").first()).toBeNull();
 		const source = await env.JOB_DB.prepare("SELECT author_slug,title_slug,epub_url FROM source_books WHERE source_id='gutenberg:1342'").first();
 		expect(source).toMatchObject({ author_slug: null, title_slug: null, epub_url: "https://www.gutenberg.org/ebooks/1342.epub3.images" });
 		expect(await env.JOB_DB.prepare("SELECT state,stage,attempts FROM generation_jobs WHERE id=?").bind(id).first())

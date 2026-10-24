@@ -43,7 +43,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
     const controller = new AbortController();
     const timer = setTimeout(() => {
       fetchSourceBooks(query.trim(), controller.signal).then((data) => {
-        if (current === version.current) { setBooks(data.books); setError(data.discovery_error ?? ""); }
+        if (current === version.current) { setBooks(data.books); setError(""); }
       }).catch((reason) => {
         if (current === version.current) {
           setBooks([]);
@@ -122,10 +122,10 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
 
   return <View style={{ marginTop: 34 }}>
     <Text accessibilityRole="header" style={{ color: palette.text, fontFamily: "Georgia", fontSize: width < 500 ? 25 : 32, fontWeight: "700" }}>
-      Gutenberg & Standard Ebooks editions
+      Books to read now
     </Text>
     <Text style={{ color: palette.muted, fontSize: 15, lineHeight: 22, marginTop: 5, marginBottom: 18 }}>
-      Read immediately. Audio is prepared for catalog editions while you turn the pages. Missing Standard Ebooks titles are searched live.
+      Search our indexed English and Chinese editions. Simplified and traditional Chinese queries find the same editions.
     </Text>
     {loading && <ActivityIndicator accessibilityLabel="Searching source books" color={palette.primary} style={{ marginVertical: 24 }} />}
     {error ? <Text accessibilityRole="alert" style={{ color: palette.text, marginBottom: 12 }}>{error}</Text> : null}
@@ -153,7 +153,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
           </Text>
           <Text style={{ color: palette.text, fontSize: 15, marginTop: 6 }}>{book.author}</Text>
           <Text style={{ color: palette.muted, fontSize: 13, marginTop: 8, marginBottom: 14 }}>
-            {book.source_id.startsWith("standardebooks:") ? "Standard Ebooks" : `Gutenberg #${book.source_id.split(":")[1]}`}
+            {book.source_id.startsWith("standardebooks:") ? "Standard Ebooks" : book.source_id.startsWith("wikisource:") ? "Wikisource" : `Gutenberg #${book.source_id.split(":")[1]}`}{book.language === "zh" ? " · Chinese · Mandarin audio" : ""}
           </Text>
           {book.indexed === false && <Text style={{ color: palette.muted, marginBottom: 14 }}>
             Read now. Audio will be available after this edition is added to the catalog.
@@ -174,7 +174,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
               router.push(`/read/${authorSlug}/${titleSlug}`);
             } else {
               router.push({ pathname: "/source/[id]", params: {
-                id: book.source_id, title: book.title, author: book.author,
+                id: book.source_id, title: book.title, author: book.author, language: book.language ?? "en",
                 job: job?.id ?? book.job_id ?? "", state, indexed: book.indexed === false ? "0" : "1",
               } });
             }
@@ -192,7 +192,7 @@ export default function SourceSuggestions({ query, adminToken, onAdminExpired }:
               </Text>
             </Pressable>
           )}
-          {adminToken && book.indexed !== false && !active && !(failed && mode === "expressive") && (
+          {adminToken && book.language !== "zh" && book.indexed !== false && !active && !(failed && mode === "expressive") && (
             pendingExpressiveSource === book.source_id ? <View style={{ marginTop: 12, padding: 14,
               borderWidth: 1, borderColor: palette.border, borderRadius: 9 }}>
               <Text style={{ color: palette.text, lineHeight: 21 }}>

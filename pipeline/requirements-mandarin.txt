@@ -1,0 +1,15 @@
+# Isolated Python 3.12 runtime. Install torch/torchaudio 2.8.0 CUDA wheels first.
+qwen-tts==0.1.1
+whisperx==3.8.4
+torch==2.8.0
+torchaudio==2.8.0
+ebooklib
+pypdf>=6.21.2,<7
+beautifulsoup4
+soundfile
+numpy
+boto3
+python-dotenv
+anthropic
+openai
+psutil>=5.9

@@ -42,6 +42,10 @@ def title_slug(title, source_id):
     title = sanitize(title) or "untitled"
     if source_id.startswith("gutenberg:"):
         return title + "-g" + source_id.split(":")[1]
+    if re.fullmatch(r"ownerupload:[a-f0-9-]{36}", source_id):
+        return title + "-upload-" + source_id.split(":")[1].replace("-", "")
+    if re.fullmatch(r"wikisource:(en|zh):[1-9][0-9]*:[1-9][0-9]*:[a-f0-9]{16}", source_id):
+        return title + "-ws-" + hashlib.sha256(source_id.encode()).hexdigest()[:12]
     edition_path(source_id)
     return title + "-se-" + hashlib.sha256(source_id.encode()).hexdigest()[:12]
 
@@ -93,6 +97,11 @@ def parse_edition(text, source_id):
         raise ValueError("Standard Ebooks title or author is missing")
     clean = lambda value: " ".join(html.unescape(re.sub(r"<[^>]*>", "", value)).split())
     result = {"source_id": source_id, "title": clean(title.group(1)), "author": clean(author.group(1)), "epub_url": download}
+    from datetime import datetime, timezone
+    result["language"] = "en"
+    result["provenance"] = {"source_url": f"{BASE}/ebooks/{path}", "rights_url": f"{BASE}/ebooks/{path}",
+                            "rights_statement": "Public domain in the USA.", "rights_sha256": hashlib.sha256(text.encode()).hexdigest(),
+                            "verified_at": datetime.now(timezone.utc).isoformat()}
     if not 1 <= len(result["title"]) <= 300 or not 1 <= len(result["author"]) <= 200:
         raise ValueError("Standard Ebooks metadata exceeds limits")
     return result

@@ -67,7 +67,7 @@ def _display_name_for_voice(voice: str) -> str:
     return voice.title()
 
 
-def _credit_headings(title: str, author: str, voice_display: str) -> tuple[dict, dict]:
+def _credit_headings(title: str, author: str, voice_display: str, language: str = "en") -> tuple[dict, dict]:
     opening = (
         f"{title}. Written by {author}. Narrated by OpenShelf "
         f"using the {voice_display} voice."
@@ -76,15 +76,18 @@ def _credit_headings(title: str, author: str, voice_display: str) -> tuple[dict,
         f"The end of {title}, written by {author}, narrated by OpenShelf "
         f"using the {voice_display} voice."
     )
+    if language.startswith("zh"):
+        opening = f"《{title}》。作者：{author}。由 OpenShelf 使用{voice_display}声音朗读。"
+        closing = f"《{title}》朗读完毕。作者：{author}。由 OpenShelf 使用{voice_display}声音朗读。"
     return (
         {
-            "display_label": "Opening Credits",
+            "display_label": "片头" if language.startswith("zh") else "Opening Credits",
             "display_title": "",
             "spoken_text": opening,
             "element_ids": [],
         },
         {
-            "display_label": "Closing Credits",
+            "display_label": "片尾" if language.startswith("zh") else "Closing Credits",
             "display_title": "",
             "spoken_text": closing,
             "element_ids": [],
@@ -611,6 +614,7 @@ def chunk_chapters(
         metadata.get("title", ""),
         metadata.get("author", ""),
         voice_display,
+        metadata.get("language", "en"),
     )
     artifact_sections = [{
         "sequence": 1,
@@ -644,7 +648,7 @@ def chunk_chapters(
         ]
         paragraphs = [element["text"] for element in body_elements]
         element_ids = [element["id"] for element in body_elements]
-        chunks = chunk_text(paragraphs, element_ids=element_ids)
+        chunks = chunk_text(paragraphs, element_ids=element_ids, language=metadata.get("language", "en"))
         path = os.path.join(build_dir, f"section-{number:02d}.chunks.json")
         write_section_chunks_artifact(
             path,
@@ -704,6 +708,17 @@ def _book_parse_opening_text(book_parse: dict, max_chars: int = _REGISTRY_OPENIN
     return "\n\n".join(parts)
 
 
+def _build_language(build_dir: str) -> str:
+    from openshelf.pipeline.language import normalize_language
+    run_path = Path(build_dir) / "run.json"
+    if run_path.exists():
+        return normalize_language(_read_json(str(run_path)).get("language", "en"))
+    book_path = Path(build_dir).parents[3] / "book_parse.json" if len(Path(build_dir).parents) > 3 else Path("book_parse.json")
+    if book_path.exists():
+        return normalize_language(_read_json(str(book_path)).get("metadata", {}).get("language", "en"))
+    return "zh" if any(marker in str(build_dir) for marker in ("kokoro-z", "qwen3-")) else "en"
+
+
 def _voice_spec_for_override(engine, voice_id: str):
     from openshelf.pipeline.tts_engine import VoiceSpec
 
@@ -711,7 +726,11 @@ def _voice_spec_for_override(engine, voice_id: str):
         if voice.id == voice_id or voice.preset_name == voice_id:
             return voice
     if getattr(engine, "name", "") == "kokoro":
+        if getattr(engine, "language", "en") == "zh" or voice_id.startswith("z"):
+            raise ValueError("voice does not match Kokoro language")
         return VoiceSpec(id=voice_id, preset_name=voice_id)
+    if getattr(engine, "name", "") == "qwen3":
+        raise ValueError("Unknown Mandarin Qwen3 voice")
     return VoiceSpec(id=voice_id, ref_audio_path=voice_id)
 
 
@@ -742,7 +761,7 @@ def build_registry(
         from openshelf.pipeline.engines import create_engine
         from openshelf.pipeline.llm import create_llm
 
-        engine = create_engine(engine_name or TTS_ENGINE)
+        engine = create_engine(engine_name or TTS_ENGINE, language=metadata.get("language", "en"))
         director = AudioDirector(engine, create_llm(), aligner=None)
     else:
         engine = getattr(director, "engine", None)
@@ -817,8 +836,9 @@ def direct_chapter(
         from openshelf.pipeline.engines import create_aligner, create_engine
         from openshelf.pipeline.llm import create_llm
 
-        engine = create_engine(engine_name or TTS_ENGINE)
-        aligner = create_aligner(engine, device=device or "cpu")
+        language = _build_language(build_dir)
+        engine = create_engine(engine_name or TTS_ENGINE, language=language)
+        aligner = create_aligner(engine, device=device or "cpu", language=language)
         director = AudioDirector(
             engine,
             create_llm(),
@@ -920,11 +940,12 @@ def synth_chapter(
         from openshelf.pipeline.tts import load_pipeline
 
         device = _resolve_tts_device(engine_name or TTS_ENGINE, device)
-        engine = create_engine(engine_name or TTS_ENGINE, device=device)
+        language = _build_language(build_dir)
+        engine = create_engine(engine_name or TTS_ENGINE, device=device, language=language)
         if engine.name == "kokoro":
-            engine.pipeline = load_pipeline(device=device)
+            engine.pipeline = load_pipeline(device=device, language="z" if language == "zh" else "a")
         if aligner is None:
-            aligner = create_aligner(engine, device=device)
+            aligner = create_aligner(engine, device=device, language=language)
 
     narrator_voice = (
         _voice_spec_for_override(engine, voice)
@@ -1340,6 +1361,10 @@ def run_book(args) -> dict:
     logger.info("Parsed %d source sections (%d body words)", len(chapters), total_words)
 
     metadata = read_book_metadata(epub_path)
+    from openshelf.pipeline.language import normalize_language, unit_count
+    book_language = normalize_language(metadata.get("language", "en"))
+    if book_language not in {"en", "zh"}:
+        raise ValueError("unsupported audiobook language")
     book_title = metadata.get("title") or sanitize(os.path.splitext(os.path.basename(epub_path))[0])
     epub_parts = os.path.normpath(epub_path).split(os.sep)
     author_slug = sanitize(epub_parts[-2]) if len(epub_parts) >= 2 else "unknown"
@@ -1363,7 +1388,7 @@ def run_book(args) -> dict:
     }]
     for ch in chapters:
         spoken_ids = [el.id for el in ch.body_elements]
-        chunks = chunk_text(ch.paragraphs, element_ids=spoken_ids)
+        chunks = chunk_text(ch.paragraphs, element_ids=spoken_ids, language=book_language)
         chunked_chapters.append({
             "number": ch.number + 1,
             "section_type": ch.section_type,
@@ -1431,8 +1456,8 @@ def run_book(args) -> dict:
     selected_device = _resolve_tts_device(args.engine, getattr(args, "device", None))
     _log_torch_device_diagnostics(selected_device)
 
-    engine = create_engine(args.engine, device=selected_device)
-    aligner = create_aligner(engine, device=selected_device)
+    engine = create_engine(args.engine, device=selected_device, language=book_language)
+    aligner = create_aligner(engine, device=selected_device, language=book_language)
     llm = create_llm()
     director = AudioDirector(
         engine,
@@ -1461,7 +1486,7 @@ def run_book(args) -> dict:
     book_ctx = BookContext(
         title=book_title,
         author=book_author,
-        language=TTS_LANGUAGE,
+        language=book_language,
         opening_text="\n\n".join(opening_parts),
     )
     registry_label = (
@@ -1476,18 +1501,13 @@ def run_book(args) -> dict:
     narrator_voice = registry.narrator_voice
     narrator_voice_id = _voice_id_for_manifest(narrator_voice)
     narrator_display = _display_name_for_voice(narrator_voice_id)
-    opening_credit = (
-        f"{book_title}. Written by {book_author}. Narrated by OpenShelf "
-        f"using the {narrator_display} voice."
-    )
-    closing_credit = (
-        f"The end of {book_title}, written by {book_author}, narrated by "
-        f"OpenShelf using the {narrator_display} voice."
-    )
-    chunked_chapters[0]["heading"]["spoken_text"] = opening_credit
-    chunked_chapters[0]["word_count"] = len(opening_credit.split())
-    chunked_chapters[-1]["heading"]["spoken_text"] = closing_credit
-    chunked_chapters[-1]["word_count"] = len(closing_credit.split())
+    opening_heading, closing_heading = _credit_headings(book_title, book_author, narrator_display, book_language)
+    chunked_chapters[0]["heading"] = opening_heading
+    chunked_chapters[0]["title"] = opening_heading["display_label"]
+    chunked_chapters[0]["word_count"] = unit_count(opening_heading["spoken_text"])
+    chunked_chapters[-1]["heading"] = closing_heading
+    chunked_chapters[-1]["title"] = closing_heading["display_label"]
+    chunked_chapters[-1]["word_count"] = unit_count(closing_heading["spoken_text"])
     rendition = args.rendition or _derive_rendition(engine.name, narrator_voice)
     build_dir = os.path.join(book_dir, "audio", rendition, "builds", build_id)
 
@@ -1505,9 +1525,10 @@ def run_book(args) -> dict:
         rendition=rendition,
         cast_mode=args.cast_mode,
         performance_direction_mode=args.performance_direction,
-        language=TTS_LANGUAGE,
+        language="zh" if book_language == "zh" else TTS_LANGUAGE,
         sections=selected_chapter_numbers,
         new_voice_direction=getattr(args, "new_voice_direction", False),
+        engine_settings=getattr(engine, "synthesis_settings", {}),
     )
     run_context_path = build_run_context_path(build_dir)
     prepare_run_context(
@@ -1756,6 +1777,7 @@ def run_book(args) -> dict:
                 keep_wav=getattr(args, "keep_wav", False),
                 force=getattr(args, "force", False),
                 heading_text=ch_data["heading"]["spoken_text"],
+                resume=getattr(args, "resume", False),
             )
 
         chapter_durations[ch_num] = duration
@@ -1785,6 +1807,8 @@ def run_book(args) -> dict:
     if total_skipped:
         print(f"Warning: {total_skipped} chunks failed TTS and were skipped.")
         logger.warning("%d chunks failed TTS and were skipped", total_skipped)
+        if os.environ.get("OPENSHELF_REQUIRE_COMPLETE_AUDIO") == "1":
+            raise RuntimeError("Incomplete audio: skipped chunks prevent publication")
     print(f"Output: {os.path.abspath(build_dir)}/")
     logger.info(
         "Audio generation complete duration=%.2fs elapsed=%.2fs output=%s",

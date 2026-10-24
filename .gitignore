@@ -44,6 +44,7 @@ worker/.secrets/
 # Expo Client
 client/node_modules/
 client/.expo/
+client/.wrangler/
 client/dist/
 client/test-results/
 client/playwright-report/

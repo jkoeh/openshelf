@@ -30,18 +30,19 @@ beforeEach(() => {
 });
 
 describe("source discovery and owner jobs", () => {
-	it("discovers missing Standard Ebooks titles live without sending credentials", async () => {
-		mockFetch.mockResolvedValueOnce(jsonResponse({ books: [] })).mockResolvedValueOnce(new Response(`<li typeof="schema:Book" about="/ebooks/fyodor-dostoevsky/demons/constance-garnett"><span property="schema:name">Demons</span><span property="schema:name">Fyodor Dostoevsky</span></li>`));
+	it("queries only our database when an edition is missing", async () => {
+		mockFetch.mockResolvedValueOnce(jsonResponse({ books: [] }));
 		const result = await fetchSourceBooks("demons");
-		expect(result.books).toEqual([expect.objectContaining({ title: "Demons", indexed: false, source_id: "standardebooks:fyodor-dostoevsky/demons/constance-garnett" })]);
-		expect(mockFetch.mock.calls[1][0]).toBe("https://standardebooks.org/ebooks?query=demons");
-		expect(mockFetch.mock.calls[1][1]).toMatchObject({ credentials: "omit", redirect: "error" });
+		expect(result.books).toEqual([]);
+		expect(mockFetch).toHaveBeenCalledTimes(1);
+		expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:8787/api/v1/source-books?q=demons&limit=10");
+		expect(mockFetch.mock.calls[0][1]).toEqual({ cache: "no-store" });
 	});
-	it("preserves indexed search when live discovery is rate limited", async () => {
+	it("returns current indexed results without contacting an upstream service", async () => {
 		const books = [{ source_id: "gutenberg:11", title: "Alice" }];
-		mockFetch.mockResolvedValueOnce(jsonResponse({ books })).mockResolvedValueOnce(new Response("Limited", { status: 429 }));
-		expect(await fetchSourceBooks("alice")).toEqual({ books, discovery_error: expect.stringContaining("limiting requests") });
-		expect(mockFetch).toHaveBeenCalledTimes(2);
+		mockFetch.mockResolvedValueOnce(jsonResponse({ books }));
+		expect(await fetchSourceBooks("alice")).toEqual({ books });
+		expect(mockFetch).toHaveBeenCalledTimes(1);
 	});
 	it("reads an unindexed exact EPUB directly after a missing cache response", async () => {
 		mockFetch.mockResolvedValueOnce(errorResponse("NOT_FOUND", "Not indexed", 404)).mockResolvedValueOnce(new Response(new Uint8Array([80, 75, 3, 4]), { headers: { "Content-Type": "application/epub+zip" } }));
@@ -149,7 +150,7 @@ describe("fetchCatalog", () => {
 		const result = await fetchCatalog();
 
 		expect(result).toEqual(catalog);
-		expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/catalog"));
+		expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/catalog"), { cache: "no-store" });
 		expect(mockFetch.mock.calls[0][0]).not.toContain("?");
 	});
 

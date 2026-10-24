@@ -16,6 +16,7 @@ from bs4 import BeautifulSoup
 from ebooklib import epub
 
 from openshelf.config import PIPELINE_VERSION
+from openshelf.pipeline.language import has_han, unit_count
 
 
 SECTION_TYPES = frozenset({
@@ -166,6 +167,29 @@ _ORDINAL_TITLE_RE = re.compile(
     r"^([IVXLCDM]+|\d+)(?:\s*[.:\-—]\s*(.*))?$",
     re.IGNORECASE,
 )
+_CHINESE_CHAPTER_RE = re.compile(r"^第([〇零一二三四五六七八九十百千萬万两兩\d]+)[章回卷節节](?:[\s：:、，。]*(.*))?$")
+
+
+def _chinese_ordinal(token: str) -> int | None:
+    if token.isdecimal():
+        return int(token) or None
+    digits = {char: index for index, char in enumerate("零一二三四五六七八九")}
+    digits.update({"〇": 0, "两": 2, "兩": 2})
+    digits.update({str(index): index for index in range(10)})
+    multipliers = {"十": 10, "百": 100, "千": 1000, "萬": 10000, "万": 10000}
+    if not any(char in multipliers for char in token):
+        return int("".join(str(digits[char]) for char in token)) or None
+    total = section = number = 0
+    for char in token:
+        if char in digits:
+            number = digits[char]
+        elif multipliers[char] == 10000:
+            total += (section + number) * 10000
+            section = number = 0
+        else:
+            section += (number or 1) * multipliers[char]
+            number = 0
+    return total + section + number or None
 
 
 def _epub_types(node) -> set[str]:
@@ -395,7 +419,7 @@ def _clean_tag_text(tag) -> str:
     for anchor in tag.find_all("a"):
         if anchor.string and re.fullmatch(r"\d+", anchor.string.strip()):
             anchor.decompose()
-    return clean_extracted_text(tag.get_text(separator=" "))
+    return clean_extracted_text(tag.get_text(separator="" if has_han(tag.get_text()) else " "))
 
 
 def _is_heading_tag(tag) -> bool:
@@ -431,6 +455,9 @@ def _heading_texts(heading_tags: list) -> list[str]:
 
 def _section_type_from_heading(texts: list[str]) -> tuple[str | None, int | None, str]:
     first = texts[0] if texts else ""
+    chinese = _CHINESE_CHAPTER_RE.fullmatch(first)
+    if chinese:
+        return "chapter", _chinese_ordinal(chinese.group(1)), clean_extracted_text(chinese.group(2) or "")
     match = _CHAPTER_PREFIX_RE.fullmatch(first)
     if match:
         return "chapter", _parse_ordinal(match.group(1)), clean_extracted_text(match.group(2) or "")
@@ -517,7 +544,7 @@ def _ensure_terminal_punctuation(text: str) -> str:
     stripped = text.strip()
     if not stripped:
         return ""
-    return stripped if stripped[-1] in ".?!" else f"{stripped}."
+    return stripped if stripped[-1] in ".?!。！？" else f"{stripped}."
 
 
 def _build_heading(
@@ -535,7 +562,7 @@ def _build_heading(
     if section_type == "chapter":
         if heading_texts:
             first = heading_texts[0]
-            if _CHAPTER_PREFIX_RE.fullmatch(first) or _ORDINAL_TITLE_RE.fullmatch(first):
+            if _CHAPTER_PREFIX_RE.fullmatch(first) or _ORDINAL_TITLE_RE.fullmatch(first) or _CHINESE_CHAPTER_RE.fullmatch(first):
                 display_label = first
                 display_title = inline_title or (heading_texts[1] if len(heading_texts) > 1 else "")
             else:
@@ -615,7 +642,7 @@ def _candidate_body_word_count(candidate, excluded_roots: Iterable | None = None
         if id(tag) in heading_ids or not _is_spoken(tag):
             continue
         text = clean_extracted_text(tag.get_text(separator=" "))
-        words += len(text.split())
+        words += unit_count(text)
     return words
 
 
@@ -717,7 +744,7 @@ def parse_epub(epub_path: str) -> list[Section]:
                 body_elements=body_elements,
                 paragraphs=paragraphs,
                 text=text,
-                word_count=len(text.split()),
+                word_count=unit_count(text),
                 epub_item_name=filename,
             ))
 

@@ -1,0 +1,12 @@
+# Full offline suite. Install CPU torch from its wheel index first in CI.
+# Real engines/model downloads and WhisperX integration are intentionally absent.
+torch==2.8.0
+transformers>=4.46,<5
+numpy
+soundfile
+ebooklib
+pypdf>=6.21.2,<7
+beautifulsoup4
+boto3
+python-dotenv
+psutil>=5.9

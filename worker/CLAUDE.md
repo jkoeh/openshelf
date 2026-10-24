@@ -27,13 +27,14 @@ src/
     params.ts           # SlugSchema, ChapterNumberStringSchema (shared path params)
   routes/               # one OpenAPIHono subapp per file; each defines route(s) via createRoute
     health.ts           # GET /api/v1/health
-    catalog.ts          # GET /api/v1/catalog — catalog.json fast path, manifest-derived fallback
+    catalog.ts          # GET /api/v1/catalog — current D1 publications; authenticated R2 manifest sync
     book.ts             # GET /api/v1/books/:author/:title
     builds.ts           # GET /api/v1/books/:author/:title/builds — retained build selection metadata
     sections.ts         # GET /api/v1/books/:author/:title/sections/:sequence — text + word timestamps
     audio.ts            # GET /api/v1/books/:author/:title/sections/:sequence/audio — m4a Range stream
     source-books.ts     # Source search, independent source EPUB download, internal source sync
     generation-jobs.ts  # Owner job control and PC lease protocol
+    owner-uploads.ts    # Owner document ingestion/list; PC-only original download
     admin.ts            # Google owner identity check for browser controls
     cover.ts            # GET /api/v1/books/:author/:title/cover
     epub.ts             # GET /api/v1/books/:author/:title/epub
@@ -43,6 +44,8 @@ src/
     response.ts         # Error response helpers (used by global onError/notFound)
     validation.ts       # Param regexes (kept; lifted into schemas/params.ts for routes)
     source-editions.ts  # Shared source ID, exact EPUB URL and publication slug validation
+    source-search.ts    # Unicode/script-normalized discovery; original text is retained
+    published-catalog.ts # Verified R2 publication metadata and D1 reconciliation
 
 docs/
   openapi.md            # How to add/modify routes — read before editing routes/
@@ -175,12 +178,12 @@ job with a renewable lease. The PC downloads only allowlisted Gutenberg or Stand
 URLs and runs the exact-EPUB pipeline for the job's fixed rendition. The
 consumer runs OpenAI direction only for expressive jobs and will not claim them
 without a locally configured OpenAI key. Completion checks the R2 book
-pointer, selected rendition manifest and every listed section audio object. Public
-search is rate-limited before a bounded, 15-second in-isolate cache for
-identical origin, normalized query, and limit triples. Only successful public suggestion
-responses enter the cache. Isolates do not share memory, so cold instances
-still query D1; clients receive `no-store`, and job state can lag by at most
-15 seconds. D1 enforces active-job
+pointer, selected rendition manifest and every listed section audio object,
+then updates the D1 publication index. Public source search is rate-limited and
+reads current D1 rows on every request. Both source and published-book discovery
+return `no-store`, normalize Chinese scripts for matching, retain original
+edition metadata, and never use an in-isolate result cache or upstream search.
+D1 enforces active-job
 deduplication, three pending jobs, 300 successful start reservations per UTC
 day and three attempts per job. Canceling a queued/running job moves it to a
 terminal `canceled` state and revokes its lease without refunding the start;
@@ -286,15 +289,15 @@ The cache header on a route is determined by **whether the URL is content-versio
 | `/books/:a/:t/cover`, `/epub` | `public, max-age=31536000, immutable` | Bytes never change for a book |
 | `/books/:a/:t/chapters/:n?rendition=&build=` | `public, max-age=31536000, immutable` | Build pin in URL ⇒ bytes never change |
 | `/books/:a/:t/audio/:c?rendition=&build=` | `public, max-age=31536000, immutable` | Same as above |
-| `/catalog` | `public, max-age=60, stale-while-revalidate=86400` | Mutable index of books |
+| `/catalog` | `no-store` | Current D1 publication rows and script-normalized title/author search |
 
 **Invariant:** if the response is sensitive to a build hash, that hash MUST be in the URL (query or path). Never serve different bytes from the same URL with `immutable`. The book manifest is the sole exception — it is the discovery layer that points at immutable build URLs and therefore must be short-cached.
 
 ## `GET /catalog` source of truth
 
-The preferred source is root `catalog.json`, written by `openshelf-pipeline ops catalog` and refreshed by `openshelf-pipeline books process --upload`. Catalog rows include the selected default rendition and its `current_build`. If that mutable index is missing, the worker derives the same response shape by listing `books/`, reading root `books/:author/:title/manifest.json` objects, selecting the default rendition (`kokoro-af-heart`, or the first sorted rendition), and enriching each row from that rendition's `current_build` `rendition-manifest.json`.
+The source is D1 `published_books`, populated through PC-authenticated catalog sync and successful generation completion. The Worker derives metadata and the selected default rendition/current build from current R2 book and rendition manifests, never from submitted metadata. `ops catalog` synchronizes all publications in batches of at most 10 after writing the R2 audit artifact, then reconciles ten existing rows per cursor request to stay within the Workers Free D1 query budget. Existing manual publications must be backfilled during rollout after migrations 0009/0010. Public reads use bounded SQL pagination, Chinese script-normalized substring filters and `no-store`.
 
-The fallback exists so a refactor or partial migration that uploads book manifests before rebuilding `catalog.json` does not make the public catalog appear empty. It is not a replacement for the pipeline catalog build; the generated `catalog.json` remains the normal fast path.
+There is no public R2 catalog fallback or upstream search. `catalog.json` remains an operator audit artifact. Owner deletion removes the D1 row with its source/publication cleanup; deletion guards also exclude interrupted deletions. Full `ops catalog` refresh includes bounded authenticated reconciliation of existing D1 rows, including an empty R2 scan. Pruning rechecks object ETags and per-row revisions, retains active jobs/deletions, and fails safely on storage errors. Apply migrations 0009/0010 and backfill before client rollout. See `pipeline/docs/source-access.md` for rollout details.
 
 ## Rendition vs build
 

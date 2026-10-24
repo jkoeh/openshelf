@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +28,7 @@ _MATCH_FIELDS = (
     "new_voice_direction",
     "language",
     "sections",
+    "engine_settings",
 )
 
 
@@ -53,6 +54,7 @@ class RunContext:
     language: str
     sections: list[int]
     new_voice_direction: bool = False
+    engine_settings: dict[str, Any] = field(default_factory=dict)
     version: int = RUN_CONTEXT_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -74,6 +76,7 @@ class RunContext:
             "new_voice_direction": self.new_voice_direction,
             "language": self.language,
             "sections": list(self.sections),
+            "engine_settings": dict(self.engine_settings),
         }
 
 
@@ -113,6 +116,7 @@ def make_run_context(
     language: str,
     sections: list[int],
     new_voice_direction: bool = False,
+    engine_settings: dict[str, Any] | None = None,
 ) -> RunContext:
     return RunContext(
         build=validate_build_id(build),
@@ -131,6 +135,7 @@ def make_run_context(
         new_voice_direction=bool(new_voice_direction),
         language=language,
         sections=sorted(sections),
+        engine_settings=dict(engine_settings or {}),
     )
 
 
@@ -146,6 +151,8 @@ def validate_resume_context(existing: dict[str, Any], expected: RunContext) -> N
         existing_value = existing.get(field)
         if field == "new_voice_direction" and field not in existing:
             existing_value = False
+        if field == "engine_settings" and field not in existing:
+            existing_value = {}
         if existing_value != expected_dict.get(field):
             mismatches.append(field)
     if mismatches:

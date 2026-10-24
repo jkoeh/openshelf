@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 
 from openshelf.config import TTS_SAMPLE_RATE
+from openshelf.pipeline.language import normalize_language
 from openshelf.pipeline.tts_engine import (
     AnnotationPromptConfig,
     DirectedSegment,
@@ -37,6 +38,10 @@ KOKORO_VOICES = [
     VoiceSpec("bm_daniel", preset_name="bm_daniel"),
     VoiceSpec("bm_fable", preset_name="bm_fable"),
 ]
+MANDARIN_VOICES = [VoiceSpec(name, preset_name=name) for name in (
+    "zf_xiaobei", "zf_xiaoni", "zf_xiaoxiao", "zf_xiaoyi",
+    "zm_yunjian", "zm_yunxi", "zm_yunxia", "zm_yunyang",
+)]
 
 
 KOKORO_VOICE_POOL_DESCRIPTION = """Available Kokoro preset voices.
@@ -81,20 +86,23 @@ class KokoroAdapter:
         performance_direction=False,
     )
 
-    def __init__(self, pipeline: Any | None = None, device: str | None = None):
+    def __init__(self, pipeline: Any | None = None, device: str | None = None, language: str = "en"):
         self.pipeline = pipeline
         self.device = device
+        self.language = normalize_language(language)
+        if self.language not in {"en", "zh"}:
+            raise ValueError("Kokoro audiobook language is not supported")
 
     def _pipeline(self):
         if self.pipeline is None:
             from openshelf.pipeline.tts import load_pipeline
 
-            self.pipeline = load_pipeline(device=self.device)
+            self.pipeline = load_pipeline(device=self.device, language="z" if self.language == "zh" else "a")
         return self.pipeline
 
     def registry_prompt_config(self) -> RegistryPromptConfig:
         return RegistryPromptConfig(
-            voice_pool_description=KOKORO_VOICE_POOL_DESCRIPTION,
+            voice_pool_description=("Mandarin Chinese narration. Choose only these Mandarin presets: " + ", ".join(voice.id for voice in MANDARIN_VOICES) if self.language == "zh" else KOKORO_VOICE_POOL_DESCRIPTION),
             schema_extra_fields={},
         )
 
@@ -117,7 +125,7 @@ class KokoroAdapter:
         )
 
     def available_voices(self) -> list[VoiceSpec]:
-        return list(KOKORO_VOICES)
+        return list(MANDARIN_VOICES if self.language == "zh" else KOKORO_VOICES)
 
     def apply_performance_controls(self, segment: DirectedSegment) -> DirectedSegment:
         return segment
@@ -126,6 +134,8 @@ class KokoroAdapter:
         from openshelf.pipeline.tts import _extract_words
 
         voice = segment.voice.preset_name or segment.voice.id
+        if (voice.startswith("z")) != (self.language == "zh"):
+            raise ValueError("voice does not match Kokoro language")
         pipeline = self._pipeline()
         try:
             if segment.speed != 1.0:

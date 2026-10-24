@@ -32,7 +32,9 @@ class CatalogTests(unittest.TestCase):
                 se.parse_edition(invalid, source_id)
         listing = f'<li about="{path}"></li><li class="not-pd" about="/ebooks/a/future"></li>'
         with patch.object(se, "fetch_page", side_effect=[listing, page]) as fetch:
-            self.assertEqual(list(se.catalog_books(max_books=1)), [book])
+            imported = list(se.catalog_books(max_books=1))
+            self.assertEqual(imported[0]["source_id"], book["source_id"])
+            self.assertEqual(imported[0]["provenance"]["rights_sha256"], book["provenance"]["rights_sha256"])
             self.assertEqual(fetch.call_count, 2)
         posts = []
         with patch.object(se, "catalog_books", return_value=[book]), \
@@ -42,6 +44,7 @@ class CatalogTests(unittest.TestCase):
                 patch("openshelf.pipeline.job_consumer.fetch_epub", side_effect=lambda url, sid, path: path.write_bytes(b"PK\x03\x04")), \
                 patch("openshelf.pipeline.job_consumer.check_epub_rights"), \
                 patch("openshelf.pipeline.job_consumer.check_spoken_text", return_value=100), \
+                patch.object(source_catalog, "validate_reading_copy"), \
                 patch.object(source_catalog.JobAPI, "upload_source_epub") as upload:
             self.assertEqual(source_catalog.main(["--source", "standard-ebooks", "--api-base", "https://example.com/api/v1"]), 0)
             self.assertEqual(upload.call_args.args[0], source_id)
@@ -85,11 +88,11 @@ class CatalogTests(unittest.TestCase):
                 writer.writerow(["14", "Text", "Later", "en", "Author"])
             rows = list(source_catalog.catalog_books(catalog, max_books=1))
             self.assertEqual(rows, [{"source_id": "gutenberg:11", "title": "Alice Adventures",
-                                     "author": "Carroll, Lewis"}])
+                                     "author": "Carroll, Lewis", "language": "en"}])
             self.assertEqual([row["source_id"] for row in source_catalog.catalog_books(catalog, after_id=11)],
                              ["gutenberg:14"])
 
-    def test_batches_at_fifty_without_claiming_a_job(self):
+    def test_caches_bounded_import_without_claiming_a_job(self):
         with tempfile.TemporaryDirectory() as folder:
             catalog = Path(folder) / "books.csv"
             with catalog.open("w", encoding="utf-8", newline="") as output:
@@ -108,14 +111,18 @@ class CatalogTests(unittest.TestCase):
                 def post(self, path, payload):
                     posts.append((path, payload))
 
-            with patch.object(source_catalog, "JobAPI", FakeAPI):
+            def cache(api, book, path=None):
+                api.post("/internal/source-books/sync", {"books": [book]})
+                return True
+            with patch.object(source_catalog, "JobAPI", FakeAPI), patch.object(source_catalog, "cache_book", side_effect=cache):
                 with patch.object(source_catalog, "verified_books", side_effect=lambda rows, _archive: (
                         {**row, "epub_url": f"https://www.gutenberg.org/ebooks/{row['source_id'].split(':')[1]}.epub.images"}
                         for row in rows)):
                     self.assertEqual(source_catalog.main(["--catalog", str(catalog), "--rights-archive",
                                                           str(rights), "--api-base",
                                                           "https://example.com/api/v1", "--max-books", "51"]), 0)
-            self.assertEqual([len(body["books"]) for _, body in posts], [50, 1])
+            self.assertEqual(len(posts), 51)
+            self.assertTrue(all(len(body["books"]) <= 50 for _, body in posts))
             self.assertTrue(all(path == "/internal/source-books/sync" for path, _ in posts))
 
     def test_rejects_oversized_catalog_before_parsing(self):
@@ -149,5 +156,8 @@ class CatalogTests(unittest.TestCase):
                     info = tarfile.TarInfo(f"cache/epub/{number}/pg{number}.rdf")
                     info.size = len(data)
                     output.addfile(info, io.BytesIO(data))
-            self.assertEqual(list(source_catalog.verified_books(books, archive)), [
-                {**books[0], "epub_url": "https://www.gutenberg.org/ebooks/11.epub.images"}])
+            verified = list(source_catalog.verified_books(books, archive))
+            self.assertEqual(len(verified), 1)
+            self.assertEqual(verified[0]["source_id"], "gutenberg:11")
+            self.assertEqual(verified[0]["epub_url"], "https://gutenberg.pglaf.org/cache/epub/11/pg11-images.epub")
+            self.assertEqual(verified[0]["provenance"]["rights_statement"], "Public domain in the USA.")

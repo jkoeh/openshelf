@@ -23,12 +23,17 @@ class FakeResponse(io.BytesIO):
 
 
 class FakeAPI:
+    base = "https://example.com/api/v1"
+    token = "test-pc-token-longer-than-twenty-four"
     def __init__(self):
         self.posts = []
 
     def post(self, path, payload=None):
         self.posts.append((path, payload))
         return {"ok": True}
+
+    def source_epub_cached(self, _source_id):
+        return False
 
 
 class FakeChild:
@@ -84,6 +89,12 @@ class ConsumerTests(unittest.TestCase):
             self.assertEqual(api.posts[-1][1]["title_slug"], se.title_slug("Alice", source_id))
 
     def setUp(self):
+        recovery_patcher = patch.object(consumer, "production_recovery_active", return_value=False)
+        recovery_patcher.start()
+        self.addCleanup(recovery_patcher.stop)
+        metadata_patcher = patch("openshelf.pipeline.epub_parser.read_book_metadata", return_value={"language": "en"})
+        metadata_patcher.start()
+        self.addCleanup(metadata_patcher.stop)
         patcher = patch.object(consumer, "verify_public_domain")
         self.rights = patcher.start()
         self.addCleanup(patcher.stop)
@@ -158,7 +169,7 @@ class ConsumerTests(unittest.TestCase):
                                          device="cuda")
             popen.assert_not_called()
             self.rights.assert_called_once_with("gutenberg:11")
-            self.epub_rights.assert_called_once_with(epub)
+            self.epub_rights.assert_called_once_with(epub, "gutenberg:11")
             self.assertEqual(api.posts[-1][1]["error_code"], "ValueError")
 
     def test_spoken_text_accepts_large_books_and_counts_headings(self):
@@ -250,10 +261,13 @@ class ConsumerTests(unittest.TestCase):
                 return {"job": None}
         for key, expected in [("", False), ("test-local-key", True)]:
             with self.subTest(configured=expected), patch.object(consumer, "OPENAI_API_KEY", key), \
-                    patch.object(consumer, "JobAPI", return_value=EmptyQueue()) as connect:
+                    patch.object(consumer, "JobAPI", return_value=EmptyQueue()) as connect, \
+                    patch.object(consumer, "document_runtime_ready", return_value=True), \
+                    patch.object(consumer, "english_runtime", return_value=None), \
+                    patch.object(consumer, "mandarin_runtime", return_value=None):
                 self.assertEqual(consumer.main(["--api-base", "https://example.com/api/v1", "--once"]), 0)
                 request = connect.return_value.posts[0]
-                self.assertEqual(request, ("/internal/generation-jobs/claim", {"expressive": expected}))
+                self.assertEqual(request, ("/internal/generation-jobs/claim", {"expressive": expected, "mandarin": False, "documents": True, "english": True}))
                 self.assertNotIn(key or "unconfigured", str(request))
 
     def test_rejected_heartbeat_stops_pipeline_immediately(self):
@@ -297,6 +311,55 @@ class ConsumerTests(unittest.TestCase):
                 consumer.main(["--api-base", "https://example.com/api/v1", "--sync-pages", "11"])
         self.assertEqual(exit_status.exception.code, 2)
         self.assertIn("--sync-pages must be 0..10", errors.getvalue())
+
+
+class RecoveryClaimGuardTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.state = self.root / "audio/source-recovery.json"
+        self.state.parent.mkdir()
+        self.lock = self.state.with_suffix(".json.lock")
+        self.lock.write_text(json.dumps({"pid": 321, "created": 123.5}), encoding="utf-8")
+        self.arguments = ["python", "-u", "pipeline/scripts/openshelf-pipeline.py", "ops", "recover-source-job",
+                          "--source-build", "audio/author/title/audio/qwen3-serena/builds/aaaaaaaaaaaaaaaa",
+                          "--state-file", "audio/source-recovery.json"]
+        self.process = SimpleNamespace(pid=321, info={"cmdline": self.arguments, "create_time": 123.5},
+                                       cwd=lambda: str(self.root), is_running=lambda: True)
+
+    def active(self):
+        with patch("psutil.process_iter", return_value=[self.process]):
+            return consumer.production_recovery_active(self.root)
+
+    def test_exact_workspace_recovery_and_pid_lock_pause_claims(self):
+        self.assertTrue(self.active())
+        self.lock.write_text(json.dumps({"pid": 321, "created": 100.0}), encoding="utf-8")
+        self.assertFalse(self.active())
+
+    def test_foreign_workspace_or_unrelated_process_does_not_pause(self):
+        self.process.cwd = lambda: str(self.root / "foreign")
+        self.assertFalse(self.active())
+        self.process.cwd = lambda: str(self.root)
+        self.process.info["cmdline"] = ["python", "pipeline/scripts/openshelf-pipeline.py", "ops", "doctor"]
+        self.assertFalse(self.active())
+
+    def test_foreign_entrypoint_or_state_path_does_not_pause(self):
+        self.process.info["cmdline"] = [argument.replace("pipeline/scripts/", "foreign/scripts/")
+                                        for argument in self.arguments]
+        self.assertFalse(self.active())
+        self.process.info["cmdline"] = [argument.replace("audio/source-recovery.json", "../foreign.json")
+                                        for argument in self.arguments]
+        self.assertFalse(self.active())
+
+    def test_ordinary_once_consumer_does_not_claim_during_recovery(self):
+        with patch.object(consumer, "JobAPI", return_value=FakeAPI()) as connect, \
+                patch.object(consumer, "production_recovery_active", return_value=True), \
+                patch.object(consumer, "mandarin_runtime", return_value=None), \
+                patch.object(consumer, "english_runtime", return_value=None), \
+                patch.object(consumer, "document_runtime_ready", return_value=True):
+            self.assertEqual(consumer.main(["--api-base", "https://example.com/api/v1", "--once"]), 0)
+        self.assertEqual(connect.return_value.posts, [])
 
 
 class RightsTests(unittest.TestCase):
@@ -374,7 +437,11 @@ class RightsTests(unittest.TestCase):
                     "formats": {"application/epub+zip":
                                 f"https://www.gutenberg.org/ebooks/{number}.epub.images"}}
         page = {"results": [record(11, False), record(12, True), record(13, None)], "next": None}
-        with patch.object(consumer.urllib.request, "urlopen", return_value=FakeResponse(json.dumps(page).encode())):
+        def cache_book(api, book):
+            api.post("/internal/source-books/sync", {"books": [book]})
+        with patch.object(consumer.urllib.request, "urlopen", return_value=FakeResponse(json.dumps(page).encode())), \
+                patch("openshelf.pipeline.source_catalog.cache_book", side_effect=cache_book), \
+                patch.object(consumer, "verify_public_domain", return_value={"rights_statement": "Public domain in the USA."}):
             api = FakeAPI()
             self.assertEqual(consumer.sync_gutenberg(api, 1), 1)
         self.assertEqual([item["source_id"] for item in api.posts[0][1]["books"]], ["gutenberg:11"])
