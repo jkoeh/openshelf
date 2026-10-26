@@ -65,6 +65,12 @@ for (const edition of [chinese, english]) {
       if (request.url().includes("/sections/") && request.url().includes("/audio?")) audioRequests.push(request.url());
     });
     await page.goto("/");
+    if (edition.language === "zh") {
+      await page.getByRole("button", { name: "Browse Chinese books / 中文", exact: true }).click();
+      await expect(page.getByText("1 Chinese editions ready to read", { exact: false })).toBeVisible();
+      await expect(page.getByText(edition.title, { exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "All books", exact: true }).click();
+    }
     // Search the Traditional fixture using Simplified characters; returned and
     // rendered source metadata/text must keep the original script.
     await page.getByRole("textbox", { name: "Search books" }).fill(edition.language === "zh" ? "古书测试" : edition.title);
@@ -105,6 +111,7 @@ for (const edition of [chinese, english]) {
     await expect(page.getByRole("button", { name: "Start Listening" })).toBeVisible();
     await page.getByRole("button", { name: "Start Listening" }).click();
     await expect(page).toHaveURL(/\/read\/openshelf\//);
+    if (edition.language === "zh") await expect(page).toHaveURL(/rendition=qwen3-serena/);
     await expect(page.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
     await expect.poll(async () => (await media(page))?.time ?? 0).toBeGreaterThan(0.1);
     expect((await media(page))?.error).toBeNull();

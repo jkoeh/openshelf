@@ -34,18 +34,31 @@ const BookSchema = z
 		title_slug: z.string().nullable(),
 	})
 	.openapi("SourceBook");
-const SearchResponse = z.object({ books: z.array(BookSchema) }).openapi("SourceSearch");
-const SearchQuery = z.object({
-	q: z
-		.string()
-		.min(2)
-		.max(80)
-		.describe(
-			"Title or author in the current source index; Chinese matches Simplified and Traditional scripts",
-		),
-	limit: z.coerce.number().int().min(1).max(10).default(10),
-	language: z.enum(["en", "zh"]).optional(),
-});
+const SearchResponse = z
+	.object({
+		books: z.array(BookSchema),
+		total: z.number().int().nonnegative().optional(),
+		page: z.number().int().positive().optional(),
+		limit: z.number().int().positive().optional(),
+	})
+	.openapi("SourceSearch");
+const SearchQuery = z
+	.object({
+		q: z
+			.string()
+			.max(80)
+			.default("")
+			.describe(
+				"Title or author in the current source index; Chinese matches Simplified and Traditional scripts",
+			),
+		limit: z.coerce.number().int().min(1).max(10).default(10),
+		language: z.enum(["en", "zh"]).optional(),
+		page: z.coerce.number().int().min(1).max(1000).default(1),
+	})
+	.refine((value) => value.q.trim().length >= 2 || (!value.q.trim() && !!value.language), {
+		message: "Enter at least two characters, or choose a language to browse cached editions.",
+		path: ["q"],
+	});
 const SyncBook = z.object({
 	source_id: SourceIdSchema,
 	title: z.string().min(1).max(300),
@@ -170,6 +183,27 @@ interface Row {
 	job_updated_at: string | null;
 	error_code: string | null;
 }
+function publicSourceBook(row: Row) {
+	return {
+		source_id: row.source_id,
+		title: row.title,
+		author: row.author,
+		language: row.language,
+		reading_cached: !!row.epub_sha256,
+		state: (row.author_slug && row.title_slug
+			? "available"
+			: row.state === "queued" || row.state === "running" || row.state === "failed"
+				? row.state
+				: "ready_to_generate") as z.infer<typeof BookSchema>["state"],
+		job_id: row.job_id,
+		job_updated_at: row.job_updated_at,
+		job_error_code: publicJobError(row.error_code),
+		job_state: row.state as z.infer<typeof BookSchema>["job_state"],
+		job_mode: row.mode as z.infer<typeof BookSchema>["job_mode"],
+		author_slug: row.author_slug,
+		title_slug: row.title_slug,
+	};
+}
 app.openapi(searchRoute, async (c) => {
 	if (!c.env.JOB_DB || !c.env.SEARCH_RATE_LIMITER)
 		return c.json(
@@ -179,7 +213,36 @@ app.openapi(searchRoute, async (c) => {
 	const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
 	if (!(await c.env.SEARCH_RATE_LIMITER.limit({ key: `search:${ip}` })).success)
 		return c.json({ error: { code: "RATE_LIMITED", message: "Try again later" } }, 429);
-	const { q, limit, language } = c.req.valid("query");
+	const { q, limit, language, page } = c.req.valid("query");
+	if (!q.trim()) {
+		const where =
+			"b.language=? AND b.epub_sha256 IS NOT NULL AND b.source_id NOT LIKE 'ownerupload:%'";
+		const [result, count] = await c.env.JOB_DB.batch([
+			c.env.JOB_DB.prepare(`SELECT b.source_id,b.title,b.author,b.language,b.epub_sha256,b.author_slug,b.title_slug,
+				j.state,j.mode,j.id job_id,j.updated_at job_updated_at,j.error_code
+				FROM source_books b LEFT JOIN generation_jobs j ON j.id=COALESCE(
+				(SELECT id FROM generation_jobs WHERE source_id=b.source_id AND state IN ('queued','running') LIMIT 1),
+				(SELECT id FROM generation_jobs WHERE source_id=b.source_id AND stage<>'deleted' ORDER BY created_at DESC LIMIT 1))
+				WHERE ${where} ORDER BY b.title,b.source_id LIMIT ? OFFSET ?`).bind(
+				language!,
+				limit,
+				(page - 1) * limit,
+			),
+			c.env.JOB_DB.prepare(`SELECT COUNT(*) total FROM source_books b WHERE ${where}`).bind(
+				language!,
+			),
+		]);
+		return c.json(
+			{
+				books: (result.results as unknown as Row[]).map(publicSourceBook),
+				total: Number((count.results as { total: number }[])[0]?.total ?? 0),
+				page,
+				limit,
+			},
+			200,
+			noStore,
+		);
+	}
 	const query = canonicalSearch(q);
 	const term = tokens(query).sort((a, b) => b.length - a.length)[0] ?? "";
 	const chineseQuery = /\p{Script=Han}/u.test(q);
@@ -253,6 +316,12 @@ app.openapi(searchRoute, async (c) => {
 				author = canonicalSearch(row.author);
 			const words = [...tokens(title), ...tokens(author)];
 			const best = Math.min(...words.map((w) => distance(term, w)), 99);
+			const chineseExpandedTitle =
+				chineseQuery &&
+				/^[\p{Script=Han}]{4,}$/u.test(query) &&
+				/^[\p{Script=Han}]+$/u.test(title) &&
+				Array.from(title).length === Array.from(query).length + 1 &&
+				distance(query, title) === 1;
 			const score =
 				title === query
 					? 0
@@ -263,34 +332,18 @@ app.openapi(searchRoute, async (c) => {
 							: (chineseQuery && (title.includes(query) || author.includes(query))) ||
 									(!chineseQuery && words.some((w) => w.startsWith(term)))
 								? 3
-								: !chineseQuery && best <= 2
-									? 4 + best
-									: 99;
+								: chineseExpandedTitle
+									? 4
+									: !chineseQuery && best <= 2
+										? 4 + best
+										: 99;
 			return { row, score };
 		})
 		.filter((x) => x.score < 99)
 		.sort((a, b) => a.score - b.score || a.row.title.localeCompare(b.row.title))
 		.slice(0, limit);
 	const result = {
-		books: scored.map(({ row }) => ({
-			source_id: row.source_id,
-			title: row.title,
-			author: row.author,
-			language: row.language,
-			reading_cached: !!row.epub_sha256,
-			state: (row.author_slug && row.title_slug
-				? "available"
-				: row.state === "queued" || row.state === "running" || row.state === "failed"
-					? row.state
-					: "ready_to_generate") as z.infer<typeof BookSchema>["state"],
-			job_id: row.job_id,
-			job_updated_at: row.job_updated_at,
-			job_error_code: publicJobError(row.error_code),
-			job_state: row.state as z.infer<typeof BookSchema>["job_state"],
-			job_mode: row.mode as z.infer<typeof BookSchema>["job_mode"],
-			author_slug: row.author_slug,
-			title_slug: row.title_slug,
-		})),
+		books: scored.map(({ row }) => publicSourceBook(row)),
 	};
 	return c.json(result, 200, noStore);
 });

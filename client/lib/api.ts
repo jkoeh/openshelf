@@ -56,11 +56,21 @@ export function fetchCatalog(params: CatalogParams = {}, _fresh = false): Promis
 	if (params.limit) search.set("limit", String(params.limit));
 	if (params.sort) search.set("sort", params.sort);
 	const qs = search.toString();
-	return fetchJson<CatalogResponse>(`${API_BASE}/catalog${qs ? `?${qs}` : ""}`, { cache: "no-store" });
+	return fetchJson<CatalogResponse>(`${API_BASE}/catalog${qs ? `?${qs}` : ""}`, {
+		cache: "no-store",
+	});
 }
 
-export async function fetchSourceBooks(q: string, signal?: AbortSignal, language?: "en" | "zh"): Promise<{ books: SourceBook[] }> {
-	return fetchJson<{ books: SourceBook[] }>(`${API_BASE}/source-books?q=${encodeURIComponent(q)}&limit=10${language ? `&language=${language}` : ""}`, { cache: "no-store", ...(signal ? { signal } : {}) });
+export async function fetchSourceBooks(
+	q: string,
+	signal?: AbortSignal,
+	language?: "en" | "zh",
+	page?: number,
+): Promise<{ books: SourceBook[]; total?: number; page?: number; limit?: number }> {
+	return fetchJson(
+		`${API_BASE}/source-books?q=${encodeURIComponent(q)}&limit=10${language ? `&language=${language}` : ""}${page ? `&page=${page}` : ""}`,
+		{ cache: "no-store", ...(signal ? { signal } : {}) },
+	);
 }
 
 export function sourceEpubUrl(sourceId: string): string {
@@ -76,7 +86,11 @@ export async function fetchSourceEpub(sourceId: string, signal: AbortSignal): Pr
 	}
 	if (!response.ok) {
 		await response.body?.cancel();
-		throw new Error(response.status === 429 ? "Standard Ebooks is limiting downloads. Try again later." : "Could not load the book. Try again shortly.");
+		throw new Error(
+			response.status === 429
+				? "Standard Ebooks is limiting downloads. Try again later."
+				: "Could not load the book. Try again shortly.",
+		);
 	}
 	const type = response.headers.get("Content-Type") ?? "";
 	if (type.includes("text/html") || type.includes("application/xhtml")) {
@@ -89,34 +103,58 @@ export async function fetchSourceEpub(sourceId: string, signal: AbortSignal): Pr
 function ownerRequest<T>(path: string, token: string, body?: object): Promise<T> {
 	return fetchJson<T>(`${API_BASE}${path}`, {
 		method: body ? "POST" : "GET",
-		headers: { Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+		headers: {
+			Authorization: `Bearer ${token}`,
+			...(body ? { "Content-Type": "application/json" } : {}),
+		},
 		...(body ? { body: JSON.stringify(body) } : {}),
 		cache: "no-store",
 	});
 }
 
 export interface OwnerUpload {
-	id: string; source_id: string; title: string; author: string;
-	language: "en" | "zh"; format: "pdf" | "docx" | "txt"; created_at: string;
-	author_slug?: string | null; title_slug?: string | null; job_id?: string | null;
+	id: string;
+	source_id: string;
+	title: string;
+	author: string;
+	language: "en" | "zh";
+	format: "pdf" | "docx" | "txt";
+	created_at: string;
+	author_slug?: string | null;
+	title_slug?: string | null;
+	job_id?: string | null;
 }
 
 export function fetchOwnerUploads(token: string): Promise<{ uploads: OwnerUpload[] }> {
 	return ownerRequest("/admin/uploads", token);
 }
 
-export function uploadOwnerDocument(token: string, metadata: { title: string; author: string; language: "en" | "zh"; format: "pdf" | "docx" | "txt" }, bytes: Blob): Promise<OwnerUpload> {
+export function uploadOwnerDocument(
+	token: string,
+	metadata: {
+		title: string;
+		author: string;
+		language: "en" | "zh";
+		format: "pdf" | "docx" | "txt";
+	},
+	bytes: Blob,
+): Promise<OwnerUpload> {
 	const query = new URLSearchParams({ ...metadata, publish: "yes" });
 	return fetchJson<OwnerUpload>(`${API_BASE}/admin/uploads?${query}`, {
-		method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/octet-stream" },
-		body: bytes, cache: "no-store",
+		method: "POST",
+		headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/octet-stream" },
+		body: bytes,
+		cache: "no-store",
 	});
 }
 
 export function createGenerationJob(sourceId: string, token?: string): Promise<GenerationJob> {
 	return fetchJson<GenerationJob>(`${API_BASE}/generation-jobs`, {
 		method: "POST",
-		headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+		headers: {
+			"Content-Type": "application/json",
+			...(token ? { Authorization: `Bearer ${token}` } : {}),
+		},
 		body: JSON.stringify({ source_id: sourceId }),
 		cache: "no-store",
 	});
@@ -146,8 +184,11 @@ export function requestExpressiveGenerationJob(
 	token: string,
 	regenerate: boolean,
 ): Promise<GenerationJob> {
-	return ownerRequest("/generation-jobs", token,
-		{ source_id: sourceId, mode: "expressive", regenerate });
+	return ownerRequest("/generation-jobs", token, {
+		source_id: sourceId,
+		mode: "expressive",
+		regenerate,
+	});
 }
 
 export function verifyAdminIdentity(token: string): Promise<{ email: string }> {
@@ -155,16 +196,32 @@ export function verifyAdminIdentity(token: string): Promise<{ email: string }> {
 }
 
 export function fetchBook(author: string, title: string, fresh = false): Promise<Manifest> {
-	return fetchJson<Manifest>(`${API_BASE}/books/${author}/${title}`, fresh ? { cache: "no-store" } : undefined);
+	return fetchJson<Manifest>(
+		`${API_BASE}/books/${author}/${title}`,
+		fresh ? { cache: "no-store" } : undefined,
+	);
 }
 
-export function fetchBookManagement(author: string, title: string, token: string): Promise<BookManagement> {
-	return ownerRequest(`/books/${encodeURIComponent(author)}/${encodeURIComponent(title)}/management`, token);
+export function fetchBookManagement(
+	author: string,
+	title: string,
+	token: string,
+): Promise<BookManagement> {
+	return ownerRequest(
+		`/books/${encodeURIComponent(author)}/${encodeURIComponent(title)}/management`,
+		token,
+	);
 }
 
-export function deleteBook(author: string, title: string, token: string): Promise<{ deleted: true }> {
+export function deleteBook(
+	author: string,
+	title: string,
+	token: string,
+): Promise<{ deleted: true }> {
 	return fetchJson(`${API_BASE}/books/${encodeURIComponent(author)}/${encodeURIComponent(title)}`, {
-		method: "DELETE", headers: { Authorization: `Bearer ${token}` }, cache: "no-store",
+		method: "DELETE",
+		headers: { Authorization: `Bearer ${token}` },
+		cache: "no-store",
 	});
 }
 

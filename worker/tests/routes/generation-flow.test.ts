@@ -78,6 +78,54 @@ beforeEach(async () => {
 });
 
 describe("source search and generation API", () => {
+	it("browses only cached public Chinese editions with current counts and stable pages", async () => {
+		await sync([
+			{ ...source(23962, "西遊記"), language: "zh" },
+			{ ...source(24264, "紅樓夢"), language: "zh" },
+			{ ...source(7337, "道德經"), language: "zh" },
+			{ ...source(11, "Alice"), language: "en" },
+		]);
+		await uploadReading("gutenberg:23962");
+		await uploadReading("gutenberg:24264");
+		await uploadReading("gutenberg:11");
+		await env.JOB_DB.prepare(
+			"INSERT INTO source_books(source_id,title,author,epub_url,updated_at,language,epub_sha256) VALUES('ownerupload:hidden','Private','Owner','https://example.com/private','2026-10-26','zh','hash')",
+		).run();
+		const first = await request("/source-books?language=zh&limit=1");
+		expect(first.headers.get("Cache-Control")).toBe("no-store");
+		const page1 = await first.json<{
+			total: number;
+			page: number;
+			books: { source_id: string; reading_cached: boolean }[];
+		}>();
+		expect(page1).toMatchObject({ total: 2, page: 1, books: [{ reading_cached: true }] });
+		const page2 = await (await request("/source-books?q=&language=zh&limit=1&page=2")).json<
+			typeof page1
+		>();
+		expect(new Set([...page1.books, ...page2.books].map((book) => book.source_id))).toEqual(
+			new Set(["gutenberg:23962", "gutenberg:24264"]),
+		);
+		await uploadReading("gutenberg:7337");
+		expect(await (await request("/source-books?language=zh")).json()).toMatchObject({ total: 3 });
+		expect((await request("/source-books")).status).toBe(400);
+		expect((await request("/source-books?q=西&language=zh")).status).toBe(400);
+		expect(
+			(
+				await env.JOB_DB.prepare("SELECT COUNT(*) total FROM generation_jobs").first<{
+					total: number;
+				}>()
+			)?.total,
+		).toBe(0);
+	});
+	it("finds 三国志演义 using the common simplified title without changing edition metadata", async () => {
+		await sync([{ ...source(23950, "三國志演義"), language: "zh" }]);
+		const found = await (await request(`/source-books?q=${encodeURIComponent("三国演义")}`)).json<{
+			books: { source_id: string; title: string }[];
+		}>();
+		expect(found.books).toEqual([
+			expect.objectContaining({ source_id: "gutenberg:23950", title: "三國志演義" }),
+		]);
+	});
 	it("indexes, reads, claims and publishes an exact Standard Ebooks edition", async () => {
 		const sourceId = "standardebooks:lewis-carroll/alice/john-tenniel";
 		const epubUrl =

@@ -107,7 +107,12 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
 - The catalog page keeps published-book browsing and adds debounced source
   suggestions from indexed Gutenberg, Standard Ebooks and Wikisource, labeled
   by source. Source and published searches read current D1 data with `no-store`,
-  without upstream discovery or result caches. Chinese queries match simplified
+  without upstream discovery or result caches. A visible “Browse Chinese books / 中文”
+  filter lists cached Chinese editions without a guessed title, with a current
+  count and ten-item pages. Typing within that filter searches Chinese titles/authors.
+  Empty results explain that only imported editions are searchable; text readiness
+  and audio publication are labeled separately. Browsing never creates audio jobs.
+  Chinese queries match simplified
   and traditional script while results and reading retain the original source.
   Requests are aborted when the query changes. `lib/standard-ebooks.ts` validates
   canonical IDs and constructs exact EPUB URLs for legacy reading links.
@@ -120,7 +125,8 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
   rejected. `fetchSourceEpub(id, signal)` bounds the streamed bytes at 32 MiB.
   Neither a missing index row nor failed audio blocks this direct text fetch.
   Upstream 403/429 is shown with retry feedback and no automatic download retry.
-  Indexed reading independently creates a fixed Kokoro job, or resumes status for an existing
+  Indexed reading independently creates a fixed English Kokoro or Mandarin Qwen
+  Serena job, or resumes status for an existing
   job. Published editions open the existing reader. Failed/canceled jobs remain
   readable without public retries. Queue/start-limit failures cannot block text.
   EPUB parsing follows the OPF spine and renders text as native components, never
@@ -131,6 +137,18 @@ EXPO_PUBLIC_API_BASE=https://openshelf-api.johnkoeh.workers.dev/api/v1 npm run b
   synthesis percentages. On completion, Start Listening opens the published reader;
   it does not interrupt text reading. Source search carries the latest
   public audio error code so reopening search retains the specific failure.
+  `parseSourceEpub(bytes, languageHint?)` retains explicit line breaks and Chinese
+  paragraph starts, including ideographic indentation inside legacy Gutenberg
+  paragraphs. Chinese hard-wrapped prose joins without inserting spaces into
+  words, while Latin word boundaries, punctuation, poetry lines and source order
+  remain intact. Sections expose optional normalized `language` from OPF metadata
+  or the hint, with Han-text inference for missing metadata. The reader uses a
+  CJK-capable font stack and responsive spacing.
+  Chinese chapter labels are emphasized as display headings without inventing
+  new spine sections or changing text. A “Jump to first chapter / 跳至正文” link
+  scrolls past source front matter when it precedes the first Chinese chapter;
+  all original metadata remains available above it. Start Listening explicitly picks
+  `qwen3-serena` for Mandarin standard jobs, preserving expressive English routing.
   a missing match is never presented as proof Gutenberg lacks the book. The
   current owner token remains local for cancellation via the PC script. On web,
   the owner signs in with Google for cancel, retry, and regeneration controls.

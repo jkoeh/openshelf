@@ -8,7 +8,7 @@ test("missing editions use only our database without upstream discovery requests
   await page.route("https://standardebooks.org/**", route => { upstream.push(route.request().url()); return route.abort(); });
   await page.goto("/");
   await page.getByRole("textbox", { name: "Search books" }).fill("demons");
-  await expect(page.getByText("No matching edition found. Try another title or author.")).toBeVisible();
+  await expect(page.getByText("No matching indexed edition.", { exact: false })).toBeVisible();
   expect(upstream).toEqual([]);
 });
 
