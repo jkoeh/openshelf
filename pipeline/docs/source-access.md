@@ -174,13 +174,24 @@ editions remain discoverable without reimport. Each variant first looks up the
 full query token prefix in the index; only an empty result falls back to a Han
 bigram lookup for embedded substrings. Each lookup is bounded to 80 candidates,
 so an exact full title is not lost behind earlier two-character-prefix matches.
-Ranking compares canonical simplified title/author,
-deduplicates edition IDs and returns the original source script. Original EPUB
-bytes, provenance, identity and narration text are never converted. Indexing
+Ranking compares canonical simplified title/author, deduplicates edition IDs
+and returns the original source script. A full Han query of at least four
+characters may match a title with one additional Han character (for example
+三國演義 finds 三國志演義). Original titles and edition IDs remain unchanged.
+Original EPUB bytes, provenance, identity and narration text are never converted. Indexing
 reserves token space for both title and author. Search responses use `no-store`,
 including errors; newly imported editions, cache availability and job/publication
 state are visible on the next request. Search never requests upstream services;
 the API's own abuse limiter still bounds public traffic.
+The client exposes a Chinese browse filter before any query. An empty source
+query with an explicit language lists only cached public editions, in stable
+title/source-ID order, with a current total and bounded ten-item pages. Owner
+uploads are excluded. This uses D1 only and never queues audio. Title searches
+retain the two-character minimum and explain that unimported editions are outside
+the current index; language labels are not claims that narration is published.
+Source reading reconstructs legacy Chinese paragraph boundaries and explicit
+line breaks for display, without changing cached EPUB bytes, source script,
+punctuation, edition identity or the audio pipeline's text/alignment artifacts.
 `pipeline/language.py` supplies normalization and offset-preserving units: one
 Han character or one non-Han word. Chinese chunks have a 200-unit budget and split
 at Chinese sentence/clause boundaries or hard boundaries without adding spaces.

@@ -71,7 +71,7 @@ flowchart LR
         W_COVER[GET /books/:a/:t/cover]
         W_EPUB[GET /books/:a/:t/epub]
         W_SPEC[GET /openapi.json + /docs<br/>auto-generated from Zod schemas]
-        W_SEARCH[GET /source-books<br/>bounded autocomplete]
+        W_SEARCH[GET /source-books<br/>bounded search + cached Chinese browse]
         W_SOURCE_EPUB[GET /source-books/:source_id/epub<br/>R2 reading copy independent of upstream/audio]
         W_ADMIN[GET /admin/me<br/>verify Google owner]
         W_UPLOAD[Owner document upload/list<br/>PC authenticated original download]
@@ -227,6 +227,11 @@ Notes:
   users never need to save a URL or token. Static assets live beside
   job_monitor_web.py in pipeline/src/openshelf/pipeline/monitor/; desktop lifecycle
   and Windows ownership are implemented in job_monitor_desktop.py.
+
+Chinese discovery offers a visible cached-edition browse filter with current
+counts and pagination, independent of published audio. Source reader display
+preserves Chinese paragraph starts and explicit breaks without rewriting EPUBs
+or alignment text. Mandarin Start Listening selects Qwen Serena explicitly.
 
 ### Rendition vs build invariant
 

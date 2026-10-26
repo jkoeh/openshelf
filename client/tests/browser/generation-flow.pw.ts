@@ -124,7 +124,7 @@ test("Chinese Read now opens the cached edition when audio and upstream are unav
   await page.route("**/api/v1/source-books/*/epub?inline=1", route => route.fulfill({ contentType: "application/epub+zip", body: Buffer.from(bytes) }));
   await page.goto("/");
   await page.getByRole("textbox", { name: "Search books" }).fill("古书");
-  await expect(page.getByText("Wikisource · Chinese · Mandarin audio")).toBeVisible();
+  await expect(page.getByText("Wikisource · Chinese · 中文")).toBeVisible();
   await page.getByRole("button", { name: "Read now" }).click();
   await expect(page.getByText("天地玄黃，宇宙洪荒。")).toBeVisible();
   await expect(page.getByText("The audio queue is full. Try again later.")).toBeVisible();

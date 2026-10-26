@@ -128,14 +128,22 @@ Voice direction uses the configured LLM provider (`LLM_PROVIDER`, with provider 
 
 ### Generation jobs
 
+Choose **Browse Chinese books / 中文** below the search box to see the cached
+Chinese editions actually available, with a count and pages of titles. Search
+matches imported titles/authors, not every book on the upstream sites; simplified
+and traditional Chinese queries match the same editions. Chinese source reading
+preserves paragraph indentation and explicit line breaks. Browsing/searching
+alone never requests audio generation.
+
 Every indexed search result offers **Read now**. It opens the source EPUB reader
 immediately and independently requests audio, or follows an existing job.
 An animated owl shows stage milestones above the text until Start Listening is
 ready. Text remains available if the PC is offline or generation fails or hits
 queue/start limits. Book detail offers Read now; the annotated EPUB API remains available.
 
-Generation accepts exact Project Gutenberg IDs. Public jobs use Kokoro
-`af_heart`; owner-only expressive jobs use Chatterbox `af_heart` and OpenAI
+Generation accepts verified indexed Gutenberg, Standard Ebooks and Wikisource
+editions, plus owner-only document uploads. Standard English jobs use Kokoro
+`af_heart`; Mandarin jobs use Qwen Serena. Owner-only expressive jobs use Chatterbox `af_heart` and OpenAI
 emotion direction. The PC pulls work over outbound HTTPS; no inbound port is needed.
 Production uses `openshelf-jobs` D1 and the `openshelf` R2 bucket. Staging uses
 isolated `openshelf-jobs-staging` D1 and `openshelf-staging` R2 resources. Both

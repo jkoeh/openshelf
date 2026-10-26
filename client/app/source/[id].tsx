@@ -5,20 +5,19 @@ import {
 	ActivityIndicator,
 	Animated,
 	Pressable,
+	Platform,
 	ScrollView,
 	Text,
 	View,
 } from "react-native";
 import Header from "../../components/Header";
 import { useTheme } from "../../hooks/useTheme";
-import {
-	createGenerationJob,
-	fetchGenerationJob,
-	fetchSourceEpub,
-} from "../../lib/api";
+import { createGenerationJob, fetchGenerationJob, fetchSourceEpub } from "../../lib/api";
 import { audioCreation } from "../../lib/audio-creation";
 import { parseSourceEpub, type SourceSection } from "../../lib/source-epub";
 import type { GenerationJob } from "../../types";
+
+const CHINESE_CHAPTER = /^第[一二三四五六七八九十百千〇零两兩\d]+[回章節节]/u;
 
 export default function SourceReader() {
 	const params = useLocalSearchParams<{
@@ -28,6 +27,7 @@ export default function SourceReader() {
 		job?: string;
 		state?: string;
 		indexed?: string;
+		language?: string;
 	}>();
 	const router = useRouter();
 	const { colors } = useTheme();
@@ -38,14 +38,14 @@ export default function SourceReader() {
 	const [textError, setTextError] = useState("");
 	const [attempt, setAttempt] = useState(0);
 	const scroll = useRef<ScrollView>(null);
+	const storyOffset = useRef(0);
 	const bob = useRef(new Animated.Value(0)).current;
 	const started = useRef<{
 		id: string;
 		promise: Promise<GenerationJob>;
 	} | null>(null);
 	const progress = audioCreation(job);
-	const active =
-		!audioError && (!job || job.state === "queued" || job.state === "running");
+	const active = !audioError && (!job || job.state === "queued" || job.state === "running");
 
 	useEffect(() => {
 		let alive = true;
@@ -72,10 +72,7 @@ export default function SourceReader() {
 			}
 		};
 		AccessibilityInfo.isReduceMotionEnabled().then(update);
-		const subscription = AccessibilityInfo.addEventListener(
-			"reduceMotionChanged",
-			update,
-		);
+		const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", update);
 		return () => {
 			alive = false;
 			animation?.stop();
@@ -89,7 +86,7 @@ export default function SourceReader() {
 		setSections([]);
 		fetchSourceEpub(params.id, controller.signal)
 			.then((bytes) => {
-				const content = parseSourceEpub(bytes);
+				const content = parseSourceEpub(bytes, params.language);
 				if (!controller.signal.aborted) {
 					setSections(content);
 					setSection(0);
@@ -99,7 +96,7 @@ export default function SourceReader() {
 				if (!controller.signal.aborted) setTextError(error.message);
 			});
 		return () => controller.abort();
-	}, [params.id, attempt]);
+	}, [params.id, params.language, attempt]);
 
 	useEffect(() => {
 		let alive = true;
@@ -118,19 +115,16 @@ export default function SourceReader() {
 			} catch (error) {
 				if (!alive) return;
 				setAudioError(
-					error instanceof Error
-						? error.message
-						: "Audio is unavailable. You can keep reading.",
+					error instanceof Error ? error.message : "Audio is unavailable. You can keep reading.",
 				);
 				// Retry status reads without submitting a duplicate generation job.
-				if (currentId)
-					timer = setTimeout(
-						() => follow(fetchGenerationJob(currentId!)),
-						15_000,
-					);
+				if (currentId) timer = setTimeout(() => follow(fetchGenerationJob(currentId!)), 15_000);
 			}
 		};
-		if (params.indexed === "0") setAudioError("Audio can be prepared after this edition is added to the catalog. You can keep reading.");
+		if (params.indexed === "0")
+			setAudioError(
+				"Audio can be prepared after this edition is added to the catalog. You can keep reading.",
+			);
 		else if (params.job) follow(fetchGenerationJob(params.job));
 		else if (params.state === "failed" || params.state === "canceled")
 			setAudioError("Audio is unavailable. You can keep reading.");
@@ -149,6 +143,10 @@ export default function SourceReader() {
 	}, [params.id, params.job, params.state, params.indexed]);
 
 	const ready = job?.state === "completed" && job.author_slug && job.title_slug;
+	const chinese = (sections[section]?.language ?? params.language)?.startsWith("zh");
+	const firstChapter = chinese
+		? (sections[section]?.paragraphs.findIndex((text) => CHINESE_CHAPTER.test(text.trim())) ?? -1)
+		: -1;
 	return (
 		<View style={{ flex: 1, backgroundColor: colors.background }}>
 			<Header showBack title={params.title || "Read now"} />
@@ -183,7 +181,9 @@ export default function SourceReader() {
 										rendition:
 											job.mode === "expressive"
 												? "chatterbox-af-heart"
-												: "kokoro-af-heart",
+												: chinese
+													? "qwen3-serena"
+													: "kokoro-af-heart",
 									},
 								})
 							}
@@ -208,9 +208,7 @@ export default function SourceReader() {
 							🦉
 						</Animated.Text>
 						<View style={{ flex: 1 }} accessibilityLiveRegion="polite">
-							<Text
-								style={{ color: colors.text, fontSize: 17, fontWeight: "600" }}
-							>
+							<Text style={{ color: colors.text, fontSize: 17, fontWeight: "600" }}>
 								{audioError ? "Taking a breather" : progress.verb}
 								{!audioError && active ? ` · ${progress.percent}%` : ""}
 							</Text>
@@ -283,22 +281,53 @@ export default function SourceReader() {
 					<Text style={{ color: colors.textSecondary, marginBottom: 20 }}>
 						{params.author} · Section {section + 1} of {sections.length}
 					</Text>
-					{sections[section].paragraphs.map((paragraph, index) => (
-						<Text
-							key={index}
-							selectable
-							style={{
-								color: colors.text,
-								fontFamily: "Georgia",
-								fontSize: index === 0 ? 25 : 19,
-								fontWeight: index === 0 ? "600" : "400",
-								lineHeight: 31,
-								marginBottom: 18,
-							}}
+					{firstChapter > 0 && (
+						<Pressable
+							accessibilityRole="button"
+							onPress={() =>
+								scroll.current?.scrollTo({
+									y: Math.max(0, storyOffset.current - 12),
+									animated: false,
+								})
+							}
+							style={{ paddingVertical: 12, marginBottom: 12 }}
 						>
-							{paragraph}
-						</Text>
-					))}
+							<Text style={{ color: colors.primary }}>Jump to first chapter / 跳至正文</Text>
+						</Pressable>
+					)}
+					{sections[section].paragraphs.map((paragraph, index) => {
+						const heading =
+							index === 0 ||
+							(chinese && paragraph.length < 120 && CHINESE_CHAPTER.test(paragraph.trim()));
+						return (
+							<Text
+								key={index}
+								selectable
+								accessibilityRole={heading ? "header" : undefined}
+								onLayout={
+									index === firstChapter
+										? (event) => {
+												storyOffset.current = event.nativeEvent.layout.y;
+											}
+										: undefined
+								}
+								style={{
+									color: colors.text,
+									fontFamily: chinese
+										? Platform.OS === "web"
+											? '"Noto Serif CJK TC", "Noto Serif CJK SC", "Songti SC", SimSun, serif'
+											: undefined
+										: "Georgia",
+									fontSize: heading ? 25 : 19,
+									fontWeight: heading ? "600" : "400",
+									lineHeight: chinese ? 34 : 31,
+									marginBottom: 18,
+								}}
+							>
+								{paragraph}
+							</Text>
+						);
+					})}
 					<View
 						style={{
 							flexDirection: "row",
@@ -313,10 +342,7 @@ export default function SourceReader() {
 							<Pressable
 								key={label}
 								accessibilityRole="button"
-								disabled={
-									section + Number(step) < 0 ||
-									section + Number(step) >= sections.length
-								}
+								disabled={section + Number(step) < 0 || section + Number(step) >= sections.length}
 								onPress={() => {
 									setSection((value) => value + Number(step));
 									scroll.current?.scrollTo({ y: 0, animated: false });
@@ -324,8 +350,7 @@ export default function SourceReader() {
 								style={{
 									padding: 12,
 									opacity:
-										section + Number(step) < 0 ||
-										section + Number(step) >= sections.length
+										section + Number(step) < 0 || section + Number(step) >= sections.length
 											? 0.35
 											: 1,
 								}}

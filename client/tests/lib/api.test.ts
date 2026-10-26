@@ -30,12 +30,22 @@ beforeEach(() => {
 });
 
 describe("source discovery and owner jobs", () => {
+	it("browses a bounded Chinese page without submitting an audio job", async () => {
+		mockFetch.mockResolvedValueOnce(jsonResponse({ books: [], total: 20, page: 2, limit: 10 }));
+		expect(await fetchSourceBooks("", undefined, "zh", 2)).toMatchObject({ total: 20, page: 2 });
+		expect(mockFetch.mock.calls[0][0]).toBe(
+			"http://localhost:8787/api/v1/source-books?q=&limit=10&language=zh&page=2",
+		);
+		expect(mockFetch).toHaveBeenCalledTimes(1);
+	});
 	it("queries only our database when an edition is missing", async () => {
 		mockFetch.mockResolvedValueOnce(jsonResponse({ books: [] }));
 		const result = await fetchSourceBooks("demons");
 		expect(result.books).toEqual([]);
 		expect(mockFetch).toHaveBeenCalledTimes(1);
-		expect(mockFetch.mock.calls[0][0]).toBe("http://localhost:8787/api/v1/source-books?q=demons&limit=10");
+		expect(mockFetch.mock.calls[0][0]).toBe(
+			"http://localhost:8787/api/v1/source-books?q=demons&limit=10",
+		);
 		expect(mockFetch.mock.calls[0][1]).toEqual({ cache: "no-store" });
 	});
 	it("returns current indexed results without contacting an upstream service", async () => {
@@ -45,21 +55,38 @@ describe("source discovery and owner jobs", () => {
 		expect(mockFetch).toHaveBeenCalledTimes(1);
 	});
 	it("reads an unindexed exact EPUB directly after a missing cache response", async () => {
-		mockFetch.mockResolvedValueOnce(errorResponse("NOT_FOUND", "Not indexed", 404)).mockResolvedValueOnce(new Response(new Uint8Array([80, 75, 3, 4]), { headers: { "Content-Type": "application/epub+zip" } }));
-		expect(await fetchSourceEpub("standardebooks:fyodor-dostoevsky/demons/constance-garnett", new AbortController().signal)).toEqual(new Uint8Array([80, 75, 3, 4]));
-		expect(mockFetch.mock.calls[1][0]).toBe("https://standardebooks.org/ebooks/fyodor-dostoevsky/demons/constance-garnett/downloads/fyodor-dostoevsky_demons_constance-garnett.epub?source=download");
+		mockFetch
+			.mockResolvedValueOnce(errorResponse("NOT_FOUND", "Not indexed", 404))
+			.mockResolvedValueOnce(
+				new Response(new Uint8Array([80, 75, 3, 4]), {
+					headers: { "Content-Type": "application/epub+zip" },
+				}),
+			);
+		expect(
+			await fetchSourceEpub(
+				"standardebooks:fyodor-dostoevsky/demons/constance-garnett",
+				new AbortController().signal,
+			),
+		).toEqual(new Uint8Array([80, 75, 3, 4]));
+		expect(mockFetch.mock.calls[1][0]).toBe(
+			"https://standardebooks.org/ebooks/fyodor-dostoevsky/demons/constance-garnett/downloads/fyodor-dostoevsky_demons_constance-garnett.epub?source=download",
+		);
 		expect(mockFetch.mock.calls[1][1]).toMatchObject({ credentials: "omit", redirect: "error" });
 	});
 	it("keeps the cached EPUB fast path and rejects malicious edition IDs before fetching", async () => {
 		mockFetch.mockResolvedValueOnce(new Response(new Uint8Array([80, 75, 3, 4])));
 		await fetchSourceEpub("standardebooks:author/book", new AbortController().signal);
 		expect(mockFetch).toHaveBeenCalledTimes(1);
-		await expect(fetchSourceEpub("standardebooks:author/../../other", new AbortController().signal)).rejects.toThrow("Invalid");
+		await expect(
+			fetchSourceEpub("standardebooks:author/../../other", new AbortController().signal),
+		).rejects.toThrow("Invalid");
 		expect(mockFetch).toHaveBeenCalledTimes(1);
 	});
 	it("does not retry upstream limits or fall back on our API rate limit", async () => {
 		mockFetch.mockResolvedValueOnce(new Response("Limited", { status: 429 }));
-		await expect(fetchSourceEpub("standardebooks:author/book", new AbortController().signal)).rejects.toThrow("limiting downloads");
+		await expect(
+			fetchSourceEpub("standardebooks:author/book", new AbortController().signal),
+		).rejects.toThrow("limiting downloads");
 		expect(mockFetch).toHaveBeenCalledTimes(1);
 	});
 	it("resolves and deletes a book only with the owner bearer token and no-store", async () => {
@@ -75,7 +102,9 @@ describe("source discovery and owner jobs", () => {
 		}
 	});
 	it("builds an independent EPUB URL for the exact source ID", () => {
-		expect(sourceEpubUrl("gutenberg:2554")).toBe("http://localhost:8787/api/v1/source-books/gutenberg%3A2554/epub");
+		expect(sourceEpubUrl("gutenberg:2554")).toBe(
+			"http://localhost:8787/api/v1/source-books/gutenberg%3A2554/epub",
+		);
 		expect(mockFetch).not.toHaveBeenCalled();
 	});
 	it("encodes autocomplete text and uses no-store", async () => {
@@ -117,9 +146,14 @@ describe("source discovery and owner jobs", () => {
 		await requestExpressiveGenerationJob("gutenberg:11", "google-id-token", true);
 		expect(mockFetch.mock.calls[0][0]).toContain("/admin/me");
 		expect(mockFetch.mock.calls[1][0]).toContain("/generation-jobs/job-1/cancel");
-		expect(JSON.parse(mockFetch.mock.calls[2][1].body)).toEqual({ source_id: "gutenberg:11", regenerate: true });
+		expect(JSON.parse(mockFetch.mock.calls[2][1].body)).toEqual({
+			source_id: "gutenberg:11",
+			regenerate: true,
+		});
 		expect(JSON.parse(mockFetch.mock.calls[3][1].body)).toEqual({
-			source_id: "gutenberg:11", mode: "expressive", regenerate: true,
+			source_id: "gutenberg:11",
+			mode: "expressive",
+			regenerate: true,
 		});
 		for (const [, init] of mockFetch.mock.calls) {
 			expect(init.headers.Authorization).toBe("Bearer google-id-token");
@@ -150,7 +184,9 @@ describe("fetchCatalog", () => {
 		const result = await fetchCatalog();
 
 		expect(result).toEqual(catalog);
-		expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/catalog"), { cache: "no-store" });
+		expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/catalog"), {
+			cache: "no-store",
+		});
 		expect(mockFetch.mock.calls[0][0]).not.toContain("?");
 	});
 
@@ -248,9 +284,7 @@ describe("fetchSection", () => {
 
 describe("error handling", () => {
 	it("throws ApiError on 404 with JSON body", async () => {
-		mockFetch.mockResolvedValue(
-			errorResponse("NOT_FOUND", "Book not found", 404),
-		);
+		mockFetch.mockResolvedValue(errorResponse("NOT_FOUND", "Book not found", 404));
 
 		try {
 			await fetchBook("nobody", "nothing");
@@ -273,9 +307,7 @@ describe("error handling", () => {
 	});
 
 	it("throws ApiError on 400", async () => {
-		mockFetch.mockResolvedValue(
-			errorResponse("INVALID_PARAM", "Invalid slug", 400),
-		);
+		mockFetch.mockResolvedValue(errorResponse("INVALID_PARAM", "Invalid slug", 400));
 
 		await expect(fetchBook("INVALID", "foo")).rejects.toThrow(ApiError);
 	});
@@ -283,26 +315,14 @@ describe("error handling", () => {
 
 describe("URL builders", () => {
 	it("audioUrl addresses a section", () => {
-		const url = audioUrl(
-			"franz-kafka",
-			"the-trial",
-			1,
-			"kokoro-af-heart",
-			"2a4f9c1b3d8e7f60",
-		);
+		const url = audioUrl("franz-kafka", "the-trial", 1, "kokoro-af-heart", "2a4f9c1b3d8e7f60");
 		expect(url).toContain("/sections/1/audio");
 		expect(url).toContain("rendition=kokoro-af-heart");
 		expect(url).toContain("build=2a4f9c1b3d8e7f60");
 	});
 
 	it("audioUrl handles double-digit sections", () => {
-		const url = audioUrl(
-			"franz-kafka",
-			"the-trial",
-			12,
-			"kokoro-af-heart",
-			"2a4f9c1b3d8e7f60",
-		);
+		const url = audioUrl("franz-kafka", "the-trial", 12, "kokoro-af-heart", "2a4f9c1b3d8e7f60");
 		expect(url).toContain("/sections/12/audio");
 	});
 
